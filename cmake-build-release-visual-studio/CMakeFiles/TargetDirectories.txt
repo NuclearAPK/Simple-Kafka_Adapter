@@ -1,3 +1,0 @@
-D:/Sources/simpleKafka1C_r2/cmake-build-release-visual-studio/CMakeFiles/SimpleKafka1C.dir
-D:/Sources/simpleKafka1C_r2/cmake-build-release-visual-studio/CMakeFiles/edit_cache.dir
-D:/Sources/simpleKafka1C_r2/cmake-build-release-visual-studio/CMakeFiles/rebuild_cache.dir

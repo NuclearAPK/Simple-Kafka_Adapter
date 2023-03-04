@@ -1,3 +1,0 @@
-D:/Sources/simpleKafka1C_r2/build/CMakeFiles/SimpleKafka1C.dir
-D:/Sources/simpleKafka1C_r2/build/CMakeFiles/ALL_BUILD.dir
-D:/Sources/simpleKafka1C_r2/build/CMakeFiles/ZERO_CHECK.dir
