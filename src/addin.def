@@ -1,0 +1,7 @@
+LIBRARY "SimpleKafka1C"
+
+EXPORTS
+GetClassObject
+DestroyObject
+GetClassNames
+SetPlatformCapabilities

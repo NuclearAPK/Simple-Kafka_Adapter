@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<bundle xmlns="http://v8.1c.ru/8.2/addin/bundle" name="SimpleKafka1C">
+<component os="Windows" path="SimpleKafka1C64.dll" type="native" arch="x86_64" />
+</bundle>
