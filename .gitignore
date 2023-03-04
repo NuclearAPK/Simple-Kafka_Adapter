@@ -1,0 +1,7 @@
+*.bak
+/cmake-build-release-ubuntu-20-dev
+/cmake-build-release-visual-studio
+/.idea
+/.vscode
+/1c
+/build
