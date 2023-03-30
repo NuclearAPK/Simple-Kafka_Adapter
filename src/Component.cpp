@@ -321,6 +321,8 @@ variant_t Component::toStlVariant(tVariant src) {
             return UNDEFINED;
         case VTYPE_I4: //int32_t
             return src.lVal;
+        // case VTYPE_I8: //int64_t
+        //      return src.llVal;
         case VTYPE_R8: //double
             return src.dblVal;
         case VTYPE_PWSTR: { //std::string
@@ -353,6 +355,10 @@ void Component::storeVariable(const variant_t &src, tVariant &dst) {
                 dst.vt = VTYPE_I4;
                 dst.lVal = v;
             },
+            // [&](const int64_t &v) {
+            //     dst.vt = VTYPE_I8;
+            //     dst.llVal = v;
+            // },         
             [&](const double &v) {
                 dst.vt = VTYPE_R8;
                 dst.dblVal = v;
@@ -367,6 +373,7 @@ void Component::storeVariable(const variant_t &src, tVariant &dst) {
             },
             [&](const std::string &v) { storeVariable(v, dst); },
             [&](const std::vector<char> &v) { storeVariable(v, dst); }
+
     }, src);
 
 }

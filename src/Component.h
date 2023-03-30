@@ -44,11 +44,12 @@ template<class... Ts> overloaded(Ts...) -> overloaded<Ts...>;
 typedef std::variant<
         std::monostate,
         int32_t,
+        //int64_t,
         double,
         bool,
         std::string,
         std::tm,
-        std::vector<char>
+        std::vector<char>        
 > variant_t;
 
 class Component : public IComponentBase {

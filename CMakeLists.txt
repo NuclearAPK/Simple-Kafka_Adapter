@@ -29,7 +29,6 @@ add_library(${TARGET} SHARED
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
-
 target_compile_definitions(${TARGET} PRIVATE
         UNICODE
         _UNICODE)
@@ -44,7 +43,7 @@ endif ()
 
 #adding library
 if (WIN32)
-    target_link_libraries(${TARGET} PUBLIC
+    target_link_libraries(${TARGET} PRIVATE
             ../lib/rdkafka
             ../lib/rdkafka++
             ../lib/lz4
@@ -81,6 +80,8 @@ if (WIN32)
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
+    add_definitions(-D_WIN32_WINNT=0x0601)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif ()
 
 if (UNIX)
