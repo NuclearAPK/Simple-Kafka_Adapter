@@ -53,6 +53,8 @@ if (WIN32)
             ../lib/zstd)
     target_include_directories(${TARGET} PRIVATE
         include d:/sources/include)
+    add_definitions("-D_WIN32_WINNT=0x0601")
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 else()
 	target_link_libraries(${TARGET} PUBLIC
             /home/shmell/Projects/lib/librdkafka.a
@@ -80,8 +82,6 @@ if (WIN32)
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
-    add_definitions(-D_WIN32_WINNT=0x0601)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif ()
 
 if (UNIX)

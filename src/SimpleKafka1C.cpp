@@ -345,6 +345,8 @@ variant_t SimpleKafka1C::consume(){
 
     boost::property_tree::ptree jsonObj;
 
+    if (!logsReportFileName.empty()) logFile.open(logsReportFileName,  std::ios_base::app);
+
     try
     {
         RdKafka::Message *msg = hConsumer->consume(waitMessageTimeout);
@@ -371,15 +373,17 @@ variant_t SimpleKafka1C::consume(){
         }
         else
         {
+            if (logFile.is_open() && resultConsume != RdKafka::ERR__TIMED_OUT) {
+                logFile << currentDateTime() << " error: " << msg->errstr() << std::endl;
+                logFile.close();
+            }
             delete msg;
             return emptystr;
         }
     }
     catch (const std::exception &e)
     {
-        if (!logsReportFileName.empty())
-        {
-            logFile.open(logsReportFileName, std::ios_base::app);
+        if (logFile.is_open()) {
             logFile << currentDateTime() << " error: " << e.what() << std::endl;
             logFile.close();
         }

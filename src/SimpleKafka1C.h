@@ -27,7 +27,7 @@ class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
 
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.0.1";
+    const char *Version = u8"1.0.2";
 
     SimpleKafka1C();
 
