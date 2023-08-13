@@ -27,7 +27,7 @@ class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
 
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.0.2";
+    const char *Version = u8"1.0.3";
 
     SimpleKafka1C();
 
@@ -59,7 +59,7 @@ private:
     // consumer
     bool initConsumer(const variant_t &brokers, const variant_t &topic);
     variant_t consume();
-    bool commitOffset(const variant_t &offset);
+    bool commitOffset(const variant_t &offset, const variant_t &partition);
     long currentOffset();
     void stopConsumer();
     void setWaitingTimeout(const variant_t &timeout);

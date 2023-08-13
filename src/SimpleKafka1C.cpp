@@ -105,10 +105,10 @@ SimpleKafka1C::SimpleKafka1C() {
               {{1, -1}, {2, std::string("")}, {3, std::string("")}});
     AddMethod(L"StopProducer", L"ОстановитьПродюсера", this, &SimpleKafka1C::stopProducer);
 
-    AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer, {{3, -1}});
+    AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
     AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
     AddMethod(L"CurrentOffset", L"ТекущееСмещение", this, &SimpleKafka1C::currentOffset);
-    AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset);    
+    AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, {{2, 0}});    
     AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
     AddMethod(L"setWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
 
@@ -364,6 +364,7 @@ variant_t SimpleKafka1C::consume(){
 
             RdKafka::MessageTimestamp ts = msg->timestamp();
 
+            jsonObj.put("partition", msg->partition());
             jsonObj.put("offset", currentOffsetValue);
             jsonObj.put("message", std::string(slice(payload, 0, msg->len())));
             jsonObj.put("topic", msg->topic_name());
@@ -395,14 +396,15 @@ variant_t SimpleKafka1C::consume(){
     return s.str();   
  }
 
-bool SimpleKafka1C::commitOffset(const variant_t &offset){
+bool SimpleKafka1C::commitOffset(const variant_t &offset, const variant_t &partition){
 
     std::vector<RdKafka::TopicPartition*> offsets;
 
     // todo: variant_t -> 64bit integer
     std::int32_t tOffset = std::get<std::int32_t>(offset);
+    std::int32_t tPartition = std::get<std::int32_t>(partition);
 
-    RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(topicName, currentPartition, tOffset);
+    RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(topicName, tPartition, tOffset);
     offsets.push_back(ptr);
 
     if (hConsumer->offsets_store(offsets) != RdKafka::ERR_NO_ERROR)
