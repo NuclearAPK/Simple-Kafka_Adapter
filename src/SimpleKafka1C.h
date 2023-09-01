@@ -19,6 +19,7 @@ struct KafkaSettings{
 };
 
 static std::string logsReportFileName;
+static bool delivered;
 
 class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
   public:
@@ -27,7 +28,7 @@ class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
 
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.0.3";
+    const char *Version = u8"1.1.0";
 
     SimpleKafka1C();
 
@@ -36,11 +37,8 @@ private:
     RdKafka::Producer *hProducer;
     RdKafka::KafkaConsumer *hConsumer;
 
-    long currentOffsetValue;
-    int currentPartition;
     int32_t waitMessageTimeout;
 
-    std::string topicName;
     std::vector<KafkaSettings> settings;
     std::string extensionName() override;
 
@@ -52,15 +50,15 @@ private:
     void setParameter(const variant_t &key, const variant_t &value);
 
     // producer
-    bool initProducer(const variant_t &brokers, const variant_t &topic);
-    bool produce(const variant_t &msg, const variant_t &partition, const variant_t &key, const variant_t &heads);
+    bool initProducer(const variant_t &brokers);
+    variant_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+    variant_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
     void stopProducer();
 
     // consumer
     bool initConsumer(const variant_t &brokers, const variant_t &topic);
     variant_t consume();
-    bool commitOffset(const variant_t &offset, const variant_t &partition);
-    long currentOffset();
+    bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
     void stopConsumer();
     void setWaitingTimeout(const variant_t &timeout);
 
@@ -73,14 +71,21 @@ private:
         void event_cb (RdKafka::Event &event);
     };
 
+    class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
+      public:
+        void dr_cb(RdKafka::Message &message);
+    };
+
     class clRebalanceCb : public RdKafka::RebalanceCb
     {
-
       public:
         void rebalance_cb(RdKafka::KafkaConsumer *consumer,
                           RdKafka::ErrorCode err,
                           std::vector<RdKafka::TopicPartition *> &partitions);
     };
+
+    clEventCb cl_event_cb;
+    clDeliveryReportCb cl_dr_cb;
 };
 
 #endif //SIMPLEKAFKA1C_H

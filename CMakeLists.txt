@@ -13,6 +13,8 @@ list(APPEND SOURCES
         src/stdafx.h
         src/dllmain.cpp
         src/exports.cpp
+        src/md5.cpp
+        src/md5.h
         src/Component.cpp
         src/Component.h
         src/SimpleKafka1C.cpp
