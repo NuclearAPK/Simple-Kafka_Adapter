@@ -25,14 +25,9 @@ struct KafkaSettings{
 static std::string logsReportFileName;
 static bool delivered;
 
-class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
-  public:
-    void dr_cb (RdKafka::Message &message);
-};
-
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.1.0";
+    const char *Version = u8"1.1.1";
 
     SimpleKafka1C();
 
@@ -63,6 +58,7 @@ private:
     bool initConsumer(const variant_t &brokers, const variant_t &topic);
     variant_t consume();
     bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
+    void setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
     void stopConsumer();
     void setWaitingTimeout(const variant_t &timeout);
 
@@ -83,6 +79,11 @@ private:
     class clRebalanceCb : public RdKafka::RebalanceCb
     {
       public:
+
+        std::string assignTopic = "";
+        int32_t assignOffset = -1;
+        int assignPartition = 0;
+
         void rebalance_cb(RdKafka::KafkaConsumer *consumer,
                           RdKafka::ErrorCode err,
                           std::vector<RdKafka::TopicPartition *> &partitions);
@@ -90,6 +91,7 @@ private:
 
     clEventCb cl_event_cb;
     clDeliveryReportCb cl_dr_cb;
+    clRebalanceCb cl_rebalance_cb;
 };
 
 #endif //SIMPLEKAFKA1C_H

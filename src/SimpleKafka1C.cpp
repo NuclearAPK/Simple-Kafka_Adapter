@@ -135,6 +135,29 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message &message)
     eventFile.close();
 }
 
+void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer *consumer,
+		     RdKafka::ErrorCode err,
+                     std::vector<RdKafka::TopicPartition*> &partitions) {
+    if (err == RdKafka::ERR__ASSIGN_PARTITIONS || assignOffset > 0) {
+      RdKafka::TopicPartition *part;
+
+      for (unsigned int i = 0; i < partitions.size(); i++){
+        if (partitions[i]->topic() == assignTopic && 
+            partitions[i]->partition() == assignPartition){
+            
+            part = partitions[i];
+            break;
+        }           
+      }  
+
+      if (part)
+         part->set_offset(assignOffset);
+      consumer->assign(partitions);
+    } else {
+      consumer->unassign();
+    }
+}
+
 //======================================================================================
 std::string SimpleKafka1C::extensionName()
 {
@@ -161,6 +184,7 @@ SimpleKafka1C::SimpleKafka1C()
     AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
     AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
     AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, {{2, 0}});
+    AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, {{2, 0}});
     AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
     AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
 
@@ -359,9 +383,7 @@ bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topi
 
     // обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
     conf->set("event_cb", &cl_event_cb, msg_err);
-
-    // clRebalanceCb cl_rebalance_cb;
-    // conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
+    conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
 
     hConsumer = RdKafka::KafkaConsumer::create(conf, msg_err);
     if (!hConsumer)
@@ -411,6 +433,12 @@ bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topi
 void SimpleKafka1C::setWaitingTimeout(const variant_t &timeout)
 {
     waitMessageTimeout = std::get<int32_t>(timeout);
+}
+
+void SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition){
+    cl_rebalance_cb.assignOffset = std::get<int32_t>(offset);
+    cl_rebalance_cb.assignTopic = std::get<std::string>(topicName);
+    cl_rebalance_cb.assignPartition = std::get<int32_t>(partition);
 }
 
 variant_t SimpleKafka1C::consume()
