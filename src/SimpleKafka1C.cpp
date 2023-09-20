@@ -138,23 +138,26 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message &message)
 void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer *consumer,
 		     RdKafka::ErrorCode err,
                      std::vector<RdKafka::TopicPartition*> &partitions) {
-    if (err == RdKafka::ERR__ASSIGN_PARTITIONS || assignOffset > 0) {
-      RdKafka::TopicPartition *part;
+    if (err == RdKafka::ERR__ASSIGN_PARTITIONS) {
+        if (assignOffset > 0) {
+            RdKafka::TopicPartition *part;
 
-      for (unsigned int i = 0; i < partitions.size(); i++){
-        if (partitions[i]->topic() == assignTopic && 
-            partitions[i]->partition() == assignPartition){
-            
-            part = partitions[i];
-            break;
-        }           
-      }  
+            for (unsigned int i = 0; i < partitions.size(); i++){
+                if (partitions[i]->topic() == assignTopic && 
+                    partitions[i]->partition() == assignPartition){
+                
+                    part = partitions[i];
+                    break;
+                }           
+            }  
 
-      if (part)
-         part->set_offset(assignOffset);
-      consumer->assign(partitions);
+            if (part) {
+                part->set_offset(assignOffset);
+            }
+            consumer->assign(partitions);
+        }
     } else {
-      consumer->unassign();
+        consumer->unassign();
     }
 }
 
@@ -383,7 +386,10 @@ bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topi
 
     // обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
     conf->set("event_cb", &cl_event_cb, msg_err);
-    conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
+
+    if(cl_rebalance_cb.assignOffset > 0) {
+        conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
+    }  
 
     hConsumer = RdKafka::KafkaConsumer::create(conf, msg_err);
     if (!hConsumer)
