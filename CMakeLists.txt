@@ -58,17 +58,17 @@ if (WIN32)
     add_definitions("-D_WIN32_WINNT=0x0601")
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 else()
-	target_link_libraries(${TARGET} PUBLIC
-            /home/shmell/Projects/lib/librdkafka.a
-            /home/shmell/Projects/lib/librdkafka++.a
-            /home/shmell/Projects/lib/liblz4.a
-            /home/shmell/Projects/lib/libcrypto.a
-            /home/shmell/Projects/lib/libssl.a
-            /home/shmell/Projects/lib/libz.a
-            /home/shmell/Projects/lib/libzstd.a
-            )
+    target_link_libraries(${TARGET} PRIVATE
+        /home/shmell/libs/librdkafka++.a
+        /home/shmell/libs/librdkafka.a
+        /home/shmell/libs/libcrypto.a
+        /home/shmell/libs/libcurl.a
+        /home/shmell/libs/liblz4.a
+        /home/shmell/libs/libssl.a
+        /home/shmell/libs/libz.a
+        /home/shmell/libs/libzstd.a) 
     target_include_directories(${TARGET} PRIVATE
-        include /home/shmell/Projects/include)
+        include ./include)
 endif ()
 
 if (WIN32 AND NOT MSVC)

@@ -17,36 +17,38 @@
 
 #include "Component.h"
 
-struct KafkaSettings{
-    std::string Key;
-    std::string Value;
-};
-
-static std::string logsReportFileName;
-static bool delivered;
+//static std::string logsReportFileName;
+//static bool delivered;
 
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.1.1";
+    const char *Version = u8"1.2.1";
 
     SimpleKafka1C();
 
 private:
 
+    // property
+    std::shared_ptr<variant_t> logDirectory;
+    std::shared_ptr<variant_t> formatLogFiles;
+
     RdKafka::Producer *hProducer;
     RdKafka::KafkaConsumer *hConsumer;
 
     int32_t waitMessageTimeout;
+    unsigned pid;
 
-    std::vector<KafkaSettings> settings;
+    std::string consumerLogName; 
+    std::string producerLogName;
+    std::string dumpLogName;
+    std::string statLogName; 
+
     std::string extensionName() override;
-
-    // reports filename
-    void setLogsReportFileName(const variant_t &filename);
 
     // parameters set 
     // https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
     void setParameter(const variant_t &key, const variant_t &value);
+    std::string clientID();
 
     // producer
     bool initProducer(const variant_t &brokers);
@@ -66,13 +68,32 @@ private:
     void message(const variant_t &msg);
     void sleep(const variant_t &delay);
 
+    struct KafkaSettings{
+      std::string Key;
+      std::string Value;
+    };
+
     class clEventCb : public RdKafka::EventCb {
       public:
+        unsigned pid;        
+        char *formatLogFiles;
+        std::string logDir = "";
+        std::string consumerLogName;
+        std::string statLogName;
+        std::string clientid;
+
         void event_cb (RdKafka::Event &event);
     };
 
     class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
       public:
+        unsigned pid;
+        bool delivered = false;
+        char *formatLogFiles;
+        std::string logDir = "";
+        std::string producerLogName;
+        std::string clientid;      
+
         void dr_cb(RdKafka::Message &message);
     };
 
@@ -88,6 +109,8 @@ private:
                           RdKafka::ErrorCode err,
                           std::vector<RdKafka::TopicPartition *> &partitions);
     };
+
+    std::vector<KafkaSettings> settings;
 
     clEventCb cl_event_cb;
     clDeliveryReportCb cl_dr_cb;
