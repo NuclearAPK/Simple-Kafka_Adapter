@@ -3,6 +3,7 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <process.h>
 #include "SimpleKafka1C.h"
 #include "md5.h"
 
@@ -378,7 +379,7 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
 retry:
     RdKafka::ErrorCode resp = hProducer->produce(
         tTopicName,
-        currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+        currentPartition,
         RdKafka::Producer::RK_MSG_COPY,
         const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
         const_cast<char *>(std::get<std::string>(key).c_str()), std::get<std::string>(key).size(),

@@ -9,11 +9,7 @@
 #include <thread>
 #include <fstream>
 #include <map>
-#ifdef __linux__
 #include <librdkafka/rdkafkacpp.h>
-#else 
-#include <librdkafka/src-cpp/rdkafkacpp.h>
-#endif
 
 #include "Component.h"
 
