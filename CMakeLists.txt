@@ -20,12 +20,6 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-if (ANDROID)
-    list(APPEND SOURCES
-            src/jnienv.cpp
-            src/jnienv.h)
-endif ()
-
 add_library(${TARGET} SHARED  ${SOURCES})
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
