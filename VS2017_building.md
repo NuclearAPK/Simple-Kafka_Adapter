@@ -1,6 +1,5 @@
 # Сборка внешней компоненты с помощью Visual Studio 2017
-- устновить boost версии - 1.68, так как следующая уже не поддерживается VS2017
-- установить boost, например,  с https://sourceforge.net/projects/boost/. Установка - bootstrap.bat, потом b2.exe
+- устновить boost версии - 1.68, так как следующая уже не поддерживается VS2017, например,  с https://sourceforge.net/projects/boost/. Установка - bootstrap.bat, потом b2.exe
 - поставить https://github.com/microsoft/vcpkg. По инструкции:
  ```
  bootstrap-vcpkg.bat
