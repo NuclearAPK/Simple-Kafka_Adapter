@@ -7,7 +7,7 @@
 vcpkg integrate install
  ```
 В CMakeSettings.json прописан vcpkg и триплеты.
-- создать папку D:\Source\vcpkg\static-triplets в которой создать файлы "x64-windows.cmake" с содержимым:
+- создать папку ".\vcpkg\static-triplets" в которой создать файлы "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
