@@ -1,20 +1,22 @@
-# Сборка внешней компоненты с помощтю Visual Studio 2017
-- устновить boost версия - 1.68, так как следующая уже не поддерживается VS2017
-- далее инсталировал boost - bootstrap.bat, потом b2.exe
-- поставить https://github.com/microsoft/vcpkg. По инструкции
+# Сборка внешней компоненты с помощью Visual Studio 2017
+- устновить boost версии - 1.68, так как следующая уже не поддерживается VS2017, например,  с https://sourceforge.net/projects/boost/. Установка:
  ```
- bootstrap-vcpkg.bat
+bootstrap.bat
+b2.exe
+ ```
+- поставить https://github.com/microsoft/vcpkg по инструкции:
+ ```
+bootstrap-vcpkg.bat
 vcpkg integrate install
  ```
-Важно брать CMakeSettings.json из проекта. В нем прописан vcpkg и триплеты
-- создать папку D:\Source\vcpkg\static-triplets в которой создать файлы
--- x64-windows.cmake с содержимым
+В CMakeSettings.json проекта SimpleKafka1C прописан vcpkg и триплеты.
+- создать папку ".\vcpkg\static-triplets" в которой создать файл "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
--- x86-windows.cmake с содержимым
+и "x86-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x86)
 set(VCPKG_CRT_LINKAGE static)
