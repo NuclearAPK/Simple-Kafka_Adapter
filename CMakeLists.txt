@@ -68,13 +68,6 @@ if (UNIX)
     endif ()
 endif ()
 
-if (ANDROID)
-    if (CMAKE_BUILD_TYPE STREQUAL Release)
-        add_custom_command(TARGET ${TARGET} POST_BUILD
-                COMMAND ${CMAKE_STRIP} ${CMAKE_SHARED_LIBRARY_PREFIX}${TARGET}${CMAKE_SHARED_LIBRARY_SUFFIX})
-    endif ()
-endif ()
-
 set(BOOST_ROOT "D:\\Source\\boost_1_68_0") 
 set(Boost_USE_STATIC_LIBS ON) 
 set(Boost_USE_MULTITHREADED OFF)  
