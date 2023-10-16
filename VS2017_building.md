@@ -1,31 +1,31 @@
-# Сборка внешней компоненты с помощтю Visual Studio 2017
-- устновить boost версия - 1.68, так как следующая уже не поддерживается VS2017
-- далее инсталировал boost - bootstrap.bat, потом b2.exe
-- поставить https://github.com/microsoft/vcpkg. По инструкции
+# РЎР±РѕСЂРєР° РІРЅРµС€РЅРµР№ РєРѕРјРїРѕРЅРµРЅС‚С‹ СЃ РїРѕРјРѕС‰С‚СЋ Visual Studio 2017
+- СѓСЃС‚РЅРѕРІРёС‚СЊ boost РІРµСЂСЃРёСЏ - 1.68, С‚Р°Рє РєР°Рє СЃР»РµРґСѓСЋС‰Р°СЏ СѓР¶Рµ РЅРµ РїРѕРґРґРµСЂР¶РёРІР°РµС‚СЃСЏ VS2017
+- РґР°Р»РµРµ РёРЅСЃС‚Р°Р»РёСЂРѕРІР°Р» boost - bootstrap.bat, РїРѕС‚РѕРј b2.exe
+- РїРѕСЃС‚Р°РІРёС‚СЊ https://github.com/microsoft/vcpkg. РџРѕ РёРЅСЃС‚СЂСѓРєС†РёРё
  ```
  bootstrap-vcpkg.bat
 vcpkg integrate install
  ```
-Важно брать CMakeSettings.json из проекта. В нем прописан vcpkg и триплеты
-- создать папку D:\Source\vcpkg\static-triplets в которой создать файлы
--- x64-windows.cmake с содержимым
+Р’Р°Р¶РЅРѕ Р±СЂР°С‚СЊ CMakeSettings.json РёР· РїСЂРѕРµРєС‚Р°. Р’ РЅРµРј РїСЂРѕРїРёСЃР°РЅ vcpkg Рё С‚СЂРёРїР»РµС‚С‹
+- СЃРѕР·РґР°С‚СЊ РїР°РїРєСѓ D:\Source\vcpkg\static-triplets РІ РєРѕС‚РѕСЂРѕР№ СЃРѕР·РґР°С‚СЊ С„Р°Р№Р»С‹
+-- x64-windows.cmake СЃ СЃРѕРґРµСЂР¶РёРјС‹Рј
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
--- x86-windows.cmake с содержимым
+-- x86-windows.cmake СЃ СЃРѕРґРµСЂР¶РёРјС‹Рј
  ```
 set(VCPKG_TARGET_ARCHITECTURE x86)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-- Если ранее стоял lz4, то удалить
+- Р•СЃР»Рё СЂР°РЅРµРµ СЃС‚РѕСЏР» lz4, С‚Рѕ СѓРґР°Р»РёС‚СЊ
  ```
 vcpkg remove lz4 --triplet x86-windows
 vcpkg remove lz4 --triplet x64-windows
  ```
-- Ставим пакеты:
+- РЎС‚Р°РІРёРј РїР°РєРµС‚С‹:
  ```
 vcpkg install lz4  --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x86-windows
