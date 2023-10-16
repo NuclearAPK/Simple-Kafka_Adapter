@@ -1,23 +1,6 @@
 cmake_minimum_required(VERSION 3.12)
 project(SimpleKafka1C)
 
-set(LIB_DIR ${CMAKE_SOURCE_DIR}/bin)
-set(EXE_DIR ${CMAKE_SOURCE_DIR}/bin)
-set(ARCH_DIR ${CMAKE_SOURCE_DIR}/bin)
-set(PDB_DIR ${CMAKE_SOURCE_DIR}/debug_info)
-set(PKG_OUTPUT_DIR ${CMAKE_SOURCE_DIR}/pkg)
-
-file(MAKE_DIRECTORY ${LIB_DIR})
-file(MAKE_DIRECTORY ${EXE_DIR})
-file(MAKE_DIRECTORY ${ARCH_DIR})
-file(MAKE_DIRECTORY ${PDB_DIR})
-file(MAKE_DIRECTORY ${PKG_OUTPUT_DIR})
-
-set (CMAKE_LIBRARY_OUTPUT_DIRECTORY ${LIB_DIR})
-set (CMAKE_RUNTIME_OUTPUT_DIRECTORY ${EXE_DIR})
-set (CMAKE_ARCHIVE_OUTPUT_DIRECTORY ${ARCH_DIR})
-set (CMAKE_PDB_OUTPUT_DIRECTORY ${PDB_DIR})
-
 set(CMAKE_CXX_STANDARD 17)
 set(TARGET SimpleKafka1C)
 
@@ -47,9 +30,7 @@ add_library(${TARGET} SHARED  ${SOURCES})
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
-target_compile_definitions(${TARGET} PRIVATE
-        UNICODE
-        _UNICODE)
+target_compile_definitions(${TARGET} PRIVATE UNICODE  _UNICODE)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
@@ -78,7 +59,6 @@ if (WIN32)
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
 
- #   set_target_properties(${TARGET} PROPERTIES LINK_FLAGS "/WHOLEARCHIVE")
 endif ()
 
 if (UNIX)
@@ -86,7 +66,6 @@ if (UNIX)
         set(CMAKE_C_FLAGS "-m32 ${CMAKE_C_FLAGS}")
         set(CMAKE_CXX_FLAGS "-m32 ${CMAKE_CXX_FLAGS}")
     endif ()
-#	set_target_properties(${TARGET} PROPERTIES LINK_FLAGS "-Wl,--whole-archive")
 endif ()
 
 if (ANDROID)
@@ -110,5 +89,5 @@ endif()
 find_package(RdKafka CONFIG REQUIRED)
 if(RdKafka_FOUND)
     include_directories(${RdKafka_INCLUDE_DIRS})
-	target_link_libraries(${TARGET} RdKafka::rdkafka RdKafka::rdkafka++)
+	target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
 endif()
