@@ -1,9 +1,4 @@
 # Сборка внешней компоненты с помощью Visual Studio 2017
-- устновить boost версии - 1.68, так как следующая уже не поддерживается VS2017, например,  с https://sourceforge.net/projects/boost/. Установка:
- ```
-bootstrap.bat
-b2.exe
- ```
 - поставить https://github.com/microsoft/vcpkg по инструкции:
  ```
 bootstrap-vcpkg.bat
@@ -30,8 +25,15 @@ vcpkg remove lz4 --triplet x64-windows
 - Ставим пакеты:
  ```
 vcpkg install lz4  --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install lz4  --overlay-triplets=static-triplets --triplet x64-windows
+
+vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x64-windows
+
+vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
+vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
+	
+vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
+vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
  ```
 

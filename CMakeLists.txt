@@ -22,8 +22,6 @@ list(APPEND SOURCES
 
 add_library(${TARGET} SHARED  ${SOURCES})
 
-add_definitions("-DLIBRDKAFKA_STATICLIB")
-
 target_compile_definitions(${TARGET} PRIVATE UNICODE  _UNICODE)
 
 if (CASE_INSENSITIVE)
@@ -62,19 +60,26 @@ if (UNIX)
     endif ()
 endif ()
 
-set(BOOST_ROOT "D:\\Source\\boost_1_68_0") 
 set(Boost_USE_STATIC_LIBS ON) 
 set(Boost_USE_MULTITHREADED OFF)  
 set(Boost_USE_STATIC_RUNTIME ON) 
 set(Boost_NO_SYSTEM_PATHS TRUE) 
-find_package(Boost 1.68.0)
+find_package(Boost)
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
     target_link_libraries(${TARGET} ${Boost_LIBRARIES})
 endif()
 
+add_definitions("-DLIBRDKAFKA_STATICLIB")
+
 find_package(RdKafka CONFIG REQUIRED)
 if(RdKafka_FOUND)
     include_directories(${RdKafka_INCLUDE_DIRS})
 	target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
+endif()
+
+find_package(unofficial-avro-cpp CONFIG REQUIRED)
+if(unofficial-avro-cpp_FOUND)
+    include_directories(${unofficial-avro-cpp_INCLUDE_DIRS})
+	target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
 endif()
