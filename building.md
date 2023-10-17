@@ -17,7 +17,7 @@ set(VCPKG_TARGET_ARCHITECTURE x86)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-- Если ранее стоял lz4 (можно проверить командой vcpkg list), то удалить
+- Если ранее стоял lz4 (можно проверить командой vcpkg list), то удалить:
  ```
 vcpkg remove lz4 --triplet x86-windows
 vcpkg remove lz4 --triplet x64-windows
