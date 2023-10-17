@@ -1,7 +1,7 @@
 # Сборка внешней компоненты с использованием vcpkg
 - Поставить https://github.com/microsoft/vcpkg по инструкции:
  ```
-bootstrap-vcpkg.bat
+bootstrap-vcpkg
 vcpkg integrate install
  ```
 В CMakeSettings.json (настройки проекта для VS2017) проекта SimpleKafka1C прописан vcpkg и триплеты (см. ниже).
