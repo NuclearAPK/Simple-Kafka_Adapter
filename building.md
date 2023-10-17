@@ -4,7 +4,7 @@
 bootstrap-vcpkg.bat
 vcpkg integrate install
  ```
-В CMakeSettings.json проекта SimpleKafka1C прописан vcpkg и триплеты (см. ниже).
+В CMakeSettings.json (настройки проекта для VS2017) проекта SimpleKafka1C прописан vcpkg и триплеты (см. ниже).
 - Создать папку ".\vcpkg\static-triplets" на одном уровне с папкой "triplets" в которой создать файл "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
