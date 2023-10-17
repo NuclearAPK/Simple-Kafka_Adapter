@@ -1,4 +1,4 @@
-# Сборка внешней компоненты с помощью Visual Studio 2017
+# Сборка внешней компоненты с использованием vcpkg
 - Поставить https://github.com/microsoft/vcpkg по инструкции:
  ```
 bootstrap-vcpkg.bat
