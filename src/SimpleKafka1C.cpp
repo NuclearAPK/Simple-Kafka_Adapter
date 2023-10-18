@@ -7,6 +7,18 @@
 #include "SimpleKafka1C.h"
 #include "md5.h"
 
+#include <avro/Encoder.hh>
+#include <avro/Specific.hh>
+#include <avro/ValidSchema.hh>
+#include <avro/Compiler.hh>
+#include <avro/Types.hh>
+#include <avro/Generic.hh>
+#include <avro/DataFile.hh>
+#include <avro/Writer.hh>
+#include <memory>
+#include <avro/Stream.hh>
+#include <fstream>
+
 //================================== Utilites ==========================================
 
 char *slice(char *s, size_t from, size_t to)
@@ -246,6 +258,8 @@ SimpleKafka1C::SimpleKafka1C()
     AddMethod(L"Message", L"Сообщить", this, &SimpleKafka1C::message);
     AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
 
+	AddMethod(L"convertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
+
     waitMessageTimeout = 500;
     #ifdef _WINDOWS
         pid = _getpid(); 
@@ -264,6 +278,85 @@ SimpleKafka1C::SimpleKafka1C()
 void SimpleKafka1C::setParameter(const variant_t &key, const variant_t &value)
 {
     settings.push_back({std::get<std::string>(key), std::get<std::string>(value)});
+}
+
+
+
+struct MyData {
+	std::string scscs;
+	std::string scsc;
+
+	// Конструктор для удобства
+	MyData(const std::string& scscs, const std::string& scsc)
+		: scscs(scscs), scsc(scsc) {}
+};
+
+namespace avro {
+	template<> struct codec_traits<MyData> {
+		static void encode(Encoder& e, const MyData& v) {
+			avro::encode(e, v.scscs);
+			avro::encode(e, v.scsc);
+		}
+		static void decode(Decoder& d, MyData& v) {
+			avro::decode(d, v.scscs);
+			avro::decode(d, v.scsc);
+		}
+	};
+}
+
+template<typename T>
+struct AvroData {
+	T data;
+
+	AvroData(const T& data) : data(data) {}
+};
+
+namespace avro {
+	template<typename T>
+	struct codec_traits<AvroData<T>> {
+		static void encode(Encoder& e, const AvroData<T>& v) {
+			avro::encode(e, v.data);
+		}
+		static void decode(Decoder& d, AvroData<T>& v) {
+			avro::decode(d, v.data);
+		}
+	};
+};
+
+template<typename T>
+void writeToAvroFile(const std::vector<AvroData<T>> &data, const variant_t &schemaJson) {
+	const char* dataFilename = "data.avro";
+	avro::ValidSchema schema = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
+
+	avro::DataFileWriter<AvroData<T>> writer(dataFilename, schema);
+
+	for (const AvroData<T>& item : data) {
+		writer.write(item);
+	}
+
+	writer.close();
+}
+
+void SimpleKafka1C::convertToAvroFormat(const variant_t &msg, const variant_t &schemaJson) {
+
+	std::vector<AvroData<MyData>> myDataList = {
+		 AvroData(MyData("1", "Test1")),
+		 AvroData(MyData("2", "Test2"))
+	};
+
+	std::string schemaJsonTest = R"(
+        {
+            "type": "record",
+            "name": "Record",
+            "fields": [
+                {"name": "id", "type": "string"},
+                {"name": "rmis_id", "type": "string"}
+            ]
+        }
+    )";
+
+	writeToAvroFile(myDataList, &schemaJsonTest);
+
 }
 
 std::string SimpleKafka1C::clientID(){

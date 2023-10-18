@@ -64,6 +64,9 @@ private:
     void message(const variant_t &msg);
     void sleep(const variant_t &delay);
 
+	// converting a message to avro format
+	void convertToAvroFormat(const variant_t &msg, const variant_t &schemaJson);
+
     struct KafkaSettings{
       std::string Key;
       std::string Value;
