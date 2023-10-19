@@ -20,9 +20,18 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-add_library(${TARGET} SHARED  ${SOURCES})
+if (ANDROID)
+    list(APPEND SOURCES
+            src/jnienv.cpp
+            src/jnienv.h)
+endif ()
 
-target_compile_definitions(${TARGET} PRIVATE UNICODE  _UNICODE)
+add_library(${TARGET} SHARED
+        ${SOURCES})
+
+target_compile_definitions(${TARGET} PRIVATE
+        UNICODE
+        _UNICODE)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
@@ -57,6 +66,13 @@ if (UNIX)
     if (TARGET_ARCH STREQUAL "x86")
         set(CMAKE_C_FLAGS "-m32 ${CMAKE_C_FLAGS}")
         set(CMAKE_CXX_FLAGS "-m32 ${CMAKE_CXX_FLAGS}")
+    endif ()
+endif ()
+
+if (ANDROID)
+    if (CMAKE_BUILD_TYPE STREQUAL Release)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+                COMMAND ${CMAKE_STRIP} ${CMAKE_SHARED_LIBRARY_PREFIX}${TARGET}${CMAKE_SHARED_LIBRARY_SUFFIX})
     endif ()
 endif ()
 
