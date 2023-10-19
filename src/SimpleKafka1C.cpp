@@ -3,7 +3,9 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#ifdef _WINDOWS
 #include <process.h>
+#endif
 #include "SimpleKafka1C.h"
 #include "md5.h"
 
@@ -35,13 +37,13 @@ const std::string currentDateTime()
     std::chrono::time_point now = std::chrono::high_resolution_clock::now();
     tm current{};
 
-    #ifdef _WINDOWS
-        time_t time = std::time(nullptr);      
-        localtime_s(&current, &time);
-    #else
-        auto time = std::chrono::system_clock::to_time_t(now);
-        current = *std::gmtime(&time);
-    #endif
+#ifdef _WINDOWS
+    time_t time = std::time(nullptr);      
+    localtime_s(&current, &time);
+#else
+    auto time = std::chrono::system_clock::to_time_t(now);
+    current = *std::gmtime(&time);
+#endif
 
     auto epoch = now.time_since_epoch();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch).count() % 1000000000;
@@ -56,13 +58,13 @@ const std::string currentDateTime(char *format)
     std::chrono::time_point now = std::chrono::high_resolution_clock::now();
     tm current{};
 
-    #ifdef _WINDOWS
-        time_t time = std::time(nullptr);      
-        localtime_s(&current, &time);     
-    #else
-        auto time = std::chrono::system_clock::to_time_t(now);
-        current = *std::gmtime(&time);
-    #endif
+#ifdef _WINDOWS
+    time_t time = std::time(nullptr);      
+    localtime_s(&current, &time);     
+#else
+    auto time = std::chrono::system_clock::to_time_t(now);
+    current = *std::gmtime(&time);
+#endif
 
     std::ostringstream oss;
     oss << std::put_time(&current, format);
@@ -261,11 +263,11 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"convertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
 
     waitMessageTimeout = 500;
-    #ifdef _WINDOWS
-        pid = _getpid(); 
-    #else
-        pid = getpid(); 
-    #endif
+#ifdef _WINDOWS
+    pid = _getpid(); 
+#else
+    pid = getpid(); 
+#endif
 
     consumerLogName = "consumer_";
     producerLogName = "producer_";
