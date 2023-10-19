@@ -472,7 +472,7 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
 retry:
     RdKafka::ErrorCode resp = hProducer->produce(
         tTopicName,
-        (currentPartition == -1) ? RdKafka::Topic::PARTITION_UA : currentPartition,
+        currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
         RdKafka::Producer::RK_MSG_COPY,
         const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
         const_cast<char *>(std::get<std::string>(key).c_str()), std::get<std::string>(key).size(),
