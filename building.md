@@ -12,20 +12,20 @@ set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-, "x86-windows.cmake" с содержимым:
+"x86-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x86)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-, "x64-linux.cmake" с содержимым:
+"x64-linux.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
 set(VCPKG_CRT_LINKAGE static)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_CMAKE_SYSTEM_NAME Linux)
  ```
-, "x86-linux.cmake" с содержимым:
+"x86-linux.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x86)
 set(VCPKG_CRT_LINKAGE static)
