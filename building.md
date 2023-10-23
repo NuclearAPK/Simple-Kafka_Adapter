@@ -4,8 +4,6 @@
 bootstrap-vcpkg
 vcpkg integrate install
  ```
-В CMakeSettings.json (настройки проекта для VS2017) проекта SimpleKafka1C прописан vcpkg и триплеты (см. ниже).
-**В этом же файле требуется поменять пути до пакетного менеджера vcpkg.**
 - Создать папку ".\vcpkg\static-triplets" на одном уровне с папкой "triplets" в которой создать файл "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
@@ -61,4 +59,23 @@ vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-linux
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
  ```
+**В файле В CMakeLists.txt требуется поменять пути до пакетного менеджера vcpkg и библиотек.**
 
+Дальнейшая сборка производится в штатной системе сборки, например, как CMake проект в Visual Studio C++.
+
+# Специфичные для LINUX шаги
+
+Установите libboost-all-dev обычным образом, к примеру:
+ ```
+sudo apt-get install libboost-all-dev
+ ```
+- Запустите cmake-gui.
+- В поле sorcecode укажите путь к проекту Simple-Kafka_Adapter.
+- В поле binaries укажите путь к папке в которую попадет созданный проект для сборки.
+- Нажмите Configure.
+- В открывшемся диалоге выберите тип проекта ninja и нажмите Finish.
+- Далее, в появившемся списке переменных, исправьте пути до include и библиотек.
+- Снова нажмите Configure.
+- Далее нажмите Generate.
+- Зайдите в консоли в папку, указанную в поле  binaries, и выполните команду ninja.
+- Библиотека будет собрана.
