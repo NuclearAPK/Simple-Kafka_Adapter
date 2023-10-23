@@ -4,9 +4,21 @@ project(SimpleKafka1C)
 set(CMAKE_CXX_STANDARD 17)
 set(TARGET SimpleKafka1C)
 
-option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-option(STATIC_CRT "Static CRT linkage" ON)
-option(OUT_PARAMS "Support output parameters" OFF)
+if (UNIX)
+	option(CASE_INSENSITIVE "Case insensitive method names" OFF)
+	option(STATIC_CRT "Static CRT linkage" ON)
+	option(OUT_PARAMS "Support output parameters" OFF)
+	set(ZLIB_INCLUDE_DIR "/home/dmitry/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/include" CACHE STRING "zlib include dir")
+	set(RdKafka_DIR "/home/dmitry/vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka" CACHE STRING "rdkafka cmake config")
+	set(LZ4_DIR "/home/dmitry/vcpkg/microsoft/vcpkg/packages/lz4_x64-linux/share/lz4" CACHE STRING "LZ4 cmake config")
+	set(unofficial-avro-cpp_DIR "/home/dmitry/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/share/unofficial-avro-cpp" CACHE STRING "avro-cpp cmake config")
+	set(unofficial-avro-cpp_INCLUDE_DIRS "/home/dmitry/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/include" CACHE STRING "avro-cpp include dir")
+	set(ZLIB_LIBRARY "/home/dmitry/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
+endif ()
+
+set(CMAKE_TOOLCHAIN_FILE "d:/source/vcpkg/microsoft/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg file path")
+set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
+
 
 list(APPEND SOURCES
         src/addin.def
@@ -41,7 +53,12 @@ if (OUT_PARAMS)
     target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
 endif ()
 
-target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
+if (UNIX)
+	target_include_directories(${TARGET} PRIVATE include)
+else()
+	target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
+endif ()
+
 if (WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif ()
