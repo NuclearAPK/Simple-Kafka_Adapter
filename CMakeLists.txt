@@ -15,8 +15,6 @@ if (UNIX)
 	set(unofficial-avro-cpp_INCLUDE_DIRS "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/include" CACHE STRING "avro-cpp include dir")
 	set(ZLIB_LIBRARY "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
 	set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
-else()
-	set(VCPKG_TARGET_TRIPLET "x64-windows" CACHE STRING "vcpkg triplet")
 endif ()
 
 set(CMAKE_TOOLCHAIN_FILE "d:/source/vcpkg/microsoft/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg file path")
