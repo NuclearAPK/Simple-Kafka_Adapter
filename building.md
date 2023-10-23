@@ -59,6 +59,7 @@ vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-linux
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
  ```
+
 **В файле В CMakeLists.txt требуется поменять пути до пакетного менеджера vcpkg и библиотек.**
 
 Дальнейшая сборка производится в штатной системе сборки, например, как CMake проект в Visual Studio C++.
