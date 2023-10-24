@@ -232,6 +232,9 @@ std::string SimpleKafka1C::extensionName()
 
 SimpleKafka1C::SimpleKafka1C()
 {
+	hProducer = NULL;
+	hConsumer = NULL;
+
     logDirectory = std::make_shared<variant_t>(std::string(""));
     formatLogFiles = std::make_shared<variant_t>(std::string("%Y%m%d")); // format date in log files
 
@@ -273,6 +276,12 @@ SimpleKafka1C::SimpleKafka1C()
     producerLogName = "producer_";
     dumpLogName = "dump_";
     statLogName = "statistics_";
+}
+
+SimpleKafka1C::~SimpleKafka1C()
+{
+	stopConsumer();
+	stopProducer();
 }
 
 //================================== Settings ==========================================
@@ -432,13 +441,22 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
 
 variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
+	if (hProducer == NULL)
+	{
+		throw std::runtime_error(u8"Продюсер не инициализирован");
+	}
 
     if (!std::holds_alternative<std::string>(msg))
     {
         throw std::runtime_error(u8"Неподдерживаемый тип данных сообщения");
     }
 
-    if (!std::holds_alternative<int>(partition))
+	if (!std::holds_alternative<std::string>(heads))
+	{
+		throw std::runtime_error(u8"Неподдерживаемый тип данных заголовков");
+	}
+	
+	if (!std::holds_alternative<int>(partition))
     {
         throw std::runtime_error(u8"Неверный тип данных партиции");
     }
@@ -448,8 +466,6 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
     auto currentPartition = std::get<int>(partition);
     std::vector<std::string> splitResult;
     std::ofstream eventFile;
-
-    boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
 
     
     if (!cl_dr_cb.logDir.empty()) {
@@ -461,7 +477,12 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
         eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);    
     }
 
-    RdKafka::Headers *hdrs = RdKafka::Headers::create();
+	RdKafka::Headers *hdrs = NULL;
+	if (std::get<std::string>(heads).size() > 0)
+	{
+		boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
+		RdKafka::Headers *hdrs = RdKafka::Headers::create();
+	}
 
     for (std::string &s : splitResult)
     {
@@ -506,8 +527,11 @@ retry:
         {
             msg_err = "Указанная тема не найдена в кластере Kafka";
         }
-        delete hdrs;
     }
+	if (hdrs != NULL)
+	{
+		delete hdrs;
+	}
 
     hProducer->poll(0);
 
@@ -537,8 +561,11 @@ variant_t SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const varia
 void SimpleKafka1C::stopProducer()
 {
 
-    hProducer->flush(10 * 1000 /* wait for max 10 seconds */);
-    delete hProducer;
+	if (hProducer != NULL)
+	{
+		hProducer->flush(10 * 1000 /* wait for max 10 seconds */);
+		delete hProducer;
+	}
 }
 
 //================================== Consumer ==========================================
@@ -638,6 +665,10 @@ void SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant
 
 variant_t SimpleKafka1C::consume()
 {
+	if (hConsumer == NULL)
+	{
+		throw std::runtime_error(u8"Консьюмер не инициализирован");
+	}
 
     std::ofstream eventFile;
     std::stringstream s;
@@ -744,9 +775,12 @@ bool SimpleKafka1C::commitOffset(const variant_t &topicName, const variant_t &of
 
 void SimpleKafka1C::stopConsumer()
 {
-    hConsumer->close();
-    delete hConsumer;
-    RdKafka::wait_destroyed(10 * 1000);
+	if (hConsumer != NULL)
+	{
+		hConsumer->close();
+		delete hConsumer;
+		RdKafka::wait_destroyed(10 * 1000);
+	}
 }
 
 //================================== Utilites ==========================================
