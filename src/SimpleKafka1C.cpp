@@ -476,7 +476,7 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 std::string SimpleKafka1C::clientID(){
     std::string result = "";
     
-    for (int i = 0; i < settings.size(); i++) {
+    for (size_t i = 0; i < settings.size(); i++) {
         if (settings[i].Key == "client.id") {
             result = settings[i].Value;
             break;
@@ -515,7 +515,7 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
         return false;
     }
 
-    for (int i = 0; i < settings.size(); i++)
+    for (size_t i = 0; i < settings.size(); i++)
     {
         if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
         {      
@@ -780,7 +780,7 @@ bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topi
     }
 
     // дополнительные параметры
-    for (int i = 0; i < settings.size(); i++)
+    for (size_t i = 0; i < settings.size(); i++)
     {
         if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
         {
