@@ -24,6 +24,13 @@
 #include <fstream>
 #include <cstdlib> 
 #include <algorithm>
+
+
+// кеш для хранение компилированных схем Avro
+std::map<std::string, avro::ValidSchema> schemesMap;
+std::vector<char> avroFile;
+
+
 //================================== Utilites ==========================================
 
 char *slice(char *s, size_t from, size_t to)
@@ -309,9 +316,6 @@ void SimpleKafka1C::setParameter(const variant_t &key, const variant_t &value)
     settings.push_back({std::get<std::string>(key), std::get<std::string>(value)});
 }
 
-// хранение схем Avro
-std::map<std::string, avro::ValidSchema> schemesMap;
-
 avro::ValidSchema getAvroSchema(std::string schemaJson) {
 	nlohmann::json schema = nlohmann::json::parse(schemaJson);
 
@@ -364,43 +368,18 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		jsonOutputArray.push_back(jsonOutputObject);
 	}
 
-	// Определяем расположение файла
-	char tempFileName[L_tmpnam];
-	std::tmpnam(tempFileName); // получаем уникальное имя временного файла (без расширения)
-
-	// Добавляем расширение к имени файла
-	std::string tempFileNameWithExtension = normalizePath(std::string(tempFileName) + ".avro");
-
-	std::ofstream tempFile(tempFileNameWithExtension);
-	tempFile.close();
-
-
-	avro::DataFileWriter<avro::GenericDatum> writer(tempFileNameWithExtension.c_str(), schema);
-
-	// Сохраняем данные о файле в свойство компоненты
-	avroFilePath = tempFileNameWithExtension;
-
-
 	avro::EncoderPtr e = avro::binaryEncoder();
-
-
-	//avro::DataFileWriter<avro::GenericDatum> writer1(std::move(os), schema);
-
-	std::stringstream ss;
-
-
-	ss << std::get<std::string>(schemaJson);
-
-	std::vector<uint8_t> buffer;
+	avroFile.clear();
+	std::string strJson = std::get<std::string>(msgJson);
+	avroFile.insert(avroFile.end(), strJson.begin(), strJson.end());
 
 	for (const auto &jsonRecord : jsonOutputArray) {
-		std::unique_ptr<avro::OutputStream> os = avro::memoryOutputStream();
+		std::unique_ptr<avro::OutputStream> os = avro::memoryOutputStream();	//todo попробовать вынести переменную и init за цикл
 		e->init(*os);
 		avro::GenericDatum datum(schema);
 		if (avro::AVRO_RECORD == datum.type()) {
 			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
 
-			int i = 0;
 			for (const auto& field : jsonRecord.items()) {
 				avro::GenericDatum &fieldDatum = record.field(field.key());
 
@@ -485,42 +464,14 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						}
 					}
 				}
-				i++;
 			}
-			//writer1.write(datum);
 			avro::GenericWriter::write(*e, datum);
 			e->flush();
 			std::shared_ptr<std::vector<uint8_t>> s = avro::snapshot(*os);
-			buffer.insert(buffer.end(), s->begin(), s->end());
-			
-			//ss.write(result.c_str(), result.length());
+			avroFile.insert(avroFile.end(), s->begin(), s->end());
 		}
 	}
-	//writer.close();
-	//writer1.flush();
-	std::string result(buffer.begin(), buffer.end());
-
-	/*std::vector<uint8_t> avroDataVector;
-	uint64_t dataSize = os->byteCount();
-	avroDataVector.resize(dataSize);
-	const uint8_t* dataPtr;
-	size_t bytesRead = 0;
-
-	while (bytesRead < dataSize) {
-		size_t chunkSize = min(dataSize - bytesRead, static_cast<size_t>(4096));
-		os->next(const_cast<uint8_t**>(&dataPtr), &chunkSize);
-
-		if (chunkSize == 0) {
-			break;
-		}
-
-		memcpy(&avroDataVector[bytesRead], dataPtr, chunkSize);
-		bytesRead += chunkSize;
-		os->backup(chunkSize);
-	}
-
-	std::string avroData(avroDataVector.begin(), avroDataVector.end());*/
-}
+}	
 
 std::string SimpleKafka1C::clientID(){
     std::string result = "";
@@ -616,7 +567,6 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
     std::string msg_err = "";
     std::string tTopicName = std::get<std::string>(topicName);
     auto currentPartition = std::get<int>(partition);
-    std::vector<std::string> splitResult;
     std::ofstream eventFile;
 
     
@@ -632,17 +582,17 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
 	RdKafka::Headers *hdrs = NULL;
 	if (std::get<std::string>(heads).size() > 0)
 	{
+		std::vector<std::string> splitResult;
 		boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
-		RdKafka::Headers *hdrs = RdKafka::Headers::create();
+		hdrs = RdKafka::Headers::create();
+		for (std::string &s : splitResult)
+		{
+			std::vector<std::string> hKeyValue;
+			boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
+			if (hKeyValue.size() == 2)
+				hdrs->add(hKeyValue[0], hKeyValue[1]);
+		}
 	}
-
-    for (std::string &s : splitResult)
-    {
-        std::vector<std::string> hKeyValue;
-        boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
-        if (hKeyValue.size() == 2)
-            hdrs->add(hKeyValue[0], hKeyValue[1]);
-    }
 
 retry:
     RdKafka::ErrorCode resp = hProducer->produce(
@@ -650,7 +600,7 @@ retry:
         currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
         RdKafka::Producer::RK_MSG_COPY,
         const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
-        const_cast<char *>(std::get<std::string>(key).c_str()), std::get<std::string>(key).size(),
+        std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
         0,
         hdrs,
         NULL);
@@ -712,34 +662,65 @@ variant_t SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const varia
 
 variant_t SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
+	if (hProducer == NULL)
+	{
+		throw std::runtime_error(u8"Продюсер не инициализирован");
+	}
+
+	std::string msg_err = "";
+	std::string tTopicName = std::get<std::string>(topicName);
+	auto currentPartition = std::get<int>(partition);
+	std::ofstream eventFile;
+
 	cl_dr_cb.delivered = false;
 	auto timestart = getTimeStamp();
 
-	std::ifstream file(avroFilePath);
+retry:
+	RdKafka::ErrorCode resp = hProducer->produce(
+		tTopicName,
+		currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+		RdKafka::Producer::RK_MSG_COPY,
+		avroFile.data(), avroFile.size(),
+		std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+		0,
+		NULL,
+		NULL);
 
-	std::string fileContents = "";
-	if (file.is_open()) {
-		// Определяем размер файла
-		file.seekg(0, std::ios::end);
-		size_t fileSize = file.tellg();
-		file.seekg(0, std::ios::beg);
-
-		// Выделяем строку под данные файла и читаем их
-		fileContents.resize(fileSize);
-		file.read(&fileContents[0], fileSize);
-
-		file.close();
-
-		// Очищаем файл
-		std::remove(avroFilePath.c_str());
-		avroFilePath = "";
-
+	if (resp != RdKafka::ERR_NO_ERROR)
+	{
+		if (resp == RdKafka::ERR__QUEUE_FULL)
+		{
+			hProducer->poll(1000 /*block for max 1000ms*/);
+			msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
+			if (eventFile.is_open()) {
+				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+			goto retry;
+		}
+		else if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
+		{
+			msg_err = "Размер сообщения превышает установленный максимальный размер: message.max.bytes";
+		}
+		else if (resp == RdKafka::ERR__UNKNOWN_PARTITION)
+		{
+			msg_err = "Запрошенный partition неизвестен в кластере Kafka";
+		}
+		else if (resp == RdKafka::ERR__UNKNOWN_TOPIC)
+		{
+			msg_err = "Указанная тема не найдена в кластере Kafka";
+		}
 	}
-	else {
+
+	hProducer->poll(0);
+
+	if (!msg_err.empty() && eventFile.is_open())
+	{
+		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return false;
 	}
 
-	produce(fileContents, topicName, partition, key, heads);
+	return true;
 
 	while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
 	{

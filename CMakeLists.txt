@@ -4,9 +4,21 @@ project(SimpleKafka1C)
 set(CMAKE_CXX_STANDARD 17)
 set(TARGET SimpleKafka1C)
 
-option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-option(STATIC_CRT "Static CRT linkage" ON)
-option(OUT_PARAMS "Support output parameters" OFF)
+if (UNIX)
+	option(CASE_INSENSITIVE "Case insensitive method names" OFF)
+	option(STATIC_CRT "Static CRT linkage" ON)
+	option(OUT_PARAMS "Support output parameters" OFF)
+	set(ZLIB_INCLUDE_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/include" CACHE STRING "zlib include dir")
+	set(RdKafka_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka" CACHE STRING "rdkafka cmake config")
+	set(LZ4_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/lz4_x64-linux/share/lz4" CACHE STRING "LZ4 cmake config")
+	set(unofficial-avro-cpp_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/share/unofficial-avro-cpp" CACHE STRING "avro-cpp cmake config")
+	set(unofficial-avro-cpp_INCLUDE_DIRS "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/include" CACHE STRING "avro-cpp include dir")
+	set(ZLIB_LIBRARY "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
+	set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
+endif ()
+
+set(CMAKE_TOOLCHAIN_FILE "d:/source/vcpkg/microsoft/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg file path")
+
 
 list(APPEND SOURCES
         src/addin.def
@@ -20,9 +32,18 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-add_library(${TARGET} SHARED  ${SOURCES})
+if (ANDROID)
+    list(APPEND SOURCES
+            src/jnienv.cpp
+            src/jnienv.h)
+endif ()
 
-target_compile_definitions(${TARGET} PRIVATE UNICODE  _UNICODE)
+add_library(${TARGET} SHARED
+        ${SOURCES})
+
+target_compile_definitions(${TARGET} PRIVATE
+        UNICODE
+        _UNICODE)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
@@ -32,7 +53,12 @@ if (OUT_PARAMS)
     target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
 endif ()
 
-target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
+if (UNIX)
+	target_include_directories(${TARGET} PRIVATE include)
+else()
+	target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
+endif ()
+
 if (WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif ()
@@ -57,6 +83,13 @@ if (UNIX)
     if (TARGET_ARCH STREQUAL "x86")
         set(CMAKE_C_FLAGS "-m32 ${CMAKE_C_FLAGS}")
         set(CMAKE_CXX_FLAGS "-m32 ${CMAKE_CXX_FLAGS}")
+    endif ()
+endif ()
+
+if (ANDROID)
+    if (CMAKE_BUILD_TYPE STREQUAL Release)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+                COMMAND ${CMAKE_STRIP} ${CMAKE_SHARED_LIBRARY_PREFIX}${TARGET}${CMAKE_SHARED_LIBRARY_SUFFIX})
     endif ()
 endif ()
 

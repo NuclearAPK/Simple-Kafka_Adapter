@@ -21,6 +21,7 @@ public:
     const char *Version = u8"1.3.1";
 
     SimpleKafka1C();
+	~SimpleKafka1C();
 
 private:
 
