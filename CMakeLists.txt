@@ -4,21 +4,9 @@ project(SimpleKafka1C)
 set(CMAKE_CXX_STANDARD 17)
 set(TARGET SimpleKafka1C)
 
-if (UNIX)
-	option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-	option(STATIC_CRT "Static CRT linkage" ON)
-	option(OUT_PARAMS "Support output parameters" OFF)
-	set(ZLIB_INCLUDE_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/include" CACHE STRING "zlib include dir")
-	set(RdKafka_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka" CACHE STRING "rdkafka cmake config")
-	set(LZ4_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/lz4_x64-linux/share/lz4" CACHE STRING "LZ4 cmake config")
-	set(unofficial-avro-cpp_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/share/unofficial-avro-cpp" CACHE STRING "avro-cpp cmake config")
-	set(unofficial-avro-cpp_INCLUDE_DIRS "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/include" CACHE STRING "avro-cpp include dir")
-	set(ZLIB_LIBRARY "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
-	set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
-endif ()
-
-set(CMAKE_TOOLCHAIN_FILE "d:/source/vcpkg/microsoft/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg file path")
-
+option(CASE_INSENSITIVE "Case insensitive method names" OFF)
+option(STATIC_CRT "Static CRT linkage" ON)
+option(OUT_PARAMS "Support output parameters" OFF)
 
 list(APPEND SOURCES
         src/addin.def
@@ -32,18 +20,9 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-if (ANDROID)
-    list(APPEND SOURCES
-            src/jnienv.cpp
-            src/jnienv.h)
-endif ()
+add_library(${TARGET} SHARED  ${SOURCES})
 
-add_library(${TARGET} SHARED
-        ${SOURCES})
-
-target_compile_definitions(${TARGET} PRIVATE
-        UNICODE
-        _UNICODE)
+target_compile_definitions(${TARGET} PRIVATE UNICODE  _UNICODE)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
@@ -53,12 +32,7 @@ if (OUT_PARAMS)
     target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
 endif ()
 
-if (UNIX)
-	target_include_directories(${TARGET} PRIVATE include)
-else()
-	target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
-endif ()
-
+target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
 if (WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 endif ()
@@ -86,13 +60,6 @@ if (UNIX)
     endif ()
 endif ()
 
-if (ANDROID)
-    if (CMAKE_BUILD_TYPE STREQUAL Release)
-        add_custom_command(TARGET ${TARGET} POST_BUILD
-                COMMAND ${CMAKE_STRIP} ${CMAKE_SHARED_LIBRARY_PREFIX}${TARGET}${CMAKE_SHARED_LIBRARY_SUFFIX})
-    endif ()
-endif ()
-
 set(Boost_USE_STATIC_LIBS ON) 
 set(Boost_USE_MULTITHREADED OFF)  
 set(Boost_USE_STATIC_RUNTIME ON) 
@@ -115,4 +82,10 @@ find_package(unofficial-avro-cpp CONFIG REQUIRED)
 if(unofficial-avro-cpp_FOUND)
     include_directories(${unofficial-avro-cpp_INCLUDE_DIRS})
 	target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
+endif()
+
+find_package(nlohmann_json CONFIG REQUIRED)
+if(nlohmann_json_FOUND)
+    include_directories(${nlohmann_json_INCLUDE_DIRS})
+	target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
 endif()

@@ -39,6 +39,8 @@ private:
     std::string dumpLogName;
     std::string statLogName; 
 
+	std::string avroFilePath; 
+
     std::string extensionName() override;
 
     // parameters set 
@@ -50,6 +52,7 @@ private:
     bool initProducer(const variant_t &brokers);
     variant_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
     variant_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	variant_t produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
     void stopProducer();
 
     // consumer
@@ -65,7 +68,7 @@ private:
     void sleep(const variant_t &delay);
 
 	// converting a message to avro format
-	void convertToAvroFormat(const variant_t &msg, const variant_t &schemaJson);
+	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson);
 
     struct KafkaSettings{
       std::string Key;
