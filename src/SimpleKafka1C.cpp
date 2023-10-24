@@ -3,7 +3,9 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#ifdef _WINDOWS
 #include <process.h>
+#endif
 #include "SimpleKafka1C.h"
 #include "md5.h"
 
@@ -15,10 +17,13 @@
 #include <avro/Generic.hh>
 #include <avro/DataFile.hh>
 #include <avro/Writer.hh>
-#include <memory>
 #include <avro/Stream.hh>
-#include <fstream>
 
+#include <nlohmann/json.hpp>
+
+#include <fstream>
+#include <cstdlib> 
+#include <algorithm>
 //================================== Utilites ==========================================
 
 char *slice(char *s, size_t from, size_t to)
@@ -35,13 +40,13 @@ const std::string currentDateTime()
     std::chrono::time_point now = std::chrono::high_resolution_clock::now();
     tm current{};
 
-    #ifdef _WINDOWS
-        time_t time = std::time(nullptr);      
-        localtime_s(&current, &time);
-    #else
-        auto time = std::chrono::system_clock::to_time_t(now);
-        current = *std::gmtime(&time);
-    #endif
+#ifdef _WINDOWS
+    time_t time = std::time(nullptr);      
+    localtime_s(&current, &time);
+#else
+    auto time = std::chrono::system_clock::to_time_t(now);
+    current = *std::gmtime(&time);
+#endif
 
     auto epoch = now.time_since_epoch();
     auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch).count() % 1000000000;
@@ -56,13 +61,13 @@ const std::string currentDateTime(char *format)
     std::chrono::time_point now = std::chrono::high_resolution_clock::now();
     tm current{};
 
-    #ifdef _WINDOWS
-        time_t time = std::time(nullptr);      
-        localtime_s(&current, &time);     
-    #else
-        auto time = std::chrono::system_clock::to_time_t(now);
-        current = *std::gmtime(&time);
-    #endif
+#ifdef _WINDOWS
+    time_t time = std::time(nullptr);      
+    localtime_s(&current, &time);     
+#else
+    auto time = std::chrono::system_clock::to_time_t(now);
+    current = *std::gmtime(&time);
+#endif
 
     std::ostringstream oss;
     oss << std::put_time(&current, format);
@@ -75,6 +80,16 @@ unsigned long long getTimeStamp()
 	unsigned long long time = (unsigned long long)curtime;
 	return time;
 }
+
+
+
+std::string normalizePath(const std::string& messyPath) {
+	std::filesystem::path path(messyPath);
+	std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path);
+	std::string npath = canonicalPath.make_preferred().string();
+	return npath;
+}
+
 //================================== Events callback ===================================
 
 void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event &event)
@@ -228,44 +243,50 @@ std::string SimpleKafka1C::extensionName()
     return "SimpleKafka1C";
 }
 
+
+
 SimpleKafka1C::SimpleKafka1C()
 {
-    logDirectory = std::make_shared<variant_t>(std::string(""));
-    formatLogFiles = std::make_shared<variant_t>(std::string("%Y%m%d")); // format date in log files
 
-    AddProperty(L"LogDirectory", L"КаталогЛогов", logDirectory);
-    AddProperty(L"FormatLogFiles", L"ФорматИмениФайловЛога", formatLogFiles);
-    AddProperty(L"Version", L"ВерсияКомпоненты", [&]()
-                {
-        auto s = std::string(Version);
-        return std::make_shared<variant_t>(std::move(s)); });
+	logDirectory = std::make_shared<variant_t>(std::string(""));
+	formatLogFiles = std::make_shared<variant_t>(std::string("%Y%m%d")); // format date in log files
 
-    AddMethod(L"SetParameter", L"УстановитьПараметр", this, &SimpleKafka1C::setParameter);
-    AddMethod(L"InitializeProducer", L"ИнициализироватьПродюсера", this, &SimpleKafka1C::initProducer);
-    AddMethod(L"Produce", L"ОтправитьСообщение", this, &SimpleKafka1C::produce,
-              {{2, -1}, {3, std::string("")}, {4, std::string("")}});
-    AddMethod(L"ProduceWithWaitResult", L"ОтправитьСообщениеСОжиданиемРезультата", this, &SimpleKafka1C::produceWithWaitResult,
-              {{2, -1}, {3, std::string("")}, {4, std::string("")}});
-    AddMethod(L"StopProducer", L"ОстановитьПродюсера", this, &SimpleKafka1C::stopProducer);
+	AddProperty(L"LogDirectory", L"КаталогЛогов", logDirectory);
+	AddProperty(L"FormatLogFiles", L"ФорматИмениФайловЛога", formatLogFiles);
+	AddProperty(L"Version", L"ВерсияКомпоненты", [&]()
+	{
+		auto s = std::string(Version);
+		return std::make_shared<variant_t>(std::move(s)); });
 
-    AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
-    AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
-    AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, {{2, 0}});
-    AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, {{2, 0}});
-    AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
-    AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
+	AddMethod(L"SetParameter", L"УстановитьПараметр", this, &SimpleKafka1C::setParameter);
+	AddMethod(L"InitializeProducer", L"ИнициализироватьПродюсера", this, &SimpleKafka1C::initProducer);
+	AddMethod(L"Produce", L"ОтправитьСообщение", this, &SimpleKafka1C::produce,
+		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
+	AddMethod(L"ProduceWithWaitResult", L"ОтправитьСообщениеСОжиданиемРезультата", this, &SimpleKafka1C::produceWithWaitResult,
+		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
+	AddMethod(L"produceDataFileToAvro", L"ОтправитьДанныеФайлаAVRO", this, &SimpleKafka1C::produceDataFileToAvro,
+		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
+	AddMethod(L"StopProducer", L"ОстановитьПродюсера", this, &SimpleKafka1C::stopProducer);
 
-    AddMethod(L"Message", L"Сообщить", this, &SimpleKafka1C::message);
-    AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
+	AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
+	AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
+	AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, { {2, 0} });
+	AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, { {2, 0} });
+	AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
+	AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
+
+	AddMethod(L"Message", L"Сообщить", this, &SimpleKafka1C::message);
+	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
 
 	AddMethod(L"convertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
 
+
     waitMessageTimeout = 500;
-    #ifdef _WINDOWS
-        pid = _getpid(); 
-    #else
-        pid = getpid(); 
-    #endif
+#ifdef _WINDOWS
+    pid = _getpid(); 
+#else
+    pid = getpid(); 
+#endif
 
     consumerLogName = "consumer_";
     producerLogName = "producer_";
@@ -280,83 +301,217 @@ void SimpleKafka1C::setParameter(const variant_t &key, const variant_t &value)
     settings.push_back({std::get<std::string>(key), std::get<std::string>(value)});
 }
 
+// хранение схем Avro
+std::map<std::string, avro::ValidSchema> schemesMap;
 
+avro::ValidSchema getAvroSchema(std::string schemaJson) {
+	nlohmann::json schema = nlohmann::json::parse(schemaJson);
 
-struct MyData {
-	std::string scscs;
-	std::string scsc;
+	std::string schemaName = schema["name"];
 
-	// Конструктор для удобства
-	MyData(const std::string& scscs, const std::string& scsc)
-		: scscs(scscs), scsc(scsc) {}
-};
+	avro::ValidSchema scheme;
 
-namespace avro {
-	template<> struct codec_traits<MyData> {
-		static void encode(Encoder& e, const MyData& v) {
-			avro::encode(e, v.scscs);
-			avro::encode(e, v.scsc);
-		}
-		static void decode(Decoder& d, MyData& v) {
-			avro::decode(d, v.scscs);
-			avro::decode(d, v.scsc);
-		}
-	};
-}
+	// Проверяем, существует ли схема с таким именем
+	auto it = schemesMap.find(schemaName);
 
-template<typename T>
-struct AvroData {
-	T data;
-
-	AvroData(const T& data) : data(data) {}
-};
-
-namespace avro {
-	template<typename T>
-	struct codec_traits<AvroData<T>> {
-		static void encode(Encoder& e, const AvroData<T>& v) {
-			avro::encode(e, v.data);
-		}
-		static void decode(Decoder& d, AvroData<T>& v) {
-			avro::decode(d, v.data);
-		}
-	};
-};
-
-template<typename T>
-void writeToAvroFile(const std::vector<AvroData<T>> &data, const variant_t &schemaJson) {
-	const char* dataFilename = "data.avro";
-	avro::ValidSchema schema = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
-
-	avro::DataFileWriter<AvroData<T>> writer(dataFilename, schema);
-
-	for (const AvroData<T>& item : data) {
-		writer.write(item);
+	if (it != schemesMap.end()) {
+		// Схема уже существует
+		scheme = it->second;
+	}
+	else {
+		// Схема не существует, компилируем и добавляем ее в map
+		avro::ValidSchema schemaValue = avro::compileJsonSchemaFromString(schemaJson);
+		schemesMap[schemaName] = schemaValue;
+		scheme = schemaValue;
 	}
 
-	writer.close();
+	return scheme;
 }
 
-void SimpleKafka1C::convertToAvroFormat(const variant_t &msg, const variant_t &schemaJson) {
+void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson) {
 
-	std::vector<AvroData<MyData>> myDataList = {
-		 AvroData(MyData("1", "Test1")),
-		 AvroData(MyData("2", "Test2"))
-	};
+	avro::ValidSchema schema = getAvroSchema(std::get<std::string>(schemaJson));
+	
+	// Разбираем исходный json
+	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
+	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
-	std::string schemaJsonTest = R"(
-        {
-            "type": "record",
-            "name": "Record",
-            "fields": [
-                {"name": "id", "type": "string"},
-                {"name": "rmis_id", "type": "string"}
-            ]
-        }
-    )";
+	nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
 
-	writeToAvroFile(myDataList, &schemaJsonTest);
+	nlohmann::ordered_json jsonOutputArray;
 
+	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
+	size_t numElements = jsonInput.begin().value().size();
+
+	for (size_t i = 0; i < numElements; i++) {
+		nlohmann::ordered_json jsonOutputObject;
+
+		for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it) {
+			const std::string &field_name = it.key();
+			const nlohmann::ordered_json &field_data = it.value();
+
+			jsonOutputObject[field_name] = field_data[i];
+		}
+
+		jsonOutputArray.push_back(jsonOutputObject);
+	}
+
+	// Определяем расположение файла
+	char tempFileName[L_tmpnam];
+	std::tmpnam(tempFileName); // получаем уникальное имя временного файла (без расширения)
+
+	// Добавляем расширение к имени файла
+	std::string tempFileNameWithExtension = normalizePath(std::string(tempFileName) + ".avro");
+
+	std::ofstream tempFile(tempFileNameWithExtension);
+	tempFile.close();
+
+
+	avro::DataFileWriter<avro::GenericDatum> writer(tempFileNameWithExtension.c_str(), schema);
+
+	// Сохраняем данные о файле в свойство компоненты
+	avroFilePath = tempFileNameWithExtension;
+
+
+	avro::EncoderPtr e = avro::binaryEncoder();
+
+
+	//avro::DataFileWriter<avro::GenericDatum> writer1(std::move(os), schema);
+
+	std::stringstream ss;
+
+
+	ss << std::get<std::string>(schemaJson);
+
+	std::vector<uint8_t> buffer;
+
+	for (const auto &jsonRecord : jsonOutputArray) {
+		std::unique_ptr<avro::OutputStream> os = avro::memoryOutputStream();
+		e->init(*os);
+		avro::GenericDatum datum(schema);
+		if (avro::AVRO_RECORD == datum.type()) {
+			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+
+			int i = 0;
+			for (const auto& field : jsonRecord.items()) {
+				avro::GenericDatum &fieldDatum = record.field(field.key());
+
+				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
+				// Тип устанавливается при помощи функции selectBranch() 
+				if (fieldDatum.isUnion()) {
+					fieldDatum.selectBranch(1);
+					switch (fieldDatum.type()) {
+					case avro::AVRO_STRING: {
+						const std::string jsonValue = field.value().get<std::string>();
+						if (jsonValue == "null") {
+							fieldDatum.selectBranch(0);
+							fieldDatum.value<avro::null>() = avro::null();
+						}
+						else {
+							fieldDatum.value<std::string>() = jsonValue;
+						}
+						break;
+					}
+					case avro::AVRO_LONG: {
+						if (field.value().is_string()) {
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							const int64_t jsonValue = field.value().get<int64_t>();
+							fieldDatum.value<int64_t>() = jsonValue;
+						}
+						break;
+
+					}
+					case avro::AVRO_INT: {
+						if (field.value().is_string()) {
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							const int jsonValue = field.value().get<int>();
+							fieldDatum.value<int>() = jsonValue;
+						}
+						break;
+					}
+					case avro::AVRO_BOOL: {
+						if (field.value().is_string()) {
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							const bool jsonValue = field.value().get<bool>();
+							fieldDatum.value<bool>() = jsonValue;
+						}
+						break;
+					}
+					case avro::AVRO_NULL: {
+						fieldDatum.value<avro::null>() = avro::null();
+						break;
+					}
+					}
+				}
+				else {
+					switch (fieldDatum.type()) {
+						case avro::AVRO_STRING: {
+							const std::string jsonValue = field.value().get<std::string>();
+							fieldDatum.value<std::string>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_LONG: {
+							const long long jsonValue = field.value().get<long long>();
+							fieldDatum.value<long long>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_INT: {
+							const int jsonValue = field.value().get<int>();
+							fieldDatum.value<int>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_BOOL: {
+							const bool jsonValue = field.value().get<bool>();
+							fieldDatum.value<bool>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_NULL: {
+							fieldDatum.value<avro::null>() = avro::null();
+							break;
+						}
+					}
+				}
+				i++;
+			}
+			//writer1.write(datum);
+			avro::GenericWriter::write(*e, datum);
+			e->flush();
+			std::shared_ptr<std::vector<uint8_t>> s = avro::snapshot(*os);
+			buffer.insert(buffer.end(), s->begin(), s->end());
+			
+			//ss.write(result.c_str(), result.length());
+		}
+	}
+	//writer.close();
+	//writer1.flush();
+	std::string result(buffer.begin(), buffer.end());
+
+	/*std::vector<uint8_t> avroDataVector;
+	uint64_t dataSize = os->byteCount();
+	avroDataVector.resize(dataSize);
+	const uint8_t* dataPtr;
+	size_t bytesRead = 0;
+
+	while (bytesRead < dataSize) {
+		size_t chunkSize = min(dataSize - bytesRead, static_cast<size_t>(4096));
+		os->next(const_cast<uint8_t**>(&dataPtr), &chunkSize);
+
+		if (chunkSize == 0) {
+			break;
+		}
+
+		memcpy(&avroDataVector[bytesRead], dataPtr, chunkSize);
+		bytesRead += chunkSize;
+		os->backup(chunkSize);
+	}
+
+	std::string avroData(avroDataVector.begin(), avroDataVector.end());*/
 }
 
 std::string SimpleKafka1C::clientID(){
@@ -386,7 +541,7 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
     cl_dr_cb.pid = pid;
     cl_dr_cb.clientid = clientID();
 
-    if (!cl_dr_cb.logDir.empty()) {
+	if (!cl_dr_cb.logDir.empty()) {
         std::string bufname = producerLogName;
 
         if (!cl_dr_cb.clientid.empty()) {
@@ -472,7 +627,7 @@ variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicNam
 retry:
     RdKafka::ErrorCode resp = hProducer->produce(
         tTopicName,
-        (currentPartition == -1) ? RdKafka::Topic::PARTITION_UA : currentPartition,
+        currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
         RdKafka::Producer::RK_MSG_COPY,
         const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
         const_cast<char *>(std::get<std::string>(key).c_str()), std::get<std::string>(key).size(),
@@ -530,6 +685,45 @@ variant_t SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const varia
     }
 
     return cl_dr_cb.delivered;
+}
+
+variant_t SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+{
+	cl_dr_cb.delivered = false;
+	auto timestart = getTimeStamp();
+
+	std::ifstream file(avroFilePath);
+
+	std::string fileContents = "";
+	if (file.is_open()) {
+		// Определяем размер файла
+		file.seekg(0, std::ios::end);
+		size_t fileSize = file.tellg();
+		file.seekg(0, std::ios::beg);
+
+		// Выделяем строку под данные файла и читаем их
+		fileContents.resize(fileSize);
+		file.read(&fileContents[0], fileSize);
+
+		file.close();
+
+		// Очищаем файл
+		std::remove(avroFilePath.c_str());
+		avroFilePath = "";
+
+	}
+	else {
+		return false;
+	}
+
+	produce(fileContents, topicName, partition, key, heads);
+
+	while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
+	{
+		hProducer->poll(1000);
+	}
+
+	return cl_dr_cb.delivered;
 }
 
 void SimpleKafka1C::stopProducer()
