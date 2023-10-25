@@ -1,17 +1,7 @@
 #ifndef SIMPLEKAFKA1C_H
 #define SIMPLEKAFKA1C_H
 
-#include <chrono>
-#include <iomanip>
-#include <sstream>
-#include <stdexcept>
-#include <string>
-#include <thread>
-#include <fstream>
-#include <map>
-#include <algorithm>
 #include <librdkafka/rdkafkacpp.h>
-
 #include <avro/Stream.hh>
 #include "Component.h"
 
@@ -71,7 +61,8 @@ private:
     void sleep(const variant_t &delay);
 
 	// converting a message to avro format
-	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson);
+	void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
+	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
 	void saveAvroFile(const variant_t &fileName);
 
     struct KafkaSettings{
