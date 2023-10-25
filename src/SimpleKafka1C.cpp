@@ -465,7 +465,9 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	}
 
 	writer.flush();
+	avroFile.clear();
 	memOutStr.snapshot(avroFile);
+	writer.close();
 }	
 
 void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
