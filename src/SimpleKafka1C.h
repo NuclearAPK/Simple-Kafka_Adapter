@@ -117,7 +117,7 @@ private:
     clRebalanceCb cl_rebalance_cb;
 };
 
-// class from avro-cpp internal (Stream.cc)
+// internal class from avro-cpp (Stream.cc)
 class MemoryOutputStream : public avro::OutputStream 
 {
 public:
