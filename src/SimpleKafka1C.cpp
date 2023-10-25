@@ -887,12 +887,6 @@ void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
 {
-
-	// Разбираем исходный json
-	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
-	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
-
-	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 	std::shared_ptr<avro::ValidSchema> schema;
 	if (it != schemesMap.end()) 
@@ -903,6 +897,12 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	{
 		throw std::runtime_error(u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName));
 	}
+
+	// Разбираем исходный json
+	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
+	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
+
+	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
 	nlohmann::ordered_json jsonOutputArray;
 
 	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
