@@ -9,8 +9,10 @@
 #include <thread>
 #include <fstream>
 #include <map>
+#include <algorithm>
 #include <librdkafka/rdkafkacpp.h>
 
+#include <avro/Stream.hh>
 #include "Component.h"
 
 //static std::string logsReportFileName;
@@ -70,6 +72,7 @@ private:
 
 	// converting a message to avro format
 	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson);
+	void saveAvroFile(const variant_t &fileName);
 
     struct KafkaSettings{
       std::string Key;
@@ -118,6 +121,58 @@ private:
     clEventCb cl_event_cb;
     clDeliveryReportCb cl_dr_cb;
     clRebalanceCb cl_rebalance_cb;
+};
+
+// class from avro-cpp internal (Stream.cc)
+class MemoryOutputStream : public avro::OutputStream {
+public:
+	const size_t chunkSize_;
+	std::vector<uint8_t *> data_;
+	size_t available_;
+	size_t byteCount_;
+
+	explicit MemoryOutputStream(size_t chunkSize) : chunkSize_(chunkSize),
+		available_(0), byteCount_(0) {}
+
+	~MemoryOutputStream() final {
+		for (std::vector<uint8_t *>::const_iterator it = data_.begin();
+			it != data_.end(); ++it) {
+			delete[] * it;
+		}
+	}
+
+	bool next(uint8_t **data, size_t *len) final {
+		if (available_ == 0) {
+			data_.push_back(new uint8_t[chunkSize_]);
+			available_ = chunkSize_;
+		}
+		*data = &data_.back()[chunkSize_ - available_];
+		*len = available_;
+		byteCount_ += available_;
+		available_ = 0;
+		return true;
+	}
+
+	void backup(size_t len) final {
+		available_ += len;
+		byteCount_ -= len;
+	}
+
+	uint64_t byteCount() const final {
+		return byteCount_;
+	}
+
+	void flush() final {}
+
+	void snapshot(std::vector<uint8_t> &result) {
+		size_t c = byteCount_;
+		result.reserve(byteCount_);
+		for (auto it = data_.begin(); it != data_.end(); ++it) {
+			const size_t n = min(c, chunkSize_);
+			std::copy(*it, *it + n, std::back_inserter(result));
+			c -= n;
+		}
+	}
 };
 
 #endif //SIMPLEKAFKA1C_H
