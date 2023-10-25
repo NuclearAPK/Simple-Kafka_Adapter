@@ -365,8 +365,8 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		jsonOutputArray.push_back(jsonOutputObject);
 	}
 
-	MemoryOutputStream memOutStr(4096);
-	std::unique_ptr<avro::OutputStream> os(&memOutStr);
+	MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+	std::unique_ptr<avro::OutputStream> os(memOutStr);
 
 	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 	
