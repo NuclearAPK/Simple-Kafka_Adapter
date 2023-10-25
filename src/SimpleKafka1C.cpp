@@ -848,17 +848,20 @@ void SimpleKafka1C::sleep(const variant_t &delay)
 
 
 //================================== Avro ==========================================
-std::shared_ptr<avro::ValidSchema> getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson) {
+std::shared_ptr<avro::ValidSchema> getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson) 
+{
 	std::shared_ptr<avro::ValidSchema> schema;
 
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(schemaJsonName);
 
-	if (it != schemesMap.end()) {
+	if (it != schemesMap.end()) 
+	{
 		// Схема уже существует
 		schema = it->second;
 	}
-	else {
+	else 
+	{
 		// Схема не существует, компилируем и добавляем ее в map
 		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJson);
 		schema = std::make_shared<avro::ValidSchema>(compiledScheme);
@@ -868,11 +871,13 @@ std::shared_ptr<avro::ValidSchema> getAvroSchema(const std::string &schemaJsonNa
 	return schema;
 }
 
-void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) {
+void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
+{
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 
-	if (it == schemesMap.end()) {
+	if (it == schemesMap.end()) 
+	{
 		// Схема не существует, компилируем и добавляем ее в map
 		const auto compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
 		auto schema = std::make_shared<avro::ValidSchema>(compiledScheme);
@@ -880,7 +885,8 @@ void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant
 	}
 }
 
-void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) {
+void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
+{
 
 	// Разбираем исходный json
 	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
@@ -889,10 +895,12 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 	std::shared_ptr<avro::ValidSchema> schema;
-	if (it != schemesMap.end()) {
+	if (it != schemesMap.end()) 
+	{
 		schema = it->second;
 	}
-	else {
+	else 
+	{
 		throw std::runtime_error(u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName));
 	}
 	nlohmann::ordered_json jsonOutputArray;
@@ -900,10 +908,12 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
 	size_t numElements = jsonInput.begin().value().size();
 
-	for (size_t i = 0; i < numElements; i++) {
+	for (size_t i = 0; i < numElements; i++) 
+	{
 		nlohmann::ordered_json jsonOutputObject;
 
-		for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it) {
+		for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it) 
+		{
 			const std::string &field_name = it.key();
 			const nlohmann::ordered_json &field_data = it.value();
 
@@ -916,96 +926,115 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	std::unique_ptr<avro::OutputStream> os(memOutStr);
 	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), *schema);
 
-	for (const auto &jsonRecord : jsonOutputArray) {
+	for (const auto &jsonRecord : jsonOutputArray) 
+	{
 		avro::GenericDatum datum(*schema);
-		if (avro::AVRO_RECORD == datum.type()) {
+		if (avro::AVRO_RECORD == datum.type()) 
+		{
 			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
 
-			for (const auto& field : jsonRecord.items()) {
+			for (const auto& field : jsonRecord.items()) 
+			{
 				avro::GenericDatum &fieldDatum = record.field(field.key());
 
 				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
 				// Тип устанавливается при помощи функции selectBranch() 
-				if (fieldDatum.isUnion()) {
+				if (fieldDatum.isUnion()) 
+				{
 					fieldDatum.selectBranch(1);
-					switch (fieldDatum.type()) {
-					case avro::AVRO_STRING: {
-						const std::string jsonValue = field.value().get<std::string>();
-						if (jsonValue == "null") {
-							fieldDatum.selectBranch(0);
-							fieldDatum.value<avro::null>() = avro::null();
+					switch (fieldDatum.type()) 
+					{
+						case avro::AVRO_STRING: {
+							const std::string jsonValue = field.value().get<std::string>();
+							if (jsonValue == "null") 
+							{
+								fieldDatum.selectBranch(0);
+								fieldDatum.value<avro::null>() = avro::null();
+							}
+							else 
+							{
+								fieldDatum.value<std::string>() = jsonValue;
+							}
+							break;
 						}
-						else 
+						case avro::AVRO_LONG: 
 						{
-							fieldDatum.value<std::string>() = jsonValue;
-						}
-						break;
-					}
-					case avro::AVRO_LONG: {
-						if (field.value().is_string()) {
-							fieldDatum.selectBranch(0);
-						}
-						else 
-						{
-							const int64_t jsonValue = field.value().get<int64_t>();
-							fieldDatum.value<int64_t>() = jsonValue;
-						}
-						break;
+							if (field.value().is_string()) {
+								fieldDatum.selectBranch(0);
+							}
+							else 
+							{
+								const int64_t jsonValue = field.value().get<int64_t>();
+								fieldDatum.value<int64_t>() = jsonValue;
+							}
+							break;
 
-					}
-					case avro::AVRO_INT: {
-						if (field.value().is_string()) {
-							fieldDatum.selectBranch(0);
 						}
-						else {
+						case avro::AVRO_INT: 
+						{
+							if (field.value().is_string()) 
+							{
+								fieldDatum.selectBranch(0);
+							}
+							else {
+								const int jsonValue = field.value().get<int>();
+								fieldDatum.value<int>() = jsonValue;
+							}
+							break;
+						}
+						case avro::AVRO_BOOL: 
+						{
+							if (field.value().is_string()) 
+							{
+								fieldDatum.selectBranch(0);
+							}
+							else 
+							{
+								const bool jsonValue = field.value().get<bool>();
+								fieldDatum.value<bool>() = jsonValue;
+							}
+							break;
+						}
+						case avro::AVRO_NULL: 
+						{
+							fieldDatum.value<avro::null>() = avro::null();
+							break;
+						}
+					}
+				}
+				else 
+				{
+					switch (fieldDatum.type()) 
+					{
+						case avro::AVRO_STRING: 
+						{
+							const std::string jsonValue = field.value().get<std::string>();
+							fieldDatum.value<std::string>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_LONG: 
+						{
+							const long long jsonValue = field.value().get<long long>();
+							fieldDatum.value<long long>() = jsonValue;
+							break;
+						}
+						case avro::AVRO_INT: 
+						{
 							const int jsonValue = field.value().get<int>();
 							fieldDatum.value<int>() = jsonValue;
+							break;
 						}
-						break;
-					}
-					case avro::AVRO_BOOL: {
-						if (field.value().is_string()) {
-							fieldDatum.selectBranch(0);
-						}
-						else 
+						case avro::AVRO_BOOL: 
 						{
 							const bool jsonValue = field.value().get<bool>();
 							fieldDatum.value<bool>() = jsonValue;
+							break;
 						}
-						break;
-					}
-					case avro::AVRO_NULL: {
-						fieldDatum.value<avro::null>() = avro::null();
-						break;
-					}
-					}
-				}
-				else {
-					switch (fieldDatum.type()) {
-					case avro::AVRO_STRING: {
-						const std::string jsonValue = field.value().get<std::string>();
-						fieldDatum.value<std::string>() = jsonValue;
-						break;
-					}
-					case avro::AVRO_LONG: {
-						const long long jsonValue = field.value().get<long long>();
-						fieldDatum.value<long long>() = jsonValue;
-						break;
-					}
-					case avro::AVRO_INT: {
-						const int jsonValue = field.value().get<int>();
-						fieldDatum.value<int>() = jsonValue;
-						break;
-					}
-					case avro::AVRO_BOOL: {
-						const bool jsonValue = field.value().get<bool>();
-						fieldDatum.value<bool>() = jsonValue;
-						break;
-					}
-					case avro::AVRO_NULL: {
-						fieldDatum.value<avro::null>() = avro::null();
-						break;
-					}
+						case avro::AVRO_NULL: 
+						{
+							fieldDatum.value<avro::null>() = avro::null();
+							break;
+						}
 					}
 				}
 			}
