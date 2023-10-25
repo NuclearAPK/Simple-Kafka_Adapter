@@ -340,14 +340,12 @@ avro::ValidSchema getAvroSchema(std::string schemaJson) {
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson) {
 
-	avro::ValidSchema schema = getAvroSchema(std::get<std::string>(schemaJson));
-	
 	// Разбираем исходный json
 	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
 	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
+	avro::ValidSchema schema = getAvroSchema(std::get<std::string>(schemaJson));
 	nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
-
 	nlohmann::ordered_json jsonOutputArray;
 
 	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
@@ -367,7 +365,6 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 	MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
 	std::unique_ptr<avro::OutputStream> os(memOutStr);
-
 	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 	
 	for (const auto &jsonRecord : jsonOutputArray) {
@@ -466,7 +463,7 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 	writer.flush();
 	avroFile.clear();
-	memOutStr.snapshot(avroFile);
+	memOutStr->snapshot(avroFile);
 	writer.close();
 }	
 
