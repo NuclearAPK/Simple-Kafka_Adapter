@@ -18,13 +18,17 @@
 #include <avro/DataFile.hh>
 #include <avro/Writer.hh>
 #include <avro/Stream.hh>
-
 #include <nlohmann/json.hpp>
 
 #include <fstream>
 #include <cstdlib> 
 #include <algorithm>
-
+#include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/filter/zlib.hpp>
+#include <boost/random/mersenne_twister.hpp>
+#include <array>
+#include <random>
 
 // кеш для хранение компилированных схем Avro
 std::map<std::string, avro::ValidSchema> schemesMap;
@@ -250,8 +254,6 @@ std::string SimpleKafka1C::extensionName()
     return "SimpleKafka1C";
 }
 
-
-
 SimpleKafka1C::SimpleKafka1C()
 {
 	hProducer = NULL;
@@ -303,11 +305,7 @@ SimpleKafka1C::SimpleKafka1C()
     statLogName = "statistics_";
 }
 
-SimpleKafka1C::~SimpleKafka1C()
-{
-	stopConsumer();
-	stopProducer();
-}
+SimpleKafka1C::~SimpleKafka1C(){}
 
 //================================== Settings ==========================================
 
@@ -321,24 +319,68 @@ avro::ValidSchema getAvroSchema(std::string schemaJson) {
 
 	std::string schemaName = schema["name"];
 
-	avro::ValidSchema scheme;
+	avro::ValidSchema validSchema;
 
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(schemaName);
 
 	if (it != schemesMap.end()) {
 		// Схема уже существует
-		scheme = it->second;
+		validSchema = it->second;
 	}
 	else {
 		// Схема не существует, компилируем и добавляем ее в map
 		avro::ValidSchema schemaValue = avro::compileJsonSchemaFromString(schemaJson);
 		schemesMap[schemaName] = schemaValue;
-		scheme = schemaValue;
+		validSchema = schemaValue;
 	}
 
-	return scheme;
+	return validSchema;
 }
+
+class MemoryOutputStream : public avro::OutputStream {
+public:
+	const size_t chunkSize_;
+	std::vector<uint8_t *> data_;
+	size_t available_;
+	size_t byteCount_;
+
+	explicit MemoryOutputStream(size_t chunkSize) : chunkSize_(chunkSize),
+		available_(0), byteCount_(0) {}
+
+	bool next(uint8_t **data, size_t *len) final {
+		if (available_ == 0) {
+			data_.push_back(new uint8_t[chunkSize_]);
+			available_ = chunkSize_;
+		}
+		*data = &data_.back()[chunkSize_ - available_];
+		*len = available_;
+		byteCount_ += available_;
+		available_ = 0;
+		return true;
+	}
+
+	void backup(size_t len) final {
+		available_ += len;
+		byteCount_ -= len;
+	}
+
+	uint64_t byteCount() const final {
+		return byteCount_;
+	}
+
+	void flush() final {}
+
+	std::shared_ptr<std::vector<uint8_t>> getDataStream() {
+		std::shared_ptr<std::vector<uint8_t>> s = std::make_shared<std::vector<uint8_t>>();
+		s->reserve(byteCount());
+
+		for (const auto& buffer : data_) {
+			s->insert(s->end(), buffer, buffer + chunkSize_);
+		}
+		return s;
+	}
+};
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJson) {
 
@@ -364,18 +406,15 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 			jsonOutputObject[field_name] = field_data[i];
 		}
-
 		jsonOutputArray.push_back(jsonOutputObject);
 	}
 
-	avro::EncoderPtr e = avro::binaryEncoder();
-	avroFile.clear();
-	std::string strJson = std::get<std::string>(msgJson);
-	avroFile.insert(avroFile.end(), strJson.begin(), strJson.end());
+	MemoryOutputStream memOutStr(4096);
+	std::unique_ptr<avro::OutputStream> os(&memOutStr);
 
+	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
+	
 	for (const auto &jsonRecord : jsonOutputArray) {
-		std::unique_ptr<avro::OutputStream> os = avro::memoryOutputStream();	//todo попробовать вынести переменную и init за цикл
-		e->init(*os);
 		avro::GenericDatum datum(schema);
 		if (avro::AVRO_RECORD == datum.type()) {
 			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
@@ -465,12 +504,14 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 					}
 				}
 			}
-			avro::GenericWriter::write(*e, datum);
-			e->flush();
-			std::shared_ptr<std::vector<uint8_t>> s = avro::snapshot(*os);
-			avroFile.insert(avroFile.end(), s->begin(), s->end());
+			writer.write(datum);
 		}
 	}
+
+	writer.flush();
+	std::shared_ptr<std::vector<uint8_t>> dataStream = memOutStr.getDataStream();
+
+	avroFile.insert(avroFile.end(), dataStream->begin(), dataStream->end());
 }	
 
 std::string SimpleKafka1C::clientID(){
