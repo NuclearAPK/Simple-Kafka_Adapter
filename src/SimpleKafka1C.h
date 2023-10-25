@@ -8,7 +8,8 @@
 //static std::string logsReportFileName;
 //static bool delivered;
 
-class SimpleKafka1C final : public Component {
+class SimpleKafka1C final : public Component 
+{
 public:
     const char *Version = u8"1.3.1";
 
@@ -70,8 +71,9 @@ private:
       std::string Value;
     };
 
-    class clEventCb : public RdKafka::EventCb {
-      public:
+    class clEventCb : public RdKafka::EventCb 
+	{
+    public:
         unsigned pid;        
         char *formatLogFiles;
         std::string logDir = "";
@@ -82,8 +84,9 @@ private:
         void event_cb (RdKafka::Event &event);
     };
 
-    class clDeliveryReportCb : public RdKafka::DeliveryReportCb {
-      public:
+    class clDeliveryReportCb : public RdKafka::DeliveryReportCb 
+	{
+    public:
         unsigned pid;
         bool delivered = false;
         char *formatLogFiles;
@@ -115,7 +118,8 @@ private:
 };
 
 // class from avro-cpp internal (Stream.cc)
-class MemoryOutputStream : public avro::OutputStream {
+class MemoryOutputStream : public avro::OutputStream 
+{
 public:
 	const size_t chunkSize_;
 	std::vector<uint8_t *> data_;
@@ -125,15 +129,17 @@ public:
 	explicit MemoryOutputStream(size_t chunkSize) : chunkSize_(chunkSize),
 		available_(0), byteCount_(0) {}
 
-	~MemoryOutputStream() final {
+	~MemoryOutputStream() final 
+	{
 		for (std::vector<uint8_t *>::const_iterator it = data_.begin();
-			it != data_.end(); ++it) {
-			delete[] * it;
-		}
+			it != data_.end(); ++it) 
+				delete[] * it;
 	}
 
-	bool next(uint8_t **data, size_t *len) final {
-		if (available_ == 0) {
+	bool next(uint8_t **data, size_t *len) final 
+	{
+		if (available_ == 0) 
+		{
 			data_.push_back(new uint8_t[chunkSize_]);
 			available_ = chunkSize_;
 		}
@@ -144,21 +150,25 @@ public:
 		return true;
 	}
 
-	void backup(size_t len) final {
+	void backup(size_t len) final 
+	{
 		available_ += len;
 		byteCount_ -= len;
 	}
 
-	uint64_t byteCount() const final {
+	uint64_t byteCount() const final 
+	{
 		return byteCount_;
 	}
 
 	void flush() final {}
 
-	void snapshot(std::vector<uint8_t> &result) {
+	void snapshot(std::vector<uint8_t> &result) 
+	{
 		size_t c = byteCount_;
 		result.reserve(byteCount_);
-		for (auto it = data_.begin(); it != data_.end(); ++it) {
+		for (auto it = data_.begin(); it != data_.end(); ++it) 
+		{
 			const size_t n = min(c, chunkSize_);
 			std::copy(*it, *it + n, std::back_inserter(result));
 			c -= n;
