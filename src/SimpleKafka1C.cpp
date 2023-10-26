@@ -8,7 +8,6 @@
 #endif
 #include <avro/Encoder.hh>
 #include <avro/Specific.hh>
-#include <avro/ValidSchema.hh>
 #include <avro/Compiler.hh>
 #include <avro/Types.hh>
 #include <avro/Generic.hh>
@@ -21,9 +20,6 @@
 #include "md5.h"
 #include "SimpleKafka1C.h"
 
-
-std::map<std::string, std::shared_ptr<avro::ValidSchema>> schemesMap;	// кеш для хранение компилированных схем Avro
-std::vector<uint8_t> avroFile;		// формируемый avro
 
 
 //================================== Utilites ==========================================
@@ -848,7 +844,7 @@ void SimpleKafka1C::sleep(const variant_t &delay)
 
 
 //================================== Avro ==========================================
-std::shared_ptr<avro::ValidSchema> getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson) 
+std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson)
 {
 	std::shared_ptr<avro::ValidSchema> schema;
 
@@ -1050,10 +1046,16 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
 {
+#ifdef _WINDOWS
+	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
+	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
+	out.close(); 
+#else
 	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
 	std::wstring fileNameUTF8 = converter.from_bytes(std::get<std::string>(fileName));
 
-	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
+	std::ofstream out(std::get<std::string>(fileNameUTF8), std::ios::out | std::ios::binary);
 	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
 	out.close();
+#endif
 }
