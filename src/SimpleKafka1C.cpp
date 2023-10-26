@@ -481,12 +481,6 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 
 bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
-	if (hProducer == NULL)
-	{
-		msg_err = "Продюсер не инициализирован";
-		return false;
-	}
-	
 	cl_dr_cb.delivered = false;
     auto timestart = getTimeStamp();
     bool ret = produce(msg, topicName, partition, key, heads);
