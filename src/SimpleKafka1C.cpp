@@ -713,6 +713,7 @@ variant_t SimpleKafka1C::consume()
 		return "";
 	}
 
+	msg_err = "";
     std::ofstream eventFile;
     std::stringstream s;
 
