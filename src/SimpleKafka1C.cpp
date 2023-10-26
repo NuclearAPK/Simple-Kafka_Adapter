@@ -269,11 +269,12 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"Message", L"Сообщить", this, &SimpleKafka1C::message);
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
 
-	AddMethod(L"putAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
-	AddMethod(L"convertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
-	AddMethod(L"produceDataFileToAvro", L"ОтправитьДанныеФайлаAVRO", this, &SimpleKafka1C::produceDataFileToAvro,
+	AddMethod(L"PutAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
+	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
+	AddMethod(L"ProduceDataFileToAvro", L"ОтправитьДанныеФайлаAVRO", this, &SimpleKafka1C::produceDataFileToAvro,
 		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
-	AddMethod(L"saveAvroFile", L"СохранитьФайлAVRO", this, &SimpleKafka1C::saveAvroFile);
+	AddMethod(L"SaveAvroFile", L"СохранитьФайлAVRO", this, &SimpleKafka1C::saveAvroFile);
+	AddMethod(L"GetLastError", L"ПолучитьСообщениеОбОшибке", this, &SimpleKafka1C::getLastError);
 
 
     waitMessageTimeout = 500;
@@ -291,6 +292,10 @@ SimpleKafka1C::SimpleKafka1C()
 
 SimpleKafka1C::~SimpleKafka1C(){}
 
+std::string SimpleKafka1C::getLastError()
+{
+	return msg_err;
+}
 //================================== Settings ==========================================
 
 void SimpleKafka1C::setParameter(const variant_t &key, const variant_t &value)
@@ -319,7 +324,7 @@ std::string SimpleKafka1C::clientID()
 bool SimpleKafka1C::initProducer(const variant_t &brokers)
 {
     std::ofstream eventFile;
-    std::string msg_err = "";
+    msg_err = "";
     
     RdKafka::Conf *conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
 
@@ -364,7 +369,7 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
 
     delete conf;
     
-    if(eventFile.is_open())
+    if (eventFile.is_open())
 	{
         eventFile.close();
     } 
@@ -372,129 +377,118 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
     return true;
 }
 
-variant_t SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
 	if (hProducer == NULL)
 	{
-		throw std::runtime_error(u8"Продюсер не инициализирован");
+		msg_err = "Продюсер не инициализирован";
+		return false;
 	}
-    if (!std::holds_alternative<std::string>(msg))
-    {
-        throw std::runtime_error(u8"Неподдерживаемый тип данных сообщения");
-    }
-	if (!std::holds_alternative<std::string>(heads))
+
+	try
 	{
-		throw std::runtime_error(u8"Неподдерживаемый тип данных заголовков");
-	}
-	if (!std::holds_alternative<int>(partition))
-    {
-        throw std::runtime_error(u8"Неверный тип данных партиции");
-    }
+		msg_err = "";
+		std::string tTopicName = std::get<std::string>(topicName);
+		auto currentPartition = std::get<int>(partition);
+		std::ofstream eventFile;
 
-    std::string msg_err = "";
-    std::string tTopicName = std::get<std::string>(topicName);
-    auto currentPartition = std::get<int>(partition);
-    std::ofstream eventFile;
 
-    
-    if (!cl_dr_cb.logDir.empty()) {
-        std::string bufname = producerLogName;
+		if (!cl_dr_cb.logDir.empty()) {
+			std::string bufname = producerLogName;
 
-        if (!cl_dr_cb.clientid.empty()) {
-            bufname = bufname + cl_dr_cb.clientid + "_";   
-        }
-        eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);    
-    }
+			if (!cl_dr_cb.clientid.empty()) {
+				bufname = bufname + cl_dr_cb.clientid + "_";
+			}
+			eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);
+		}
 
-	RdKafka::Headers *hdrs = NULL;
-	if (std::get<std::string>(heads).size() > 0)
-	{
-		std::vector<std::string> splitResult;
-		boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
-		hdrs = RdKafka::Headers::create();
-		for (std::string &s : splitResult)
+		RdKafka::Headers *hdrs = NULL;
+		if (std::get<std::string>(heads).size() > 0)
 		{
-			std::vector<std::string> hKeyValue;
-			boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
-			if (hKeyValue.size() == 2)
-				hdrs->add(hKeyValue[0], hKeyValue[1]);
+			std::vector<std::string> splitResult;
+			boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
+			hdrs = RdKafka::Headers::create();
+			for (std::string &s : splitResult)
+			{
+				std::vector<std::string> hKeyValue;
+				boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
+				if (hKeyValue.size() == 2)
+					hdrs->add(hKeyValue[0], hKeyValue[1]);
+			}
+		}
+
+	retry:
+		RdKafka::ErrorCode resp = hProducer->produce(
+			tTopicName,
+			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+			RdKafka::Producer::RK_MSG_COPY,
+			const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
+			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+			0,
+			hdrs,
+			NULL);
+
+		if (resp != RdKafka::ERR_NO_ERROR)
+		{
+			if (resp == RdKafka::ERR__QUEUE_FULL)
+			{
+				hProducer->poll(1000 /*block for max 1000ms*/);
+				msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
+				if (eventFile.is_open()) {
+					eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+				goto retry;
+			}
+			else if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
+			{
+				msg_err = "Размер сообщения превышает установленный максимальный размер: message.max.bytes";
+			}
+			else if (resp == RdKafka::ERR__UNKNOWN_PARTITION)
+			{
+				msg_err = "Запрошенный partition неизвестен в кластере Kafka";
+			}
+			else if (resp == RdKafka::ERR__UNKNOWN_TOPIC)
+			{
+				msg_err = "Указанная тема не найдена в кластере Kafka";
+			}
+		}
+		if (hdrs != NULL)
+		{
+			delete hdrs;
+		}
+
+		hProducer->poll(0);
+
+		if (!msg_err.empty())
+		{
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+			return false;
 		}
 	}
-
-retry:
-    RdKafka::ErrorCode resp = hProducer->produce(
-        tTopicName,
-        currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-        RdKafka::Producer::RK_MSG_COPY,
-        const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
-        std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-        0,
-        hdrs,
-        NULL);
-
-    if (resp != RdKafka::ERR_NO_ERROR)
-    {
-        if (resp == RdKafka::ERR__QUEUE_FULL)
-        {
-            hProducer->poll(1000 /*block for max 1000ms*/);
-            msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
-            if (eventFile.is_open()){
-                eventFile << currentDateTime() << " Error: " << msg_err << std::endl;    
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-            goto retry;
-        }
-        else if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
-        {
-            msg_err = "Размер сообщения превышает установленный максимальный размер: message.max.bytes";
-        }
-        else if (resp == RdKafka::ERR__UNKNOWN_PARTITION)
-        {
-            msg_err = "Запрошенный partition неизвестен в кластере Kafka";
-        }
-        else if (resp == RdKafka::ERR__UNKNOWN_TOPIC)
-        {
-            msg_err = "Указанная тема не найдена в кластере Kafka";
-        }
-    }
-	if (hdrs != NULL)
+	catch (std::exception const& ex)
 	{
-		delete hdrs;
+		msg_err = ex.what();
+		return false;
 	}
-
-    hProducer->poll(0);
-
-    if (!msg_err.empty() && eventFile.is_open())
-    {
-        eventFile << currentDateTime() << " Error: " << msg_err << std::endl;    
-        return false;
-    }
 
     return true;
 }
 
-variant_t SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
 	if (hProducer == NULL)
 	{
-		throw std::runtime_error(u8"Продюсер не инициализирован");
-	}
-	if (!std::holds_alternative<std::string>(msg))
-	{
-		throw std::runtime_error(u8"Неподдерживаемый тип данных сообщения");
-	}
-	if (!std::holds_alternative<std::string>(heads))
-	{
-		throw std::runtime_error(u8"Неподдерживаемый тип данных заголовков");
-	}
-	if (!std::holds_alternative<int>(partition))
-	{
-		throw std::runtime_error(u8"Неверный тип данных партиции");
+		msg_err = "Продюсер не инициализирован";
+		return false;
 	}
 	
 	cl_dr_cb.delivered = false;
     auto timestart = getTimeStamp();
-    produce(msg, topicName, partition, key, heads);
+    bool ret = produce(msg, topicName, partition, key, heads);
+	if (!ret)
+		return false;
 
     while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
     {
@@ -504,79 +498,72 @@ variant_t SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const varia
     return cl_dr_cb.delivered;
 }
 
-variant_t SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+bool SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
 	if (hProducer == NULL)
 	{
-		throw std::runtime_error(u8"Продюсер не инициализирован");
-	}
-	if (!std::holds_alternative<std::string>(heads))
-	{
-		throw std::runtime_error(u8"Неподдерживаемый тип данных заголовков");
-	}
-	if (!std::holds_alternative<int>(partition))
-	{
-		throw std::runtime_error(u8"Неверный тип данных партиции");
+		msg_err = "Продюсер не инициализирован";
 	}
 
-	std::string msg_err = "";
-	std::string tTopicName = std::get<std::string>(topicName);
-	auto currentPartition = std::get<int>(partition);
-	std::ofstream eventFile;
-
-	cl_dr_cb.delivered = false;
-	auto timestart = getTimeStamp();
-
-retry:
-	RdKafka::ErrorCode resp = hProducer->produce(
-		tTopicName,
-		currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-		RdKafka::Producer::RK_MSG_COPY,
-		avroFile.data(), avroFile.size(),
-		std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-		0,
-		NULL,
-		NULL);
-
-	if (resp != RdKafka::ERR_NO_ERROR)
+	try
 	{
-		if (resp == RdKafka::ERR__QUEUE_FULL)
+		msg_err = "";
+		std::string tTopicName = std::get<std::string>(topicName);
+		auto currentPartition = std::get<int>(partition);
+		std::ofstream eventFile;
+
+		cl_dr_cb.delivered = false;
+		auto timestart = getTimeStamp();
+
+	retry:
+		RdKafka::ErrorCode resp = hProducer->produce(
+			tTopicName,
+			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+			RdKafka::Producer::RK_MSG_COPY,
+			avroFile.data(), avroFile.size(),
+			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+			0,
+			NULL,
+			NULL);
+
+		if (resp != RdKafka::ERR_NO_ERROR)
 		{
-			hProducer->poll(1000 /*block for max 1000ms*/);
-			msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
-			if (eventFile.is_open()) {
-				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+			if (resp == RdKafka::ERR__QUEUE_FULL)
+			{
+				hProducer->poll(1000 /*block for max 1000ms*/);
+				msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
+				if (eventFile.is_open()) {
+					eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+				goto retry;
 			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			goto retry;
+			else if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
+				msg_err = "Размер сообщения превышает установленный максимальный размер: message.max.bytes";
+			else if (resp == RdKafka::ERR__UNKNOWN_PARTITION)
+				msg_err = "Запрошенный partition неизвестен в кластере Kafka";
+			else if (resp == RdKafka::ERR__UNKNOWN_TOPIC)
+				msg_err = "Указанная тема не найдена в кластере Kafka";
 		}
-		else if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
+
+		hProducer->poll(0);
+
+		if (!msg_err.empty())
 		{
-			msg_err = "Размер сообщения превышает установленный максимальный размер: message.max.bytes";
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+			return false;
 		}
-		else if (resp == RdKafka::ERR__UNKNOWN_PARTITION)
+
+		while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
 		{
-			msg_err = "Запрошенный partition неизвестен в кластере Kafka";
-		}
-		else if (resp == RdKafka::ERR__UNKNOWN_TOPIC)
-		{
-			msg_err = "Указанная тема не найдена в кластере Kafka";
+			hProducer->poll(1000);
 		}
 	}
-
-	hProducer->poll(0);
-
-	if (!msg_err.empty() && eventFile.is_open())
+	catch (std::exception const& ex)
 	{
-		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		msg_err = ex.what();
 		return false;
-	}
-
-	return true;
-
-	while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
-	{
-		hProducer->poll(1000);
 	}
 
 	return cl_dr_cb.delivered;
@@ -596,107 +583,138 @@ void SimpleKafka1C::stopProducer()
 
 bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topic)
 {
-    std::string msg_err = "";
-    std::ofstream eventFile;
-    std::vector<std::string> topics;
+	try
+	{
+		msg_err = "";
+		std::ofstream eventFile;
+		std::vector<std::string> topics;
 
-    RdKafka::Conf *conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+		RdKafka::Conf *conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
 
-    cl_event_cb.logDir = std::get<std::string>(*logDirectory);
-    cl_event_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
-    cl_event_cb.consumerLogName = consumerLogName;
-    cl_event_cb.statLogName = statLogName;
-    cl_event_cb.pid = pid;
-    cl_event_cb.clientid = clientID();
+		cl_event_cb.logDir = std::get<std::string>(*logDirectory);
+		cl_event_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
+		cl_event_cb.consumerLogName = consumerLogName;
+		cl_event_cb.statLogName = statLogName;
+		cl_event_cb.pid = pid;
+		cl_event_cb.clientid = clientID();
 
-    if (!cl_event_cb.logDir.empty()) {
-        std::string bufname = consumerLogName;
-        if (!cl_event_cb.clientid.empty()) {
-            bufname = bufname + cl_event_cb.clientid + "_";    
-        }
-        eventFile.open(cl_event_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_event_cb.formatLogFiles) + ".log", std::ios_base::app);    
-    }
+		if (!cl_event_cb.logDir.empty())
+		{
+			std::string bufname = consumerLogName;
+			if (!cl_event_cb.clientid.empty())
+			{
+				bufname = bufname + cl_event_cb.clientid + "_";
+			}
+			eventFile.open(cl_event_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_event_cb.formatLogFiles) + ".log", std::ios_base::app);
+		}
 
-    if (eventFile.is_open())
-        eventFile << currentDateTime() << " Librdkafka version: " << RdKafka::version_str()
-                << " (" << RdKafka::version() << ")" << std::endl;
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Librdkafka version: " << RdKafka::version_str()
+			<< " (" << RdKafka::version() << ")" << std::endl;
 
-    boost::algorithm::split(topics, std::get<std::string>(topic), boost::is_any_of(","));
+		boost::algorithm::split(topics, std::get<std::string>(topic), boost::is_any_of(","));
 
-    // обязательный параметр
-    if (conf->set("metadata.broker.list", std::get<std::string>(brokers), msg_err) != RdKafka::Conf::CONF_OK)
-    {
-        if (eventFile.is_open())
-             eventFile << currentDateTime() << msg_err << std::endl;
-        return false;
-    }
+		// обязательный параметр
+		if (conf->set("metadata.broker.list", std::get<std::string>(brokers), msg_err) != RdKafka::Conf::CONF_OK)
+		{
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << msg_err << std::endl;
+			return false;
+		}
 
-    // дополнительные параметры
-    for (size_t i = 0; i < settings.size(); i++)
-    {
-        if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-        {
-            if (eventFile.is_open())
-                eventFile << currentDateTime() << msg_err << std::endl;
-            return false;
-        }
-    }
+		// дополнительные параметры
+		for (size_t i = 0; i < settings.size(); i++)
+		{
+			if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
+			{
+				if (eventFile.is_open())
+					eventFile << currentDateTime() << msg_err << std::endl;
+				return false;
+			}
+		}
 
-    // обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
-    conf->set("event_cb", &cl_event_cb, msg_err);
+		// обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
+		conf->set("event_cb", &cl_event_cb, msg_err);
 
-    if(cl_rebalance_cb.assignOffset > 0) {
-        conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
-    }  
+		if (cl_rebalance_cb.assignOffset > 0)
+		{
+			conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
+		}
 
-    hConsumer = RdKafka::KafkaConsumer::create(conf, msg_err);
-    if (!hConsumer)
-    {
-        if (eventFile.is_open())
-            eventFile << currentDateTime() << msg_err << std::endl;
-        return false;
-    }
+		hConsumer = RdKafka::KafkaConsumer::create(conf, msg_err);
+		if (!hConsumer)
+		{
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << msg_err << std::endl;
+			return false;
+		}
 
-    if (eventFile.is_open())
-        eventFile << currentDateTime() << " Created consumer: " << hConsumer->name() << std::endl;
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Created consumer: " << hConsumer->name() << std::endl;
 
-    RdKafka::ErrorCode resp = hConsumer->subscribe(topics);
+		RdKafka::ErrorCode resp = hConsumer->subscribe(topics);
 
-    if (resp != RdKafka::ERR_NO_ERROR)
-    {
-        msg_err = RdKafka::err2str(resp);
-        if (eventFile.is_open())
-            eventFile << currentDateTime() << " Failed to start consumer: " << msg_err << std::endl;
-        return false;
-    }
+		if (resp != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(resp);
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Failed to start consumer: " << msg_err << std::endl;
+			return false;
+		}
 
-    if (eventFile.is_open()) eventFile.close();
+		if (eventFile.is_open())
+			eventFile.close();
 
-    delete conf;
+		delete conf;
+	}
+	catch (const std::exception &e)
+	{
+		msg_err = e.what();
+		return false;
+	}
+
     return true;
 }
 
-void SimpleKafka1C::setWaitingTimeout(const variant_t &timeout)
+bool SimpleKafka1C::setWaitingTimeout(const variant_t &timeout)
 {
-    waitMessageTimeout = std::get<int32_t>(timeout);
+	try
+	{
+	    waitMessageTimeout = std::get<int32_t>(timeout);
+	}
+	catch (const std::exception &e)
+	{
+		msg_err = e.what();
+		return false;
+	}
+	return true;
 }
 
-void SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition){
-    cl_rebalance_cb.assignOffset = std::get<int32_t>(offset);
-    cl_rebalance_cb.assignTopic = std::get<std::string>(topicName);
-    cl_rebalance_cb.assignPartition = std::get<int32_t>(partition);
+bool SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition)
+{
+	try
+	{
+		cl_rebalance_cb.assignOffset = std::get<int32_t>(offset);
+		cl_rebalance_cb.assignTopic = std::get<std::string>(topicName);
+		cl_rebalance_cb.assignPartition = std::get<int32_t>(partition);
+	}
+	catch (const std::exception &e)
+	{
+		msg_err = e.what();
+		return false;
+	}
 }
 
 variant_t SimpleKafka1C::consume()
 {
 	if (hConsumer == NULL)
 	{
-		throw std::runtime_error(u8"Консьюмер не инициализирован");
+		msg_err = "Консьюмер не инициализирован";
+		return "";
 	}
 
     std::ofstream eventFile;
     std::stringstream s;
-    std::string emptystr = "";
 
     boost::property_tree::ptree jsonObj;
 
@@ -758,24 +776,26 @@ variant_t SimpleKafka1C::consume()
         }
         else
         {
+			msg_err = msg->errstr();
             if (eventFile.is_open() && resultConsume != RdKafka::ERR__TIMED_OUT)
             {
-                eventFile << currentDateTime() << " Error: " << msg->errstr() << std::endl;
+                eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
                 eventFile.close();
             }
             delete msg;
-            return emptystr;
+            return "";
         }
     }
     catch (const std::exception &e)
     {
+		msg_err = e.what();
         if (eventFile.is_open())
         {
-            eventFile << currentDateTime() << " Error: " << e.what() << std::endl;
+            eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
             eventFile.close();
         }
 
-        return emptystr;
+        return "";
     }
 
     boost::property_tree::write_json(s, jsonObj, true);
@@ -784,20 +804,28 @@ variant_t SimpleKafka1C::consume()
 
 bool SimpleKafka1C::commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition)
 {
-    std::vector<RdKafka::TopicPartition *> offsets;
+	try
+	{
+		std::vector<RdKafka::TopicPartition *> offsets;
 
-    std::int32_t tOffset = std::get<std::int32_t>(offset); 
-    std::int32_t tPartition = std::get<std::int32_t>(partition);
-    std::string tTopicName = std::get<std::string>(topicName);
+		std::int32_t tOffset = std::get<std::int32_t>(offset);
+		std::int32_t tPartition = std::get<std::int32_t>(partition);
+		std::string tTopicName = std::get<std::string>(topicName);
 
-    RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
-    offsets.push_back(ptr);
+		RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
+		offsets.push_back(ptr);
 
-    if (hConsumer->offsets_store(offsets) != RdKafka::ERR_NO_ERROR)
-    {
-        return false;
-    }
-    return true;
+		if (hConsumer->offsets_store(offsets) != RdKafka::ERR_NO_ERROR)
+		{
+			return false;
+		}
+	}
+	catch (std::exception const& e)
+	{
+		msg_err = e.what();
+		return false;
+	}
+	return true;
 }
 
 void SimpleKafka1C::stopConsumer()
@@ -838,10 +866,18 @@ void SimpleKafka1C::message(const variant_t &msg)
                msg);
 }
 
-void SimpleKafka1C::sleep(const variant_t &delay)
+bool SimpleKafka1C::sleep(const variant_t &delay)
 {
-    using namespace std;
-    this_thread::sleep_for(chrono::seconds(get<int32_t>(delay)));
+	try
+	{
+		using namespace std;
+		this_thread::sleep_for(chrono::seconds(get<int32_t>(delay)));
+	}
+	catch (const std::exception &e)
+	{
+		msg_err = e.what();
+		return false;
+	}
 }
 
 
@@ -868,97 +904,109 @@ avro::ValidSchema SimpleKafka1C::getAvroSchema(const std::string &schemaJsonName
 	return schema;
 }
 
-void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
+bool SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson)
 {
-	// Проверяем, существует ли схема с таким именем
-	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
-
-	if (it == schemesMap.end())
+	try
 	{
-		// Схема не существует, компилируем и добавляем ее в map
-		const avro::ValidSchema compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
-		schemesMap[std::get<std::string>(schemaJsonName)] = compiledScheme;
+		// Проверяем, существует ли схема с таким именем
+		auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+
+		if (it == schemesMap.end())
+		{
+			// Схема не существует, компилируем и добавляем ее в map
+			const avro::ValidSchema compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
+			schemesMap[std::get<std::string>(schemaJsonName)] = compiledScheme;
+		}
 	}
+	catch (std::bad_variant_access const& ex)
+	{
+		msg_err = ex.what();
+		return false;
+	}
+	return false;
 }
 
-void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
+bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
 {
-	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
-	avro::ValidSchema schema;
-	if (it != schemesMap.end()) 
+	try
 	{
-		schema = it->second;
-	}
-	else 
-	{
-		throw std::runtime_error(u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName));
-	}
-
-	// Разбираем исходный json
-	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
-	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
-
-	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
-	nlohmann::ordered_json jsonOutputArray;
-
-	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
-	size_t numElements = jsonInput.begin().value().size();
-
-	for (size_t i = 0; i < numElements; i++) 
-	{
-		nlohmann::ordered_json jsonOutputObject;
-
-		for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it) 
+		auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+		avro::ValidSchema schema;
+		if (it != schemesMap.end())
 		{
-			const std::string &field_name = it.key();
-			const nlohmann::ordered_json &field_data = it.value();
-
-			jsonOutputObject[field_name] = field_data[i];
+			schema = it->second;
 		}
-		jsonOutputArray.push_back(jsonOutputObject);
-	}
-
-	MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
-	std::unique_ptr<avro::OutputStream> os(memOutStr);
-	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
-
-	for (const auto &jsonRecord : jsonOutputArray) 
-	{
-		avro::GenericDatum datum(schema);
-		if (avro::AVRO_RECORD == datum.type()) 
+		else
 		{
-			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+			msg_err = "Имя схемы не известно - " + std::get<std::string>(schemaJsonName);
+			return false;
+		}
 
-			for (const auto& field : jsonRecord.items()) 
+		// Разбираем исходный json
+		// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
+		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
+
+		const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
+		nlohmann::ordered_json jsonOutputArray;
+
+		// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
+		size_t numElements = jsonInput.begin().value().size();
+
+		for (size_t i = 0; i < numElements; i++)
+		{
+			nlohmann::ordered_json jsonOutputObject;
+
+			for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it)
 			{
-				avro::GenericDatum &fieldDatum = record.field(field.key());
+				const std::string &field_name = it.key();
+				const nlohmann::ordered_json &field_data = it.value();
 
-				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
-				// Тип устанавливается при помощи функции selectBranch() 
-				if (fieldDatum.isUnion()) 
+				jsonOutputObject[field_name] = field_data[i];
+			}
+			jsonOutputArray.push_back(jsonOutputObject);
+		}
+
+		MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+		std::unique_ptr<avro::OutputStream> os(memOutStr);
+		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
+
+		for (const auto &jsonRecord : jsonOutputArray)
+		{
+			avro::GenericDatum datum(schema);
+			if (avro::AVRO_RECORD == datum.type())
+			{
+				avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+
+				for (const auto& field : jsonRecord.items())
 				{
-					fieldDatum.selectBranch(1);
-					switch (fieldDatum.type()) 
+					avro::GenericDatum &fieldDatum = record.field(field.key());
+
+					// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
+					// Тип устанавливается при помощи функции selectBranch() 
+					if (fieldDatum.isUnion())
 					{
+						fieldDatum.selectBranch(1);
+						switch (fieldDatum.type())
+						{
 						case avro::AVRO_STRING: {
 							const std::string jsonValue = field.value().get<std::string>();
-							if (jsonValue == "null") 
+							if (jsonValue == "null")
 							{
 								fieldDatum.selectBranch(0);
 								fieldDatum.value<avro::null>() = avro::null();
 							}
-							else 
+							else
 							{
 								fieldDatum.value<std::string>() = jsonValue;
 							}
 							break;
 						}
-						case avro::AVRO_LONG: 
+						case avro::AVRO_LONG:
 						{
 							if (field.value().is_string()) {
 								fieldDatum.selectBranch(0);
 							}
-							else 
+							else
 							{
 								const int64_t jsonValue = field.value().get<int64_t>();
 								fieldDatum.value<int64_t>() = jsonValue;
@@ -966,9 +1014,9 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							break;
 
 						}
-						case avro::AVRO_INT: 
+						case avro::AVRO_INT:
 						{
-							if (field.value().is_string()) 
+							if (field.value().is_string())
 							{
 								fieldDatum.selectBranch(0);
 							}
@@ -978,75 +1026,91 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							}
 							break;
 						}
-						case avro::AVRO_BOOL: 
+						case avro::AVRO_BOOL:
 						{
-							if (field.value().is_string()) 
+							if (field.value().is_string())
 							{
 								fieldDatum.selectBranch(0);
 							}
-							else 
+							else
 							{
 								const bool jsonValue = field.value().get<bool>();
 								fieldDatum.value<bool>() = jsonValue;
 							}
 							break;
 						}
-						case avro::AVRO_NULL: 
+						case avro::AVRO_NULL:
 						{
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
 						}
+						}
 					}
-				}
-				else 
-				{
-					switch (fieldDatum.type()) 
+					else
 					{
-						case avro::AVRO_STRING: 
+						switch (fieldDatum.type())
+						{
+						case avro::AVRO_STRING:
 						{
 							const std::string jsonValue = field.value().get<std::string>();
 							fieldDatum.value<std::string>() = jsonValue;
 							break;
 						}
-						case avro::AVRO_LONG: 
+						case avro::AVRO_LONG:
 						{
 							const long long jsonValue = field.value().get<long long>();
 							fieldDatum.value<long long>() = jsonValue;
 							break;
 						}
-						case avro::AVRO_INT: 
+						case avro::AVRO_INT:
 						{
 							const int jsonValue = field.value().get<int>();
 							fieldDatum.value<int>() = jsonValue;
 							break;
 						}
-						case avro::AVRO_BOOL: 
+						case avro::AVRO_BOOL:
 						{
 							const bool jsonValue = field.value().get<bool>();
 							fieldDatum.value<bool>() = jsonValue;
 							break;
 						}
-						case avro::AVRO_NULL: 
+						case avro::AVRO_NULL:
 						{
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
 						}
+						}
 					}
 				}
+				writer.write(datum);
 			}
-			writer.write(datum);
 		}
-	}
 
-	writer.flush();
-	avroFile.clear();
-	memOutStr->snapshot(avroFile);
-	writer.close();
+		writer.flush();
+		avroFile.clear();
+		memOutStr->snapshot(avroFile);
+		writer.close();
+	}
+	catch (std::exception const& ex)
+	{
+		msg_err = ex.what();
+		return false;
+	}
+	return true;
 }
 
-void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
+bool SimpleKafka1C::saveAvroFile(const variant_t &fileName)
 {
-	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
-	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
-	out.close(); 
+	try
+	{
+		std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
+		out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
+		out.close(); 
+	}
+	catch (std::exception const& ex)
+	{
+		msg_err = ex.what();
+		return false;
+	}
+	return true;
 }

@@ -33,6 +33,7 @@ private:
 	std::string producerLogName;
 	std::string dumpLogName;
 	std::string statLogName;
+	std::string msg_err;
 
 	std::map<std::string, avro::ValidSchema> schemesMap;	// кеш для хранение компилированных схем Avro
 	std::vector<uint8_t> avroFile;		// формируемый avro
@@ -42,12 +43,13 @@ private:
 	void setParameter(const variant_t &key, const variant_t &value);
 	std::string clientID();
 	std::string extensionName();
+	std::string getLastError();
 
 	// producer
 	bool initProducer(const variant_t &brokers);
-	variant_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	variant_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	variant_t produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	avro::ValidSchema getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson);
 	void stopProducer();
 
@@ -55,18 +57,18 @@ private:
 	bool initConsumer(const variant_t &brokers, const variant_t &topic);
 	variant_t consume();
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
-	void setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
+	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	void stopConsumer();
-	void setWaitingTimeout(const variant_t &timeout);
+	bool setWaitingTimeout(const variant_t &timeout);
 
-	// default component implementation
+	// Utilites
 	void message(const variant_t &msg);
-	void sleep(const variant_t &delay);
+	bool sleep(const variant_t &delay);
 
 	// converting a message to avro format
-	void putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
-	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
-	void saveAvroFile(const variant_t &fileName);
+	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
+	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
+	bool saveAvroFile(const variant_t &fileName);
 
 	struct KafkaSettings {
 		std::string Key;
