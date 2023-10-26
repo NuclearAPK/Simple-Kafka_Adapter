@@ -95,12 +95,14 @@ void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event &event)
     std::ofstream eventFile;
     std::ofstream statFile;
 
-    if (!logDir.empty()){
+    if (!logDir.empty())
+	{
 
         std::string bufnameCS = consumerLogName;
         std::string bufnameST = statLogName;
 
-        if (!clientid.empty()) {
+        if (!clientid.empty()) 
+		{
             bufnameCS = bufnameCS + clientid + "_";   
             bufnameST = bufnameST + clientid + "_";  
         }
@@ -153,11 +155,12 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message &message)
     std::ofstream eventFile;
     std::string status_name;
 
-    if (!logDir.empty()) {
-               
+    if (!logDir.empty()) 
+	{
         std::string bufname = producerLogName;
 
-        if (!clientid.empty()) {
+        if (!clientid.empty()) 
+		{
             bufname = bufname + clientid + "_";   
         }
         eventFile.open(logDir + bufname + std::to_string(pid) + "_" + currentDateTime(formatLogFiles) + ".log", std::ios_base::app);    
@@ -180,7 +183,8 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message &message)
         break;
     }
 
-    if (eventFile.is_open()) {
+    if (eventFile.is_open()) 
+	{
         eventFile << currentDateTime();
 
         if (message.key()->length())
@@ -304,11 +308,14 @@ void SimpleKafka1C::setParameter(const variant_t &key, const variant_t &value)
 }
 
 
-std::string SimpleKafka1C::clientID(){
+std::string SimpleKafka1C::clientID()
+{
     std::string result = "";
     
-    for (size_t i = 0; i < settings.size(); i++) {
-        if (settings[i].Key == "client.id") {
+    for (size_t i = 0; i < settings.size(); i++) 
+	{
+        if (settings[i].Key == "client.id") 
+		{
             result = settings[i].Value;
             break;
         }
@@ -366,7 +373,8 @@ bool SimpleKafka1C::initProducer(const variant_t &brokers)
 
     delete conf;
     
-    if(eventFile.is_open()){
+    if(eventFile.is_open())
+	{
         eventFile.close();
     } 
 
@@ -701,9 +709,11 @@ variant_t SimpleKafka1C::consume()
 
     boost::property_tree::ptree jsonObj;
 
-    if (!cl_event_cb.logDir.empty()) {
+    if (!cl_event_cb.logDir.empty()) 
+	{
         std::string bufname = consumerLogName;
-        if (!cl_event_cb.clientid.empty()) {
+        if (!cl_event_cb.clientid.empty()) 
+		{
             bufname = bufname + cl_event_cb.clientid + "_";    
         }
         eventFile.open(cl_event_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_event_cb.formatLogFiles) + ".log", std::ios_base::app);    
@@ -748,7 +758,8 @@ variant_t SimpleKafka1C::consume()
             jsonObj.put("topic", msg->topic_name());
             jsonObj.put("timestamp", ts.timestamp);
 
-            if (headersChildren.size()) {
+            if (headersChildren.size()) 
+			{
                 jsonObj.put_child("headers", headersChildren);    
             }      
 
@@ -869,18 +880,29 @@ std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::strin
 
 void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
 {
+	std::ofstream log("/home/log.txt", std::ios::out);
+	log << "1" << std::endl;
 	std::string schemaJsonUTF8 = stringToUtf8(schemaJson);;
+	log << "2" << " " << std::get<std::string>(schemaJsonName) << std::endl;
 
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+	log << "3" << std::endl;
 
 	if (it == schemesMap.end()) 
 	{
+		log << "4" << std::endl;
 		// Схема не существует, компилируем и добавляем ее в map
 		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJsonUTF8);
+		log << "5" << std::endl;
 		auto schema = std::make_shared<avro::ValidSchema>(compiledScheme);
+		log << "6" << std::endl;
 		schemesMap[std::get<std::string>(schemaJsonName)] = schema;
+		log << "7" << std::endl;
 	}
+	log << "8" << std::endl;
+	log.close();
+	log << "9" << std::endl;
 }
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
