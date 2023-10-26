@@ -1051,11 +1051,9 @@ void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
 {
 #ifdef _WINDOWS
 	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
-	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
-	out.close(); 
 #else
 	std::ofstream out(stringToUtf8(fileName), std::ios::out | std::ios::binary);
-	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
-	out.close();
 #endif
+	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
+	out.close(); 
 }
