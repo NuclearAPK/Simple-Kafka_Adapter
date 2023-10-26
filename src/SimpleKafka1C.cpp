@@ -703,6 +703,7 @@ bool SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant
 		msg_err = e.what();
 		return false;
 	}
+	return true;
 }
 
 variant_t SimpleKafka1C::consume()
@@ -879,6 +880,7 @@ bool SimpleKafka1C::sleep(const variant_t &delay)
 		msg_err = e.what();
 		return false;
 	}
+	return true;
 }
 
 
