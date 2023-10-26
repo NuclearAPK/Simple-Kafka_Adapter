@@ -885,27 +885,6 @@ bool SimpleKafka1C::sleep(const variant_t &delay)
 
 
 //================================== Avro ==========================================
-avro::ValidSchema SimpleKafka1C::getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson)
-{
-	avro::ValidSchema schema;
-
-	// Проверяем, существует ли схема с таким именем
-	auto it = schemesMap.find(schemaJsonName);
-
-	if (it != schemesMap.end()) 
-	{
-		// Схема уже существует
-		schema = it->second;
-	}
-	else 
-	{
-		// Схема не существует, компилируем и добавляем ее в map
-		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJson);
-		schemesMap[schemaJsonName] = compiledScheme;
-	}
-
-	return schema;
-}
 
 bool SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson)
 {

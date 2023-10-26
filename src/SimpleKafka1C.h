@@ -50,7 +50,6 @@ private:
 	bool produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	bool produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	bool produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	avro::ValidSchema getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson);
 	void stopProducer();
 
 	// consumer
