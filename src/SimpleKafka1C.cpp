@@ -82,9 +82,8 @@ unsigned long long getTimeStamp()
 std::string stringToUtf8(const variant_t &str)
 {
 	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-
-	std::wstring interStr = converter.from_bytes(std::get<std::string>(str));
-	return converter.to_bytes(interStr);
+	std::string s = std::get<std::string>(str);
+	return converter.to_bytes((wchar_t*)s.c_str());
 }
 
 
