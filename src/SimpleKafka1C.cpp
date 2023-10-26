@@ -289,7 +289,11 @@ SimpleKafka1C::SimpleKafka1C()
     statLogName = "statistics_";
 }
 
-SimpleKafka1C::~SimpleKafka1C(){}
+SimpleKafka1C::~SimpleKafka1C()
+{
+	stopConsumer();
+	stopProducer();
+}
 
 std::string SimpleKafka1C::getLastError()
 {
