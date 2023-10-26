@@ -34,21 +34,21 @@ private:
 	std::string dumpLogName;
 	std::string statLogName;
 
-	std::map<std::string, std::shared_ptr<avro::ValidSchema>> schemesMap;	// кеш для хранение компилированных схем Avro
+	std::map<std::string, avro::ValidSchema> schemesMap;	// кеш для хранение компилированных схем Avro
 	std::vector<uint8_t> avroFile;		// формируемый avro
 
 	// parameters set 
 	// https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
 	void setParameter(const variant_t &key, const variant_t &value);
 	std::string clientID();
-	std::string SimpleKafka1C::extensionName();
+	std::string extensionName();
 
 	// producer
 	bool initProducer(const variant_t &brokers);
 	variant_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	variant_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	variant_t produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	std::shared_ptr<avro::ValidSchema> getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson);
+	avro::ValidSchema getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson);
 	void stopProducer();
 
 	// consumer
@@ -64,7 +64,7 @@ private:
 	void sleep(const variant_t &delay);
 
 	// converting a message to avro format
-	void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
+	void putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
 	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
 	void saveAvroFile(const variant_t &fileName);
 

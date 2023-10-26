@@ -79,14 +79,6 @@ unsigned long long getTimeStamp()
 	return time;
 }
 
-std::string stringToUtf8(const variant_t &str)
-{
-	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-	std::string s = std::get<std::string>(str);
-	return converter.to_bytes((wchar_t*)s.c_str());
-}
-
-
 //================================== Events callback ===================================
 
 void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event &event)
@@ -854,9 +846,9 @@ void SimpleKafka1C::sleep(const variant_t &delay)
 
 
 //================================== Avro ==========================================
-std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson)
+avro::ValidSchema SimpleKafka1C::getAvroSchema(const std::string &schemaJsonName, const std::string &schemaJson)
 {
-	std::shared_ptr<avro::ValidSchema> schema;
+	avro::ValidSchema schema;
 
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(schemaJsonName);
@@ -870,8 +862,7 @@ std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::strin
 	{
 		// Схема не существует, компилируем и добавляем ее в map
 		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJson);
-		schema = std::make_shared<avro::ValidSchema>(compiledScheme);
-		schemesMap[schemaJsonName] = schema;
+		schemesMap[schemaJsonName] = compiledScheme;
 	}
 
 	return schema;
@@ -879,36 +870,21 @@ std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::strin
 
 void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
 {
-	std::ofstream log("/home/log.txt", std::ios::out);
-	log << "1" << std::endl;
-	std::string schemaJsonUTF8 = stringToUtf8(schemaJson);;
-	log << "2" << " " << std::get<std::string>(schemaJsonName) << std::endl;
-
 	// Проверяем, существует ли схема с таким именем
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
-	log << "3" << std::endl;
 
-	if (it == schemesMap.end()) 
+	if (it == schemesMap.end())
 	{
-		log << "4" << std::endl;
 		// Схема не существует, компилируем и добавляем ее в map
-		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJsonUTF8);
-		log << "5" << std::endl;
-		auto schema = std::make_shared<avro::ValidSchema>(compiledScheme);
-		log << "6" << std::endl;
-		schemesMap[std::get<std::string>(schemaJsonName)] = schema;
-		log << "7" << std::endl;
+		const avro::ValidSchema compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
+		schemesMap[std::get<std::string>(schemaJsonName)] = compiledScheme;
 	}
-	log << "8" << std::endl;
-	log.close();
-	log << "9" << std::endl;
 }
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
 {
-	std::string msgJsonUTF8 = stringToUtf8(msgJson);
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
-	std::shared_ptr<avro::ValidSchema> schema;
+	avro::ValidSchema schema;
 	if (it != schemesMap.end()) 
 	{
 		schema = it->second;
@@ -922,7 +898,7 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
 	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
-	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(msgJsonUTF8);
+	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
 	nlohmann::ordered_json jsonOutputArray;
 
 	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
@@ -944,11 +920,11 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 	MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
 	std::unique_ptr<avro::OutputStream> os(memOutStr);
-	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), *schema);
+	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 
 	for (const auto &jsonRecord : jsonOutputArray) 
 	{
-		avro::GenericDatum datum(*schema);
+		avro::GenericDatum datum(schema);
 		if (avro::AVRO_RECORD == datum.type()) 
 		{
 			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
@@ -1070,11 +1046,7 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 
 void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
 {
-#ifdef _WINDOWS
 	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
-#else
-	std::ofstream out(stringToUtf8(fileName), std::ios::out | std::ios::binary);
-#endif
 	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
 	out.close(); 
 }
