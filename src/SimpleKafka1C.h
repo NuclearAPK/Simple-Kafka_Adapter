@@ -31,7 +31,6 @@ private:
 
 	std::string consumerLogName;
 	std::string producerLogName;
-	std::string dumpLogName;
 	std::string statLogName;
 	std::string msg_err;
 

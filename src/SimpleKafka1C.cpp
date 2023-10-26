@@ -286,7 +286,6 @@ SimpleKafka1C::SimpleKafka1C()
 
     consumerLogName = "consumer_";
     producerLogName = "producer_";
-    dumpLogName = "dump_";
     statLogName = "statistics_";
 }
 
@@ -900,12 +899,12 @@ bool SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant
 			schemesMap[std::get<std::string>(schemaJsonName)] = compiledScheme;
 		}
 	}
-	catch (std::bad_variant_access const& ex)
+	catch (std::exception const& ex)
 	{
 		msg_err = ex.what();
 		return false;
 	}
-	return false;
+	return true;
 }
 
 bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
