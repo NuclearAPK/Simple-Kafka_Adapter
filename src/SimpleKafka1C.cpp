@@ -79,14 +79,14 @@ unsigned long long getTimeStamp()
 	return time;
 }
 
+std::string stringToUtf8(const variant_t &str)
+{
+	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
 
-
-std::string normalizePath(const std::string& messyPath) {
-	std::filesystem::path path(messyPath);
-	std::filesystem::path canonicalPath = std::filesystem::weakly_canonical(path);
-	std::string npath = canonicalPath.make_preferred().string();
-	return npath;
+	std::wstring interStr = converter.from_bytes(std::get<std::string>(str));
+	return converter.to_bytes(interStr);
 }
+
 
 //================================== Events callback ===================================
 
@@ -869,20 +869,40 @@ std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::strin
 
 void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
 {
+	std::string schemaJsonNameUTF8;
+	std::string schemaJsonUTF8;
+	#ifdef _WINDOWS
+		schemaJsonNameUTF8 = std::get<std::string>(schemaJsonName);
+		schemaJsonUTF8 = std::get<std::string>(schemaJson);
+	#else
+		schemaJsonNameUTF8 = stringToUtf8(schemaJsonName);
+		schemaJsonUTF8 = stringToUtf8(schemaJson);
+	#endif
+
 	// Проверяем, существует ли схема с таким именем
-	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+	auto it = schemesMap.find(schemaJsonNameUTF8);
 
 	if (it == schemesMap.end()) 
 	{
 		// Схема не существует, компилируем и добавляем ее в map
-		const auto compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
+		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJsonUTF8);
 		auto schema = std::make_shared<avro::ValidSchema>(compiledScheme);
-		schemesMap[std::get<std::string>(schemaJsonName)] = schema;
+		schemesMap[schemaJsonNameUTF8] = schema;
 	}
 }
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
 {
+	std::string schemaJsonNameUTF8;
+	std::string msgJsonUTF8;
+	#ifdef _WINDOWS
+		schemaJsonNameUTF8 = std::get<std::string>(schemaJsonName);
+		msgJsonUTF8 = std::get<std::string>(msgJson);
+	#else
+		schemaJsonNameUTF8 = stringToUtf8(schemaJsonName);
+		msgJsonUTF8 = stringToUtf8(msgJson);
+	#endif
+
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 	std::shared_ptr<avro::ValidSchema> schema;
 	if (it != schemesMap.end()) 
@@ -891,14 +911,14 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	}
 	else 
 	{
-		throw std::runtime_error(u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName));
+		throw std::runtime_error(u8"Имя схемы не известно - " + schemaJsonNameUTF8);
 	}
 
 	// Разбираем исходный json
 	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
 	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
-	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
+	const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(msgJsonUTF8);
 	nlohmann::ordered_json jsonOutputArray;
 
 	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
