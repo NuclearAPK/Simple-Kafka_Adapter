@@ -869,40 +869,23 @@ std::shared_ptr<avro::ValidSchema> SimpleKafka1C::getAvroSchema(const std::strin
 
 void SimpleKafka1C::putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson) 
 {
-	std::string schemaJsonNameUTF8;
-	std::string schemaJsonUTF8;
-	#ifdef _WINDOWS
-		schemaJsonNameUTF8 = std::get<std::string>(schemaJsonName);
-		schemaJsonUTF8 = std::get<std::string>(schemaJson);
-	#else
-		schemaJsonNameUTF8 = stringToUtf8(schemaJsonName);
-		schemaJsonUTF8 = stringToUtf8(schemaJson);
-	#endif
+	std::string schemaJsonUTF8 = stringToUtf8(schemaJson);;
 
 	// Проверяем, существует ли схема с таким именем
-	auto it = schemesMap.find(schemaJsonNameUTF8);
+	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 
 	if (it == schemesMap.end()) 
 	{
 		// Схема не существует, компилируем и добавляем ее в map
 		const auto compiledScheme = avro::compileJsonSchemaFromString(schemaJsonUTF8);
 		auto schema = std::make_shared<avro::ValidSchema>(compiledScheme);
-		schemesMap[schemaJsonNameUTF8] = schema;
+		schemesMap[std::get<std::string>(schemaJsonName)] = schema;
 	}
 }
 
 void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName) 
 {
-	std::string schemaJsonNameUTF8;
-	std::string msgJsonUTF8;
-	#ifdef _WINDOWS
-		schemaJsonNameUTF8 = std::get<std::string>(schemaJsonName);
-		msgJsonUTF8 = std::get<std::string>(msgJson);
-	#else
-		schemaJsonNameUTF8 = stringToUtf8(schemaJsonName);
-		msgJsonUTF8 = stringToUtf8(msgJson);
-	#endif
-
+	std::string msgJsonUTF8 = stringToUtf8(msgJson);
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 	std::shared_ptr<avro::ValidSchema> schema;
 	if (it != schemesMap.end()) 
@@ -911,7 +894,7 @@ void SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 	}
 	else 
 	{
-		throw std::runtime_error(u8"Имя схемы не известно - " + schemaJsonNameUTF8);
+		throw std::runtime_error(u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName));
 	}
 
 	// Разбираем исходный json
@@ -1071,10 +1054,7 @@ void SimpleKafka1C::saveAvroFile(const variant_t &fileName)
 	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
 	out.close(); 
 #else
-	std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-	std::wstring fileNameUTF8 = converter.from_bytes(std::get<std::string>(fileName));
-
-	std::ofstream out(std::get<std::string>(fileName), std::ios::out | std::ios::binary);
+	std::ofstream out(stringToUtf8(fileName), std::ios::out | std::ios::binary);
 	out.write(reinterpret_cast<const char*>(avroFile.data()), avroFile.size());
 	out.close();
 #endif
