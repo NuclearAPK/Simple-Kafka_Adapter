@@ -983,7 +983,6 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							break;
 						}
 						case avro::AVRO_LONG:
-						{
 							if (field.value().is_string()) {
 								fieldDatum.selectBranch(0);
 							}
@@ -994,21 +993,19 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							}
 							break;
 
-						}
 						case avro::AVRO_INT:
-						{
 							if (field.value().is_string())
 							{
 								fieldDatum.selectBranch(0);
 							}
-							else {
+							else 
+							{
 								const int jsonValue = field.value().get<int>();
 								fieldDatum.value<int>() = jsonValue;
 							}
 							break;
-						}
+
 						case avro::AVRO_BOOL:
-						{
 							if (field.value().is_string())
 							{
 								fieldDatum.selectBranch(0);
@@ -1019,12 +1016,10 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 								fieldDatum.value<bool>() = jsonValue;
 							}
 							break;
-						}
+
 						case avro::AVRO_NULL:
-						{
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
-						}
 						}
 					}
 					else
@@ -1032,34 +1027,24 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						switch (fieldDatum.type())
 						{
 						case avro::AVRO_STRING:
-						{
-							const std::string jsonValue = field.value().get<std::string>();
-							fieldDatum.value<std::string>() = jsonValue;
+							fieldDatum.value<std::string>() = field.value().get<std::string>();
 							break;
-						}
+
 						case avro::AVRO_LONG:
-						{
-							const long long jsonValue = field.value().get<long long>();
-							fieldDatum.value<long long>() = jsonValue;
+							fieldDatum.value<long long>() = field.value().get<long long>();
 							break;
-						}
+
 						case avro::AVRO_INT:
-						{
-							const int jsonValue = field.value().get<int>();
-							fieldDatum.value<int>() = jsonValue;
+							fieldDatum.value<int>() = field.value().get<int>();
 							break;
-						}
+
 						case avro::AVRO_BOOL:
-						{
-							const bool jsonValue = field.value().get<bool>();
-							fieldDatum.value<bool>() = jsonValue;
+							fieldDatum.value<bool>() = field.value().get<bool>();
 							break;
-						}
+
 						case avro::AVRO_NULL:
-						{
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
-						}
 						}
 					}
 				}
