@@ -969,7 +969,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						fieldDatum.selectBranch(1);
 						switch (fieldDatum.type())
 						{
-						case avro::AVRO_STRING: {
+						case avro::AVRO_STRING: 
+						{
 							const std::string jsonValue = field.value().get<std::string>();
 							if (jsonValue == "null")
 							{
@@ -983,38 +984,24 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							break;
 						}
 						case avro::AVRO_LONG:
-							if (field.value().is_string()) {
+							if (field.value().is_string())
 								fieldDatum.selectBranch(0);
-							}
 							else
-							{
-								const int64_t jsonValue = field.value().get<int64_t>();
-								fieldDatum.value<int64_t>() = jsonValue;
-							}
+								fieldDatum.value<int64_t>() = field.value().get<int64_t>();
 							break;
 
 						case avro::AVRO_INT:
 							if (field.value().is_string())
-							{
 								fieldDatum.selectBranch(0);
-							}
 							else 
-							{
-								const int jsonValue = field.value().get<int>();
-								fieldDatum.value<int>() = jsonValue;
-							}
+								fieldDatum.value<int>() = field.value().get<int>();
 							break;
 
 						case avro::AVRO_BOOL:
 							if (field.value().is_string())
-							{
 								fieldDatum.selectBranch(0);
-							}
 							else
-							{
-								const bool jsonValue = field.value().get<bool>();
-								fieldDatum.value<bool>() = jsonValue;
-							}
+								fieldDatum.value<bool>() = field.value().get<bool>();;
 							break;
 
 						case avro::AVRO_NULL:
