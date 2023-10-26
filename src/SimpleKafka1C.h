@@ -31,7 +31,6 @@ private:
 
 	std::string consumerLogName;
 	std::string producerLogName;
-	std::string dumpLogName;
 	std::string statLogName;
 
 	std::map<std::string, std::shared_ptr<avro::ValidSchema>> schemesMap;	// кеш для хранение компилированных схем Avro

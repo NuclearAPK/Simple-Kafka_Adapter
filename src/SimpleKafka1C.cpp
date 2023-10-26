@@ -290,7 +290,6 @@ SimpleKafka1C::SimpleKafka1C()
 
     consumerLogName = "consumer_";
     producerLogName = "producer_";
-    dumpLogName = "dump_";
     statLogName = "statistics_";
 }
 
