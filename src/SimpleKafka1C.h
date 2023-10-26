@@ -31,6 +31,7 @@ private:
 
 	std::string consumerLogName;
 	std::string producerLogName;
+	std::string dumpLogName;
 	std::string statLogName;
 
 	std::map<std::string, std::shared_ptr<avro::ValidSchema>> schemesMap;	// кеш для хранение компилированных схем Avro
@@ -170,7 +171,11 @@ public:
 		result.reserve(byteCount_);
 		for (auto it = data_.begin(); it != data_.end(); ++it)
 		{
+			#if defined( __linux__ )
+			const size_t n = std::min(c, chunkSize_);
+			#else
 			const size_t n = min(c, chunkSize_);
+			#endif
 			std::copy(*it, *it + n, std::back_inserter(result));
 			c -= n;
 		}

@@ -61,8 +61,10 @@ sudo apt-get install libboost-all-dev
 - В поле binaries укажите путь к папке в которую попадет созданный проект для сборки.
 - Нажмите Configure. 
 - В открывшемся диалоге выберите тип проекта ninja и нажмите Finish. 
-- В появившемся списке переменных, исправьте пути до include и библиотек.
+- В появившемся списке переменных, исправьте пути до include и библиотек. Для переменной RdKafka_DIR путь до папки с файлом cmake "путь к vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka". Аналогично переменной LZ4_DIR "путь к vcpkg/microsoft/vcpkg/packages/lz4_x64-linux/share/lz4". Переменной unofficial-avro-cpp_DIR "...vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/share/unofficial-avro-cpp"
 - Снова нажмите Configure. 
 - Далее нажмите Generate. 
 - Зайдите в консоли в папку, указанную в поле  binaries, и выполните команду ninja. 
+- Если возникла ошибка "ninja: error: '...vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/lib/libboost_filesystem.a', needed by 'libSimpleKafka1C.so', missing and no known rule to make it" Скопируйте эту и возможно некоторые другие библиотеки в указанную в сообщении папку и повторите сборку командой ninja.
+
 Библиотека будет собрана.
