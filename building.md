@@ -35,8 +35,6 @@ vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-linux
 	
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
@@ -56,6 +54,9 @@ vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-lin
  ```
 sudo apt-get install libboost-all-dev
  ```
+
+avro-cpp (https://github.com/confluentinc/avro-cpp-packaging) необходимо собрать самостоятельно с указанием set(CMAKE_CXX_STANDARD 17) в CMakeLists.txt. Версия 1.11.3 в vcpkg для linux собрана с опицей использования 11 версии стандарта, что вызывает конфликт времени выполнения (segfault).
+
 - Запустите cmake-gui. 
 - В поле sorcecode укажите путь к проекту Simple-Kafka_Adapter. 
 - В поле binaries укажите путь к папке в которую попадет созданный проект для сборки.
