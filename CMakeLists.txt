@@ -4,9 +4,11 @@ project(SimpleKafka1C)
 set(CMAKE_CXX_STANDARD 17)
 set(TARGET SimpleKafka1C)
 
+set(VCPKG_CRT_LINKAGE dynamic)
+set(VCPKG_LIBRARY_LINKAGE static)
+
 if (UNIX)
 	option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-	option(STATIC_CRT "Static CRT linkage" ON)
 	option(OUT_PARAMS "Support output parameters" OFF)
 	set(ZLIB_INCLUDE_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/include" CACHE STRING "zlib include dir")
 	set(RdKafka_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka" CACHE STRING "rdkafka cmake config")
@@ -16,8 +18,6 @@ if (UNIX)
 	set(ZLIB_LIBRARY "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
 	set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
 endif ()
-
-set(CMAKE_TOOLCHAIN_FILE "d:/source/vcpkg/microsoft/vcpkg/scripts/buildsystems/vcpkg.cmake" CACHE STRING "vcpkg file path")
 
 
 list(APPEND SOURCES
@@ -53,30 +53,18 @@ if (OUT_PARAMS)
     target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
 endif ()
 
-if (UNIX)
-	target_include_directories(${TARGET} PRIVATE include)
-else()
-	target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
-endif ()
+target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
 
 if (WIN32)
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-endif ()
-
-if (WIN32 AND NOT MSVC)
-    message(FATAL_ERROR "Must be compiled with MSVC on Windows")
-endif ()
-
-if (WIN32)
-    if (STATIC_CRT)
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-    endif ()
     target_compile_definitions(${TARGET} PRIVATE
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
+endif ()
 
+if (WIN32 AND NOT MSVC)
+    message(FATAL_ERROR "Must be compiled with MSVC on Windows")
 endif ()
 
 if (UNIX)
@@ -93,10 +81,7 @@ if (ANDROID)
     endif ()
 endif ()
 
-set(Boost_USE_STATIC_LIBS ON) 
 set(Boost_USE_MULTITHREADED OFF)  
-set(Boost_USE_STATIC_RUNTIME ON) 
-set(Boost_NO_SYSTEM_PATHS TRUE) 
 find_package(Boost)
 if(Boost_FOUND)
     include_directories(${Boost_INCLUDE_DIRS})
