@@ -271,7 +271,9 @@ SimpleKafka1C::SimpleKafka1C()
 
 	AddMethod(L"PutAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
 	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
-	AddMethod(L"ProduceDataFileToAvro", L"ОтправитьДанныеФайлаAVRO", this, &SimpleKafka1C::produceDataFileToAvro,
+	AddMethod(L"ProduceAvro", L"ОтправитьСообщениеAVRO", this, &SimpleKafka1C::produceAvro,
+		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
+	AddMethod(L"ProduceAvroWithWaitResult", L"ОтправитьСообщениеAVROСОжиданиемРезультата", this, &SimpleKafka1C::produceAvroWithWaitResult,
 		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
 	AddMethod(L"SaveAvroFile", L"СохранитьФайлAVRO", this, &SimpleKafka1C::saveAvroFile);
 	AddMethod(L"GetLastError", L"ПолучитьСообщениеОбОшибке", this, &SimpleKafka1C::getLastError);
@@ -495,7 +497,7 @@ bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t 
     return cl_dr_cb.delivered;
 }
 
-bool SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
 	if (hProducer == NULL)
 	{
@@ -551,11 +553,6 @@ bool SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const vari
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 			return false;
 		}
-
-		while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
-		{
-			hProducer->poll(1000);
-		}
 	}
 	catch (std::exception const& ex)
 	{
@@ -565,6 +562,24 @@ bool SimpleKafka1C::produceDataFileToAvro(const variant_t &topicName, const vari
 
 	return cl_dr_cb.delivered;
 }
+
+
+bool SimpleKafka1C::produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
+{
+	cl_dr_cb.delivered = false;
+	auto timestart = getTimeStamp();
+	bool ret = produceAvro(topicName, partition, key, heads);
+	if (!ret)
+		return false;
+
+	while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
+	{
+		hProducer->poll(1000);
+	}
+
+	return cl_dr_cb.delivered;
+}
+
 
 void SimpleKafka1C::stopProducer()
 {

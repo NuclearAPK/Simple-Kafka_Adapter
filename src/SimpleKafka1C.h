@@ -48,7 +48,8 @@ private:
 	bool initProducer(const variant_t &brokers);
 	bool produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	bool produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceDataFileToAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	void stopProducer();
 
 	// consumer
