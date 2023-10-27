@@ -4,38 +4,44 @@
 bootstrap-vcpkg
 vcpkg integrate install
  ```
+- В файле CMakeLists.json указан путь до vcpkg.
 - Создать папку ".\vcpkg\static-triplets" на одном уровне с папкой "triplets" в которой создать файл "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
-set(VCPKG_CRT_LINKAGE static)
+set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-и "x86-windows.cmake" с содержимым:
+"x86-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x86)
-set(VCPKG_CRT_LINKAGE static)
+set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
  ```
-- Если ранее стоял lz4 (можно проверить командой vcpkg list), то удалить:
+"x64-linux.cmake"
  ```
-vcpkg remove lz4 --triplet x86-windows
-vcpkg remove lz4 --triplet x64-windows
+set(VCPKG_TARGET_ARCHITECTURE x64)
+set(VCPKG_CRT_LINKAGE dynamic)
+set(VCPKG_LIBRARY_LINKAGE static)
+ ```
+и "x86-linux.cmake" с содержимым:
+ ```
+set(VCPKG_TARGET_ARCHITECTURE x86)
+set(VCPKG_CRT_LINKAGE dynamic)
+set(VCPKG_LIBRARY_LINKAGE static)
  ```
 - Ставим пакеты:
  ```
-vcpkg install lz4  --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install lz4  --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install lz4  --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install lz4  --overlay-triplets=static-triplets --triplet x64-linux
 
-vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install librdkafka  --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x86-windows
+vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-windows
+vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x86-linux
+vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
-	
+vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-linux
+vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-linux
+
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-linux
@@ -50,12 +56,6 @@ vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-lin
 Сборку можно выполнить в Visual Studio как CMake проект.
 
 # LINUX
-Установите libboost-all-dev обычным образом, к примеру
- ```
-sudo apt-get install libboost-all-dev
- ```
-
-avro-cpp (https://github.com/confluentinc/avro-cpp-packaging) необходимо собрать самостоятельно с указанием set(CMAKE_CXX_STANDARD 17) в CMakeLists.txt. Версия 1.11.3 в vcpkg для linux собрана с опицей использования 11 версии стандарта, что вызывает конфликт времени выполнения (segfault).
 
 - Запустите cmake-gui. 
 - В поле sorcecode укажите путь к проекту Simple-Kafka_Adapter. 
