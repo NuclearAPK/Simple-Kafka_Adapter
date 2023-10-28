@@ -438,9 +438,8 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 			if (resp == RdKafka::ERR__QUEUE_FULL)
 			{
 				hProducer->poll(1000 /*block for max 1000ms*/);
-				msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
 				if (eventFile.is_open()) {
-					eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+					eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
 				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 				goto retry;
@@ -483,13 +482,12 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 
 bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
-	cl_dr_cb.delivered = false;
-    auto timestart = getTimeStamp();
-    bool ret = produce(msg, topicName, partition, key, heads);
-	if (!ret)
+	if (!produce(msg, topicName, partition, key, heads))
 		return false;
 
-    while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
+ 	cl_dr_cb.delivered = false;
+    auto timestart = getTimeStamp();
+	while (!cl_dr_cb.delivered && (getTimeStamp() - timestart) < 20)
     {
         hProducer->poll(1000);
     }
@@ -502,6 +500,12 @@ bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &par
 	if (hProducer == NULL)
 	{
 		msg_err = "Продюсер не инициализирован";
+		return false;
+	}
+	if (avroFile.empty())
+	{
+		msg_err = "AVRO файл пустой";
+		return false;
 	}
 
 	try
@@ -530,9 +534,8 @@ bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &par
 			if (resp == RdKafka::ERR__QUEUE_FULL)
 			{
 				hProducer->poll(1000 /*block for max 1000ms*/);
-				msg_err = "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message";
 				if (eventFile.is_open()) {
-					eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+					eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
 				}
 				std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 				goto retry;
@@ -566,13 +569,12 @@ bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &par
 
 bool SimpleKafka1C::produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
-	cl_dr_cb.delivered = false;
-	auto timestart = getTimeStamp();
-	bool ret = produceAvro(topicName, partition, key, heads);
-	if (!ret)
+	if (!produceAvro(topicName, partition, key, heads))
 		return false;
 
-	while (cl_dr_cb.delivered == false && (getTimeStamp() - timestart) < 20)
+	cl_dr_cb.delivered = false;
+	auto timestart = getTimeStamp();
+	while (!cl_dr_cb.delivered && (getTimeStamp() - timestart) < 20)
 	{
 		hProducer->poll(1000);
 	}
