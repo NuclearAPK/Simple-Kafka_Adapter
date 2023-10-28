@@ -4,7 +4,7 @@
 bootstrap-vcpkg
 vcpkg integrate install
  ```
-- В файле CMakeLists.json указан путь до vcpkg.
+- В файле CMakeLists.json указан путь до vcpkg. Этот файл для Visual Studio.
 - Создать папку ".\vcpkg\static-triplets" на одном уровне с папкой "triplets" в которой создать файл "x64-windows.cmake" с содержимым:
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
