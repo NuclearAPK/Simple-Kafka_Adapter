@@ -62,4 +62,4 @@ cmake -B /home/source/Simple-Kafka_Adapter -S . -DCMAKE_TOOLCHAIN_FILE=/home/sou
 cmake --build /home/source/Simple-Kafka_Adapter
 ```
 
-Библиотека будет собрана.
+Библиотека будет собрана для x64-linux.
