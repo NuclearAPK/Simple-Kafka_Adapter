@@ -72,10 +72,10 @@ const std::string currentDateTime(char *format)
     return oss.str();
 } 
 
-unsigned long long getTimeStamp()
+intmax_t getTimeStamp()
 {
 	time_t curtime = time(NULL);
-	unsigned long long time = (unsigned long long)curtime;
+	intmax_t time = (intmax_t)curtime;
 	return time;
 }
 
@@ -482,17 +482,21 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 
 bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
-	if (!produce(msg, topicName, partition, key, heads))
+	if (!produceAvro(topicName, partition, key, heads))
 		return false;
 
- 	cl_dr_cb.delivered = false;
-    auto timestart = getTimeStamp();
-	while (!cl_dr_cb.delivered && (getTimeStamp() - timestart) < 20)
-    {
-        hProducer->poll(1000);
-    }
+	cl_dr_cb.delivered = false;
+	intmax_t timestart = getTimeStamp();
+	intmax_t timeout = 0;
+	while (!cl_dr_cb.delivered && timeout < 20)
+	{
+		hProducer->poll(1000);
+		timeout = getTimeStamp() - timestart;
+	}
+	if (timeout >= 20 && !cl_dr_cb.delivered)
+		msg_err = "Время ожидания (20 сек) истекло";
 
-    return cl_dr_cb.delivered;
+	return cl_dr_cb.delivered;
 }
 
 bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
@@ -573,11 +577,15 @@ bool SimpleKafka1C::produceAvroWithWaitResult(const variant_t &topicName, const 
 		return false;
 
 	cl_dr_cb.delivered = false;
-	auto timestart = getTimeStamp();
-	while (!cl_dr_cb.delivered && (getTimeStamp() - timestart) < 20)
+	intmax_t timestart = getTimeStamp();
+	intmax_t timeout = 0;
+	while (!cl_dr_cb.delivered && timeout < 20)
 	{
 		hProducer->poll(1000);
+		timeout = getTimeStamp() - timestart;
 	}
+	if (timeout >= 20 && !cl_dr_cb.delivered)
+		msg_err = "Время ожидания (20 сек) истекло";
 
 	return cl_dr_cb.delivered;
 }

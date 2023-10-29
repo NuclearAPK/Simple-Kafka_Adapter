@@ -8,29 +8,20 @@ set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
 
 if (UNIX)
-	option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-	option(OUT_PARAMS "Support output parameters" OFF)
-	set(ZLIB_INCLUDE_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/include" CACHE STRING "zlib include dir")
-	set(RdKafka_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/librdkafka_x64-linux/share/RdKafka" CACHE STRING "rdkafka cmake config")
-	set(LZ4_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/lz4_x64-linux/share/lz4" CACHE STRING "LZ4 cmake config")
-	set(unofficial-avro-cpp_DIR "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/share/unofficial-avro-cpp" CACHE STRING "avro-cpp cmake config")
-	set(unofficial-avro-cpp_INCLUDE_DIRS "/home/source/vcpkg/microsoft/vcpkg/packages/avro-cpp_x64-linux/include" CACHE STRING "avro-cpp include dir")
-	set(ZLIB_LIBRARY "/home/source/vcpkg/microsoft/vcpkg/packages/zlib_x64-linux/lib/libz.a" CACHE STRING "zlib library file path")
-	set(VCPKG_TARGET_TRIPLET "x64-linux" CACHE STRING "vcpkg triplet")
+	list(APPEND SOURCES src)
+else ()
+	list(APPEND SOURCES
+			src/addin.def
+			src/stdafx.h
+			src/dllmain.cpp
+			src/exports.cpp
+			src/md5.cpp
+			src/md5.h
+			src/Component.cpp
+			src/Component.h
+			src/SimpleKafka1C.cpp
+			src/SimpleKafka1C.h)
 endif ()
-
-
-list(APPEND SOURCES
-        src/addin.def
-        src/stdafx.h
-        src/dllmain.cpp
-        src/exports.cpp
-        src/md5.cpp
-        src/md5.h
-        src/Component.cpp
-        src/Component.h
-        src/SimpleKafka1C.cpp
-        src/SimpleKafka1C.h)
 
 if (ANDROID)
     list(APPEND SOURCES
@@ -65,13 +56,6 @@ endif ()
 
 if (WIN32 AND NOT MSVC)
     message(FATAL_ERROR "Must be compiled with MSVC on Windows")
-endif ()
-
-if (UNIX)
-    if (TARGET_ARCH STREQUAL "x86")
-        set(CMAKE_C_FLAGS "-m32 ${CMAKE_C_FLAGS}")
-        set(CMAKE_CXX_FLAGS "-m32 ${CMAKE_CXX_FLAGS}")
-    endif ()
 endif ()
 
 if (ANDROID)
