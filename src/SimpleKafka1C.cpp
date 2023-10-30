@@ -209,7 +209,7 @@ void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer *consumer
                      std::vector<RdKafka::TopicPartition*> &partitions) {
     if (err == RdKafka::ERR__ASSIGN_PARTITIONS) {
         if (assignOffset > 0) {
-            RdKafka::TopicPartition *part;
+            RdKafka::TopicPartition *part = NULL;
 
             for (unsigned int i = 0; i < partitions.size(); i++){
                 if (partitions[i]->topic() == assignTopic && 
