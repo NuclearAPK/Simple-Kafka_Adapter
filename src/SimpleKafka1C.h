@@ -6,9 +6,6 @@
 #include <avro/Stream.hh>
 #include "Component.h"
 
-//static std::string logsReportFileName;
-//static bool delivered;
-
 class SimpleKafka1C final : public Component
 {
 public:
