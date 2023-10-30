@@ -47,7 +47,7 @@ add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
 if (CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -s -Os -DNDEBUG")
 endif ()
 
 set(SOURCE_FILES
