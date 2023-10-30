@@ -41,8 +41,6 @@ vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
@@ -57,6 +55,17 @@ vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-lin
 
 Сборку можно выполнить в Visual Studio как CMake проект или же командами
 
+# Linux
+
+В версии для Linux необходимо avro-cpp собрать самостоятельно.
+```
+git clone https://github.com/apache/avro
+```
+Файл avro/lang/c++/CMakeLists.txt необходимо заменить файлом avro-cpp-linux/CMakeLists.txt данного проекта. 
+
+В основном файле CMakeLists.txt проекта надо указать пути в target_include_directories и target_link_libraries до файлов проекта avro и vcpkg.
+
+Далее сборка:
  ```
 cmake -B /home/source/Simple-Kafka_Adapter -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 cmake --build /home/source/Simple-Kafka_Adapter
