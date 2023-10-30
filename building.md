@@ -61,7 +61,7 @@ vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-lin
 ```
 git clone https://github.com/apache/avro
 ```
-Файл avro/lang/c++/CMakeLists.txt необходимо заменить файлом avro-cpp-linux/CMakeLists.txt данного проекта. 
+Файл avro/lang/c++/CMakeLists.txt необходимо заменить файлом avro-cpp-linux/CMakeLists.txt данного проекта. Сборка:
  ```
 cmake -B /home/source/source/avro/lang/c++ -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 cmake --build /home/source/avro/lang/c++
