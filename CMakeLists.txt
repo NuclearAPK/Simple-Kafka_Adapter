@@ -79,13 +79,13 @@ else()
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
 		${nlohmann_json_INCLUDE_DIRS}
-		/home/gaid/source/avro/lang/c++/api)
+		/home/source/avro/lang/c++/api)
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
-		/home/gaid/source/avro/lang/c++/libavrocpp_s.a
-		/home/gaid/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
-		/home/gaid/source/vcpkg/installed/x64-linux/lib/libsnappy.a
-		/home/gaid/source/vcpkg/installed/x64-linux/lib/libz.a
+		/home/source/avro/lang/c++/libavrocpp_s.a
+		/home/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
+		/home/source/vcpkg/installed/x64-linux/lib/libsnappy.a
+		/home/source/vcpkg/installed/x64-linux/lib/libz.a
 		RdKafka::rdkafka RdKafka::rdkafka++
 		nlohmann_json::nlohmann_json)
 endif ()
