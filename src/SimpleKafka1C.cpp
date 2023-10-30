@@ -397,7 +397,6 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile;
 
-
 		if (!cl_dr_cb.logDir.empty()) {
 			std::string bufname = producerLogName;
 
@@ -482,21 +481,17 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 
 bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
 {
-	if (!produceAvro(topicName, partition, key, heads))
+	if (!produce(msg, topicName, partition, key, heads))
 		return false;
 
-	cl_dr_cb.delivered = false;
-	intmax_t timestart = getTimeStamp();
-	intmax_t timeout = 0;
-	while (!cl_dr_cb.delivered && timeout < 20)
-	{
-		hProducer->poll(1000);
-		timeout = getTimeStamp() - timestart;
-	}
-	if (timeout >= 20 && !cl_dr_cb.delivered)
-		msg_err = "Время ожидания (20 сек) истекло";
+	hProducer->flush(20 * 1000);		 // wait for max 10 seconds
+	if (hProducer->outq_len() > 0) {
+		std::stringstream  str;
+		str << "Не доставлено сообщений - " << "% " << hProducer->outq_len() << std::endl;
 
-	return cl_dr_cb.delivered;
+	}
+
+	return msg_err.empty();
 }
 
 bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads)
@@ -518,9 +513,6 @@ bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &par
 		std::string tTopicName = std::get<std::string>(topicName);
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile;
-
-		cl_dr_cb.delivered = false;
-		auto timestart = getTimeStamp();
 
 	retry:
 		RdKafka::ErrorCode resp = hProducer->produce(
@@ -567,7 +559,7 @@ bool SimpleKafka1C::produceAvro(const variant_t &topicName, const variant_t &par
 		return false;
 	}
 
-	return cl_dr_cb.delivered;
+	return true;
 }
 
 
@@ -576,18 +568,15 @@ bool SimpleKafka1C::produceAvroWithWaitResult(const variant_t &topicName, const 
 	if (!produceAvro(topicName, partition, key, heads))
 		return false;
 
-	cl_dr_cb.delivered = false;
-	intmax_t timestart = getTimeStamp();
-	intmax_t timeout = 0;
-	while (!cl_dr_cb.delivered && timeout < 20)
-	{
-		hProducer->poll(1000);
-		timeout = getTimeStamp() - timestart;
-	}
-	if (timeout >= 20 && !cl_dr_cb.delivered)
-		msg_err = "Время ожидания (20 сек) истекло";
+	hProducer->flush(20 * 1000);		 // wait for max 10 seconds
+	if (hProducer->outq_len() > 0) {
+		std::stringstream  str;
+		str << "Не доставлено сообщений - " << "% " << hProducer->outq_len() << std::endl;
 
-	return cl_dr_cb.delivered;
+	}
+
+	return msg_err.empty();
+
 }
 
 
@@ -1030,6 +1019,13 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						case avro::AVRO_NULL:
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
+
+						case avro::AVRO_UNION:
+							break;
+
+						default:
+							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+							break;
 						}
 					}
 					else
@@ -1055,6 +1051,13 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						case avro::AVRO_NULL:
 							fieldDatum.value<avro::null>() = avro::null();
 							break;
+
+						case avro::AVRO_UNION:
+							break;
+
+						default:
+							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+							break;
 						}
 					}
 				}
@@ -1072,7 +1075,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		msg_err = ex.what();
 		return false;
 	}
-	return true;
+	return msg_err.empty();
 }
 
 bool SimpleKafka1C::saveAvroFile(const variant_t &fileName)

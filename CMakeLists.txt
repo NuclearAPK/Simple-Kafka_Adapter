@@ -11,7 +11,6 @@ if (UNIX)
 	list(APPEND SOURCES src)
 else ()
 	list(APPEND SOURCES
-			src/addin.def
 			src/stdafx.h
 			src/dllmain.cpp
 			src/exports.cpp
