@@ -8,6 +8,13 @@
 #define __COMPONENT_BASE_H__
 
 #include "types.h"
+
+#ifdef _WINDOWS
+#define _EXPORT __declspec(dllexport)
+#else 
+#define _EXPORT extern "C"
+#endif
+
 ////////////////////////////////////////////////////////////////////////////////
 /**
  *  The given interface is intended for initialization and 
@@ -230,10 +237,10 @@ enum AppCapabilities
 /**
  * These functions should be implemented that component can be loaded and created. 
  */
-extern "C" long GetClassObject(const WCHAR_T*, IComponentBase** pIntf);
-extern "C" long DestroyObject(IComponentBase** pIntf);
-extern "C" const WCHAR_T* GetClassNames();
-extern "C" AppCapabilities SetPlatformCapabilities(const AppCapabilities capabilities);
+_EXPORT long GetClassObject(const WCHAR_T*, IComponentBase** pIntf);
+_EXPORT long DestroyObject(IComponentBase** pIntf);
+_EXPORT const WCHAR_T* GetClassNames();
+_EXPORT AppCapabilities SetPlatformCapabilities(const AppCapabilities capabilities);
 
 typedef long (*GetClassObjectPtr)(const WCHAR_T* wsName, IComponentBase** pIntf);
 typedef long (*DestroyObjectPtr)(IComponentBase** pIntf);
