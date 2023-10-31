@@ -963,106 +963,107 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		std::unique_ptr<avro::OutputStream> os(memOutStr);
 		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 
+		avro::GenericDatum datum(schema);
+		if (datum.type() != avro::AVRO_RECORD)
+		{
+			msg_err = "Некорректная схема";
+			return false;
+		}
 		for (const auto &jsonRecord : jsonOutputArray)
 		{
-			avro::GenericDatum datum(schema);
-			if (avro::AVRO_RECORD == datum.type())
+			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+			for (const auto& field : jsonRecord.items())
 			{
-				avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+				avro::GenericDatum &fieldDatum = record.field(field.key());
 
-				for (const auto& field : jsonRecord.items())
+				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
+				// Тип устанавливается при помощи функции selectBranch() 
+				if (fieldDatum.isUnion())
 				{
-					avro::GenericDatum &fieldDatum = record.field(field.key());
-
-					// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
-					// Тип устанавливается при помощи функции selectBranch() 
-					if (fieldDatum.isUnion())
+					fieldDatum.selectBranch(1);
+					switch (fieldDatum.type())
 					{
-						fieldDatum.selectBranch(1);
-						switch (fieldDatum.type())
+					case avro::AVRO_STRING: 
+					{
+						const std::string jsonValue = field.value().get<std::string>();
+						if (jsonValue == "null")
 						{
-						case avro::AVRO_STRING: 
-						{
-							const std::string jsonValue = field.value().get<std::string>();
-							if (jsonValue == "null")
-							{
-								fieldDatum.selectBranch(0);
-								fieldDatum.value<avro::null>() = avro::null();
-							}
-							else
-							{
-								fieldDatum.value<std::string>() = jsonValue;
-							}
-							break;
-						}
-						case avro::AVRO_LONG:
-							if (field.value().is_string())
-								fieldDatum.selectBranch(0);
-							else
-								fieldDatum.value<int64_t>() = field.value().get<int64_t>();
-							break;
-
-						case avro::AVRO_INT:
-							if (field.value().is_string())
-								fieldDatum.selectBranch(0);
-							else 
-								fieldDatum.value<int>() = field.value().get<int>();
-							break;
-
-						case avro::AVRO_BOOL:
-							if (field.value().is_string())
-								fieldDatum.selectBranch(0);
-							else
-								fieldDatum.value<bool>() = field.value().get<bool>();;
-							break;
-
-						case avro::AVRO_NULL:
+							fieldDatum.selectBranch(0);
 							fieldDatum.value<avro::null>() = avro::null();
-							break;
-
-						case avro::AVRO_UNION:
-							break;
-
-						default:
-							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
-							break;
 						}
+						else
+						{
+							fieldDatum.value<std::string>() = jsonValue;
+						}
+						break;
 					}
-					else
-					{
-						switch (fieldDatum.type())
-						{
-						case avro::AVRO_STRING:
-							fieldDatum.value<std::string>() = field.value().get<std::string>();
-							break;
+					case avro::AVRO_LONG:
+						if (field.value().is_string())
+							fieldDatum.selectBranch(0);
+						else
+							fieldDatum.value<int64_t>() = field.value().get<int64_t>();
+						break;
 
-						case avro::AVRO_LONG:
-							fieldDatum.value<long long>() = field.value().get<long long>();
-							break;
-
-						case avro::AVRO_INT:
+					case avro::AVRO_INT:
+						if (field.value().is_string())
+							fieldDatum.selectBranch(0);
+						else 
 							fieldDatum.value<int>() = field.value().get<int>();
-							break;
+						break;
 
-						case avro::AVRO_BOOL:
-							fieldDatum.value<bool>() = field.value().get<bool>();
-							break;
+					case avro::AVRO_BOOL:
+						if (field.value().is_string())
+							fieldDatum.selectBranch(0);
+						else
+							fieldDatum.value<bool>() = field.value().get<bool>();;
+						break;
 
-						case avro::AVRO_NULL:
-							fieldDatum.value<avro::null>() = avro::null();
-							break;
+					case avro::AVRO_NULL:
+						fieldDatum.value<avro::null>() = avro::null();
+						break;
 
-						case avro::AVRO_UNION:
-							break;
+					case avro::AVRO_UNION:
+						break;
 
-						default:
-							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
-							break;
-						}
+					default:
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						break;
 					}
 				}
-				writer.write(datum);
+				else
+				{
+					switch (fieldDatum.type())
+					{
+					case avro::AVRO_STRING:
+						fieldDatum.value<std::string>() = field.value().get<std::string>();
+						break;
+
+					case avro::AVRO_LONG:
+						fieldDatum.value<long long>() = field.value().get<long long>();
+						break;
+
+					case avro::AVRO_INT:
+						fieldDatum.value<int>() = field.value().get<int>();
+						break;
+
+					case avro::AVRO_BOOL:
+						fieldDatum.value<bool>() = field.value().get<bool>();
+						break;
+
+					case avro::AVRO_NULL:
+						fieldDatum.value<avro::null>() = avro::null();
+						break;
+
+					case avro::AVRO_UNION:
+						break;
+
+					default:
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						break;
+					}
+				}
 			}
+			writer.write(datum);
 		}
 
 		writer.flush();
