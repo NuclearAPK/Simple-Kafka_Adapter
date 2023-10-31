@@ -68,13 +68,13 @@ vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
 ```
 git clone https://github.com/apache/avro
 ```
-Файл avro/lang/c++/CMakeLists.txt необходимо заменить файлом avro-cpp-linux/CMakeLists.txt данного проекта. В файле необходимо указать путь до libz.a из vcpkg. Сборка:
+Файл **avro/lang/c++/CMakeLists.txt** необходимо заменить файлом **avro-cpp-linux/CMakeLists.txt** данного проекта. В файле необходимо указать путь до **libz.a** из vcpkg. Сборка:
  ```
 cmake -B /home/source/source/avro/lang/c++ -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 cmake --build /home/source/avro/lang/c++
 ```
 
-В основном файле CMakeLists.txt проекта надо указать пути в target_include_directories и target_link_libraries до файлов проекта avro и vcpkg.
+В основном файле CMakeLists.txt проекта надо указать пути в **target_include_directories** и **target_link_libraries** до файлов проекта avro и vcpkg.
 
 Далее сборка внешней компоненты:
  ```
