@@ -10,7 +10,7 @@
 #include "types.h"
 
 #ifdef _WINDOWS
-#define _EXPORT __declspec(dllexport)
+#define _EXPORT extern "C" __declspec(dllexport) 
 #else 
 #define _EXPORT extern "C"
 #endif
