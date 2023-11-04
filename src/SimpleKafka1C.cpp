@@ -471,8 +471,7 @@ bool SimpleKafka1C::initConsumer(const variant_t &brokers, const variant_t &topi
     }
 
     if (eventFile.is_open())
-        eventFile << currentDateTime() << " Librdkafka version: " << RdKafka::version_str()
-                << " (" << RdKafka::version() << ")" << std::endl;
+        eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
 
     boost::algorithm::split(topics, std::get<std::string>(topic), boost::is_any_of(","));
 

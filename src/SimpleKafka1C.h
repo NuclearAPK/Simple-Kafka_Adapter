@@ -17,12 +17,9 @@
 
 #include "Component.h"
 
-//static std::string logsReportFileName;
-//static bool delivered;
-
 class SimpleKafka1C final : public Component {
 public:
-    const char *Version = u8"1.2.1";
+    const char *Version = u8"1.2.2";
 
     SimpleKafka1C();
 
