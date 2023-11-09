@@ -2,7 +2,7 @@
 
 Внешняя компонента, адаптер к 1С, позволяющий писать а так же получать сообщения из топиков Apache Kafka.
 
-[Скачать](https://github.com/NuclearAPK/Simple-Kafka_Adapter/releases/download/v1.2.1/SimpleKafka1C64_1_2_1.zip) последний релиз
+[Скачать](https://github.com/NuclearAPK/Simple-Kafka_Adapter/releases/download/v1.2.2/SimpleKafka1C64_1_2_2.zip) последний релиз
 
 ## Использование
 
