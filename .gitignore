@@ -5,4 +5,6 @@
 /.vscode
 /1C
 /build
+/.vs
+/debug_info
 /lib
