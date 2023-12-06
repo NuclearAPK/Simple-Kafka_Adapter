@@ -826,7 +826,7 @@ bool SimpleKafka1C::commitOffset(const variant_t &topicName, const variant_t &of
 		RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
 		offsets.push_back(ptr);
 
-		if (hConsumer->offsets_store(offsets) != RdKafka::ERR_NO_ERROR)
+		if (hConsumer->commitSync(offsets) != RdKafka::ERR_NO_ERROR)
 		{
 			return false;
 		}
