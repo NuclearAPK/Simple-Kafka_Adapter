@@ -32,6 +32,6 @@
 
 ## Поддерживаемые платформы
 
-✔ Windows  
-✔ Linux  
+✔ Windows 32/64
+✔ Linux 64
 
