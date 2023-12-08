@@ -722,7 +722,7 @@ variant_t SimpleKafka1C::consume()
 	if (hConsumer == NULL)
 	{
 		msg_err = "Консьюмер не инициализирован";
-		return "";
+		return emptystr;
 	}
 
 	msg_err = emptystr;
