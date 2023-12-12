@@ -717,13 +717,15 @@ bool SimpleKafka1C::setReadingPosition(const variant_t &topicName, const variant
 
 variant_t SimpleKafka1C::consume()
 {
+	std::string emptystr = "";
+
 	if (hConsumer == NULL)
 	{
 		msg_err = "Консьюмер не инициализирован";
-		return "";
+		return emptystr;
 	}
 
-	msg_err = "";
+	msg_err = emptystr;
     std::ofstream eventFile;
     std::stringstream s;
 
@@ -786,15 +788,15 @@ variant_t SimpleKafka1C::consume()
             delete msg;
         }
         else
-        {
-			msg_err = msg->errstr();
+        {			
             if (eventFile.is_open() && resultConsume != RdKafka::ERR__TIMED_OUT)
             {
+				msg_err = msg->errstr();
                 eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
                 eventFile.close();
             }
             delete msg;
-            return "";
+            return emptystr;
         }
     }
     catch (const std::exception &e)
@@ -806,7 +808,7 @@ variant_t SimpleKafka1C::consume()
             eventFile.close();
         }
 
-        return "";
+        return emptystr;
     }
 
     boost::property_tree::write_json(s, jsonObj, true);
@@ -826,7 +828,7 @@ bool SimpleKafka1C::commitOffset(const variant_t &topicName, const variant_t &of
 		RdKafka::TopicPartition *ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
 		offsets.push_back(ptr);
 
-		if (hConsumer->offsets_store(offsets) != RdKafka::ERR_NO_ERROR)
+		if (hConsumer->commitSync(offsets) != RdKafka::ERR_NO_ERROR)
 		{
 			return false;
 		}
