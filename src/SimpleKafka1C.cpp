@@ -788,13 +788,15 @@ variant_t SimpleKafka1C::consume()
             delete msg;
         }
         else
-        {			
-            if (eventFile.is_open() && resultConsume != RdKafka::ERR__TIMED_OUT)
-            {
+        {
+			if (resultConsume != RdKafka::ERR__TIMED_OUT) {
 				msg_err = msg->errstr();
-                eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
-                eventFile.close();
-            }
+				if (eventFile.is_open())
+				{
+					eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+					eventFile.close();
+				}
+			}
             delete msg;
             return emptystr;
         }
