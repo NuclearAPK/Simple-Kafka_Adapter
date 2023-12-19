@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.3.1";
+	const char *Version = u8"1.4.0";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -31,12 +31,32 @@ private:
 	std::string statLogName;
 	std::string msg_err;
 
+	// message
+	std::string key;
+	std::string topic;
+	int32_t broker_id;
+	int64_t timestamp;
+	int32_t partition;
+	int64_t offset;
+	std::vector<char> messageData;
+	size_t messageLen;
+
+	struct HeadersMessage
+	{
+		std::string Key;
+		std::string Value;
+	};
+
+	std::vector<HeadersMessage> messageHeaders;
+
+	// avro
 	std::map<std::string, avro::ValidSchema> schemesMap;	// кеш для хранение компилированных схем Avro
 	std::vector<uint8_t> avroFile;		// формируемый avro
 
 	// parameters set 
 	// https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
 	void setParameter(const variant_t &key, const variant_t &value);
+
 	std::string clientID();
 	std::string extensionName();
 	std::string getLastError();
@@ -50,11 +70,22 @@ private:
 	void stopProducer();
 
 	// consumer
+	void clearMessageMetadata();
 	bool initConsumer(const variant_t &brokers, const variant_t &topic);
-	variant_t consume();
+	variant_t consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
+	bool getMessage();	// чтение с подтверждением
+	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
+	variant_t getMessageKey();
+	variant_t getMessageHeaders();
+	variant_t getMessageOffset();
+	variant_t getMessageTopicName();
+	variant_t getMessageBrokerID();
+	variant_t getMessageTimestamp();
+	variant_t getMessagePartition();
+
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
-	void stopConsumer();
+	void stopConsumer(); 
 	bool setWaitingTimeout(const variant_t &timeout);
 
 	// Utilites
