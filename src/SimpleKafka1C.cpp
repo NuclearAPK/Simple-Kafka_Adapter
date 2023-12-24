@@ -471,10 +471,11 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 			{
 				msg_err = "Указанная тема не найдена в кластере Kafka";
 			}
-		}
-		if (hdrs != NULL)
-		{
-			delete hdrs;
+
+			if (hdrs != NULL)
+			{
+				delete hdrs;
+			}
 		}
 
 		hProducer->poll(0);
