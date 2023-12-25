@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.4.1";
+	const char *Version = u8"1.4.2";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -70,7 +70,7 @@ private:
 	void stopProducer();
 
 	// consumer
-	void clearMessageMetadata();
+	void clearMessageMetadata(); 
 	bool initConsumer(const variant_t &brokers, const variant_t &topic);
 	variant_t consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
@@ -85,7 +85,7 @@ private:
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
-	void stopConsumer(); 
+	void stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 
 	// Utilites
