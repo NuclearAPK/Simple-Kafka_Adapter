@@ -80,8 +80,6 @@ cmake --build /home/source/avro/lang/c++
  ```
 cmake -B /home/source/Simple-Kafka_Adapter -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 cmake --build /home/source/Simple-Kafka_Adapter
-cd /home/source/Simple-Kafka_Adapter
-make
 ```
 
 Библиотека будет собрана для x64-linux.
