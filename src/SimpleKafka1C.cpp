@@ -415,7 +415,7 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 		}
 
 		if (eventFile.is_open()) {
-			eventFile << currentDateTime() << " Info: produceAvro. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
+			eventFile << currentDateTime() << " Info: produce. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 		}
 
 		RdKafka::Headers *hdrs = NULL;
@@ -1174,7 +1174,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 			jsonOutputArray.push_back(jsonOutputObject);
 		}
 
-		MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
 		std::unique_ptr<avro::OutputStream> os(memOutStr);
 		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 
