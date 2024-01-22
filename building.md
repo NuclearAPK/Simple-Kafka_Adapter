@@ -66,20 +66,23 @@ vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
 
 В версии для Linux необходимо avro-cpp собрать самостоятельно.
 ```
-git clone https://github.com/apache/avro
+wget https://dlcdn.apache.org/avro/avro-1.11.3/avro-src-1.11.3.tar.gz
+tar -zxvf avro-src-1.11.3.tar.gz
 ```
 Файл **avro/lang/c++/CMakeLists.txt** необходимо заменить файлом **avro-cpp-linux/CMakeLists.txt** данного проекта. В файле необходимо указать путь до **libz.a** из vcpkg. Сборка:
  ```
-cmake -B /home/source/source/avro/lang/c++ -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
-cmake --build /home/source/avro/lang/c++
+cd /home/source/avro-src-1.11.3/lang/c++
+cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+make
 ```
 
 В основном файле CMakeLists.txt проекта надо указать пути в **target_include_directories** и **target_link_libraries** до файлов проекта avro и vcpkg.
 
 Далее сборка внешней компоненты:
  ```
-cmake -B /home/source/Simple-Kafka_Adapter -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
-cmake --build /home/source/Simple-Kafka_Adapter
+ cd /home/source/Simple-Kafka_Adapter
+cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+make
 ```
 
 Библиотека будет собрана для x64-linux.
