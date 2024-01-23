@@ -499,7 +499,7 @@ bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t 
 	if (!produce(msg, topicName, partition, key, heads))
 		return false;
 
-	hProducer->flush(20 * 1000);		 // wait for max 10 seconds
+	hProducer->flush(20 * 1000);		 // wait for max 20 seconds
 	if (hProducer->outq_len() > 0) {
 		std::stringstream str{};
 		str << "Не доставлено сообщений - " << hProducer->outq_len() << std::endl;
