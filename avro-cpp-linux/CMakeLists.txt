@@ -65,7 +65,6 @@ endif()
 
 if (CMAKE_COMPILER_IS_GNUCXX)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -fPIC -s -Os -DNDEBUG")
-	message()
 if (AVRO_ADD_PROTECTOR_FLAGS)
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fstack-protector-all -D_GLIBCXX_DEBUG")
     # Unset _GLIBCXX_DEBUG for avrogencpp.cc because using Boost Program Options
@@ -132,7 +131,7 @@ set_target_properties (avrocpp PROPERTIES
 set_target_properties (avrocpp_s PROPERTIES
     VERSION ${AVRO_VERSION_MAJOR}.${AVRO_VERSION_MINOR}.${AVRO_VERSION_PATCH})
 
-target_link_libraries (avrocpp ${Boost_LIBRARIES} ${SNAPPY_LIBRARIES} /home/source/vcpkg/installed/x64-linux/lib/libz.a)
+target_link_libraries (avrocpp ${Boost_LIBRARIES} ${SNAPPY_LIBRARIES} /home/source/vcpkg/packages/zlib_x64-linux/lib/libz.a)
 target_include_directories(avrocpp PRIVATE ${SNAPPY_INCLUDE_DIR})
 
 add_executable (precompile test/precompile.cc)
@@ -190,7 +189,6 @@ unittest (JsonTests)
 unittest (AvrogencppTests)
 unittest (CompilerTests)
 unittest (AvrogencppTestReservedWords)
-unittest (CommonsSchemasTests)
 
 add_dependencies (AvrogencppTestReservedWords cpp_reserved_words_hh)
 

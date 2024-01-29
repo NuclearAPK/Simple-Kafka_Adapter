@@ -79,10 +79,10 @@ else()
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
 		${nlohmann_json_INCLUDE_DIRS}
-		/home/source/avro/lang/c++/api)
+		/home/source/avro-src-1.11.3/lang/c++/api)
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
-		/home/source/avro/lang/c++/libavrocpp_s.a
+		/home/source/avro-src-1.11.3/lang/c++/libavrocpp_s.a
 		/home/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
 		/home/source/vcpkg/installed/x64-linux/lib/libsnappy.a
 		/home/source/vcpkg/installed/x64-linux/lib/libz.a
@@ -105,5 +105,6 @@ else ()
 		set (CMAKE_BUILD_TYPE Release CACHE STRING
 		  "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
 		  FORCE)
+	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
 	endif (NOT CMAKE_BUILD_TYPE)
 endif ()
