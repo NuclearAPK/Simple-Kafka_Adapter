@@ -274,6 +274,10 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"GetMessageOffset", L"ПолучитьСмещениеСообщения", this, &SimpleKafka1C::getMessageOffset);
 	// - modern methods
 
+	// + admin api
+	AddMethod(L"GetTopics", L"ПолучитьСписокТопиков", this, &SimpleKafka1C::getListOfTopics);
+	// - admin api
+
 	AddMethod(L"Message", L"Сообщить", this, &SimpleKafka1C::message);
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
 
@@ -415,7 +419,7 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 		}
 
 		if (eventFile.is_open()) {
-			eventFile << currentDateTime() << " Info: produceAvro. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
+			eventFile << currentDateTime() << " Info: produce. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 		}
 
 		RdKafka::Headers *hdrs = NULL;
@@ -434,15 +438,41 @@ bool SimpleKafka1C::produce(const variant_t &msg, const variant_t &topicName, co
 		}
 
 	retry:
-		RdKafka::ErrorCode resp = hProducer->produce(
-			tTopicName,
-			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-			RdKafka::Producer::RK_MSG_COPY,
-			const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
-			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-			0,
-			hdrs,
-			NULL);
+
+		RdKafka::ErrorCode resp;
+
+		if (std::holds_alternative<std::string>(msg))
+		{
+			resp = hProducer->produce(
+				tTopicName,
+				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+				RdKafka::Producer::RK_MSG_COPY,
+				const_cast<char *>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
+				std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+				0,
+				hdrs,
+				NULL);
+		}
+		else
+		{
+			auto d = std::get<std::vector<char>>(msg);
+			unsigned char *pubMsg = new unsigned char[d.size()];
+
+			for (size_t i = 0; i < d.size(); i++)
+			{
+				pubMsg[i] = d.at(i);
+			}
+			
+			resp = hProducer->produce(
+				tTopicName,
+				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+				RdKafka::Producer::RK_MSG_COPY,
+				pubMsg, d.size(),
+				std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+				0,
+				hdrs,
+				NULL);
+		}
 
 		if (resp != RdKafka::ERR_NO_ERROR)
 		{
@@ -499,7 +529,7 @@ bool SimpleKafka1C::produceWithWaitResult(const variant_t &msg, const variant_t 
 	if (!produce(msg, topicName, partition, key, heads))
 		return false;
 
-	hProducer->flush(20 * 1000);		 // wait for max 10 seconds
+	hProducer->flush(20 * 1000);		 // wait for max 20 seconds
 	if (hProducer->outq_len() > 0) {
 		std::stringstream str{};
 		str << "Не доставлено сообщений - " << hProducer->outq_len() << std::endl;
@@ -1067,6 +1097,77 @@ void SimpleKafka1C::clearMessageMetadata()
 	this->offset = 0;
 }
 
+//================================== Admin API =========================================
+
+variant_t SimpleKafka1C::getListOfTopics(const variant_t& brokers)
+{
+	msg_err = "";
+	std::string result = "";
+	std::stringstream s{};
+
+	boost::property_tree::ptree jsonObj;
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		return result;
+	}
+
+	// create fake producer
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, msg_err);
+	if (!producer) {
+		return result;
+	}
+
+	RdKafka::Topic* topicKafka = NULL;
+	class RdKafka::Metadata* metadata;
+	RdKafka::ErrorCode err = producer->metadata(true, topicKafka, &metadata, 5000);
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		return result;
+	}
+
+	RdKafka::Metadata::TopicMetadataIterator it;
+
+	boost::property_tree::ptree topicsChildren;
+
+	for (it = metadata->topics()->begin(); it != metadata->topics()->end(); ++it)
+	{
+		boost::property_tree::ptree node;
+		node.put("topic", (*it)->topic().c_str());
+		node.put("partitions", (*it)->partitions()->size());
+		topicsChildren.push_back(boost::property_tree::ptree::value_type("", node));
+	}
+
+	delete metadata;
+	delete conf;
+
+	if (topicsChildren.size())
+	{
+		jsonObj.put_child("topics", topicsChildren);
+	}
+	boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
+}
+
+variant_t SimpleKafka1C::getTopicOptions(const variant_t& topicName)
+{
+	msg_err = "";
+	std::string result = "";
+	std::stringstream s{};
+
+	boost::property_tree::ptree jsonObj;
+	//RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+	//RdKafka::Conf* tconf = RdKafka::Conf::create(RdKafka::Conf::CONF_TOPIC);
+
+	//tconf->dump();
+
+	//boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
+}
+
 //================================== Utilites ==========================================
 
 void SimpleKafka1C::message(const variant_t &msg)
@@ -1174,7 +1275,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 			jsonOutputArray.push_back(jsonOutputObject);
 		}
 
-		MemoryOutputStream* memOutStr = new MemoryOutputStream(4096);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
 		std::unique_ptr<avro::OutputStream> os(memOutStr);
 		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 

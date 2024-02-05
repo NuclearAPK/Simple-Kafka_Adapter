@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.4.2";
+	const char *Version = u8"1.4.3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -87,6 +87,10 @@ private:
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	void stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
+
+	// admin
+	variant_t getListOfTopics(const variant_t& brokers);
+	variant_t getTopicOptions(const variant_t& topicName);
 
 	// Utilites
 	void message(const variant_t &msg);
