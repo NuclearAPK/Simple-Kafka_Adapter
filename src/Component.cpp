@@ -354,11 +354,7 @@ void Component::storeVariable(const variant_t &src, tVariant &dst) {
             [&](const int32_t &v) {
                 dst.vt = VTYPE_I4;
                 dst.lVal = v;
-            },
-            // [&](const int64_t &v) {
-            //     dst.vt = VTYPE_I8;
-            //     dst.llVal = v;
-            // },         
+            },        
             [&](const double &v) {
                 dst.vt = VTYPE_R8;
                 dst.dblVal = v;
