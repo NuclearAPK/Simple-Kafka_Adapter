@@ -1333,6 +1333,16 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 								fieldDatum.value<int>() = field.value().get<int>();
 							}				
 							break;
+						
+						case avro::AVRO_FLOAT:
+							if (field.value().is_null())
+							{
+								fieldDatum.selectBranch(0);
+							}
+							else {
+								fieldDatum.value<float>() = field.value().get<float>();
+							}
+							break;
 
 						case avro::AVRO_BOOL:
 							if (field.value().is_null())
@@ -1352,7 +1362,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 							break;
 
 						default:
-							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
 							break;
 					}
 				}
@@ -1372,6 +1382,10 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						fieldDatum.value<int>() = field.value().get<int>();
 						break;
 
+					case avro::AVRO_FLOAT:
+						fieldDatum.value<float>() = field.value().get<float>();
+						break;
+
 					case avro::AVRO_BOOL:
 						fieldDatum.value<bool>() = field.value().get<bool>();
 						break;
@@ -1384,7 +1398,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 						break;
 
 					default:
-						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
 						break;
 					}
 				}
