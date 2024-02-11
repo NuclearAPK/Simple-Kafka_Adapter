@@ -14,6 +14,8 @@
 
 [Чтение сообщений](./consumer.md)
 
+[Админ API](./admin.md)
+
 [Логирование](./logging.md)
 
 [Статистика](./statistic.md)
