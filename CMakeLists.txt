@@ -26,7 +26,7 @@ endif()
 project (SimpleKafka1C)
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
 
-find_package(Boost 1.38 REQUIRED COMPONENTS filesystem iostreams program_options regex system)
+find_package(Boost 1.38 REQUIRED COMPONENTS filesystem iostreams program_options regex system json)
 
 find_package(Snappy)
 if (SNAPPY_FOUND)
@@ -41,13 +41,12 @@ else (SNAPPY_FOUND)
 endif (SNAPPY_FOUND)
 
 find_package(RdKafka CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
 
 add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
 if (CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -s -Os -DNDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -s -O3 -DNDEBUG")
 endif ()
 
 set(SOURCE_FILES
@@ -67,18 +66,15 @@ if (WIN32)
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
-		${nlohmann_json_INCLUDE_DIRS} 
 		${unofficial-avro-cpp_INCLUDE_DIRS})
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
 		RdKafka::rdkafka RdKafka::rdkafka++
-		nlohmann_json::nlohmann_json
 		unofficial::avro-cpp::avrocpp)
 else()
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
-		${nlohmann_json_INCLUDE_DIRS}
 		/home/source/avro-src-1.11.3/lang/c++/api)
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
@@ -86,8 +82,7 @@ else()
 		/home/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
 		/home/source/vcpkg/installed/x64-linux/lib/libsnappy.a
 		/home/source/vcpkg/installed/x64-linux/lib/libz.a
-		RdKafka::rdkafka RdKafka::rdkafka++
-		nlohmann_json::nlohmann_json)
+		RdKafka::rdkafka RdKafka::rdkafka++)
 endif ()
 
 if (WIN32 AND NOT MSVC)

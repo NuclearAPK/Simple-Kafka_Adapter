@@ -24,13 +24,6 @@ set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_CMAKE_SYSTEM_NAME Linux)
  ```
-и "x86-linux.cmake" с содержимым:
- ```
-set(VCPKG_TARGET_ARCHITECTURE x86)
-set(VCPKG_CRT_LINKAGE dynamic)
-set(VCPKG_LIBRARY_LINKAGE static)
-set(VCPKG_CMAKE_SYSTEM_NAME Linux)
- ```
 - Ставим пакеты:
  ```
 
@@ -41,6 +34,7 @@ vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
+
 vcpkg install boost-test --overlay-triplets=static-triplets --triplet x86-linux
 vcpkg install boost-test --overlay-triplets=static-triplets --triplet x64-linux
 
@@ -49,10 +43,10 @@ vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-linux
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
 
-vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install nlohmann-json --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-json --overlay-triplets=static-triplets --triplet x86-windows
+vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-windows
+vcpkg install boost-json --overlay-triplets=static-triplets --triplet x86-linux
+vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install snappy --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-windows

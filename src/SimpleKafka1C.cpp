@@ -3,6 +3,7 @@
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
+#include <boost/json.hpp>
 #ifdef _WINDOWS
 #include <process.h>
 #endif
@@ -13,7 +14,6 @@
 #include <avro/Generic.hh>
 #include <avro/DataFile.hh>
 #include <avro/Writer.hh>
-#include <nlohmann/json.hpp>
 
 #include <thread>
 
@@ -1251,46 +1251,43 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 			return false;
 		}
 
-		// Разбираем исходный json
-		// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
-		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
-
-		const nlohmann::ordered_json jsonInput = nlohmann::ordered_json::parse(std::get<std::string>(msgJson));
-		nlohmann::ordered_json jsonOutputArray;
-
-		// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
-		size_t numElements = jsonInput.begin().value().size();
-
-		for (size_t i = 0; i < numElements; i++)
-		{
-			nlohmann::ordered_json jsonOutputObject;
-
-			for (auto it = jsonInput.begin(); it != jsonInput.end(); ++it)
-			{
-				const std::string &field_name = it.key();
-				const nlohmann::ordered_json &field_data = it.value();
-
-				jsonOutputObject[field_name] = field_data[i];
-			}
-			jsonOutputArray.push_back(jsonOutputObject);
-		}
-
-		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
-		std::unique_ptr<avro::OutputStream> os(memOutStr);
-		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
-
 		avro::GenericDatum datum(schema);
 		if (datum.type() != avro::AVRO_RECORD)
 		{
 			msg_err = "Некорректная схема";
 			return false;
 		}
-		for (const auto &jsonRecord : jsonOutputArray)
+
+		// Разбираем исходный json
+		// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
+		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
+
+		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson));
+		const boost::json::object jsonInput = jsonInput_t.as_object();
+
+		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+		std::unique_ptr<avro::OutputStream> os(memOutStr);
+		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
+
+		// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
+		const auto first_array = jsonInput.cbegin();
+		const size_t numElements = first_array->value().as_array().size();
+
+		for (size_t i = 0; i < numElements; i++)
 		{
-			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
-			for (const auto& field : jsonRecord.items())
+			// построчное преобразование
+			boost::json::object jsonRecord;
+			for (auto it = jsonInput.cbegin(); it != jsonInput.cend(); ++it)
 			{
-				avro::GenericDatum &fieldDatum = record.field(field.key());
+				const std::string &field_name = it->key_c_str();
+				const boost::json::value &field_data = it->value();
+				jsonRecord[field_name] = field_data.as_array().at(i);
+			}
+
+			avro::GenericRecord &record = datum.value<avro::GenericRecord>();
+			for (auto field = jsonRecord.cbegin(); field != jsonRecord.cend(); ++field)
+			{
+				avro::GenericDatum &fieldDatum = record.field(field->key_c_str());
 
 				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
 				// Тип устанавливается при помощи функции selectBranch() 
@@ -1301,54 +1298,55 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 					{
 						case avro::AVRO_STRING: 
 						{
-							if (field.value().is_null())
+							if (field->value().is_null())
 							{
 								fieldDatum.selectBranch(0);
 							}
 							else
 							{
-								fieldDatum.value<std::string>() = field.value().get<std::string>();
+								fieldDatum.value<std::string>() = field->value().as_string();
 							}
 							break;
 						}
 						case avro::AVRO_LONG:
-							if (field.value().is_null())
+							if (field->value().is_null())
+							{
+								fieldDatum.selectBranch(0);
+							}
+							else
+							{
+								fieldDatum.value<int64_t>() = field->value().as_int64();
+							}
+							break;
+
+						case avro::AVRO_INT:
+							if (field->value().is_null())
 							{ 
 								fieldDatum.selectBranch(0);
 							}			
 							else
 							{
-								fieldDatum.value<int64_t>() = field.value().get<int64_t>();
+								fieldDatum.value<int32_t>() = (int32_t)field->value().as_int64();
 							}
-							break;
-
-						case avro::AVRO_INT:
-							if (field.value().is_null())
-							{
-								fieldDatum.selectBranch(0);
-							}
-							else {
-								fieldDatum.value<int>() = field.value().get<int>();
-							}				
 							break;
 						
 						case avro::AVRO_FLOAT:
-							if (field.value().is_null())
+							if (field->value().is_null())
 							{
 								fieldDatum.selectBranch(0);
 							}
 							else {
-								fieldDatum.value<float>() = field.value().get<float>();
+								fieldDatum.value<float>() = (float)field->value().as_double();
 							}
 							break;
 
 						case avro::AVRO_BOOL:
-							if (field.value().is_null())
+							if (field->value().is_null())
 							{
 								fieldDatum.selectBranch(0);
 							}
 							else {
-								fieldDatum.value<bool>() = field.value().get<bool>();
+								fieldDatum.value<bool>() = field->value().as_bool();
 							}
 							break;
 
@@ -1369,23 +1367,23 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 					switch (fieldDatum.type())
 					{
 					case avro::AVRO_STRING:
-						fieldDatum.value<std::string>() = field.value().get<std::string>();
+						fieldDatum.value<std::string>() = field->value().as_string();
 						break;
 
 					case avro::AVRO_LONG:
-						fieldDatum.value<long long>() = field.value().get<long long>();
+						fieldDatum.value<int64_t>() = field->value().as_int64();
 						break;
 
 					case avro::AVRO_INT:
-						fieldDatum.value<int>() = field.value().get<int>();
+						fieldDatum.value<int32_t>() = (int32_t)field->value().as_int64();
 						break;
 
 					case avro::AVRO_FLOAT:
-						fieldDatum.value<float>() = field.value().get<float>();
+						fieldDatum.value<float>() = (float)field->value().as_double();
 						break;
 
 					case avro::AVRO_BOOL:
-						fieldDatum.value<bool>() = field.value().get<bool>();
+						fieldDatum.value<bool>() = field->value().as_bool();
 						break;
 
 					case avro::AVRO_NULL:
