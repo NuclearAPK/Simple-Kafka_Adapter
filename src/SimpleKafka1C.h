@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.4.4";
+	const char *Version = u8"1.4.5";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
