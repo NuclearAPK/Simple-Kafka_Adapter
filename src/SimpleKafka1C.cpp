@@ -1120,6 +1120,8 @@ variant_t SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 		return result;
 	}
 
+	//RdKafka::ErrorCode err = producer->
+
 	RdKafka::Topic* topicKafka = NULL;
 	class RdKafka::Metadata* metadata;
 	RdKafka::ErrorCode err = producer->metadata(true, topicKafka, &metadata, 5000);

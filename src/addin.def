@@ -1,0 +1,7 @@
+LIBRARY "SampleAddIn"
+
+EXPORTS
+GetClassObject
+DestroyObject
+GetClassNames
+SetPlatformCapabilities
