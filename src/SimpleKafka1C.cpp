@@ -1266,7 +1266,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
 		boost::json::monotonic_resource mr;
-		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson));
+		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson), &mr);
 		const boost::json::object jsonInput = jsonInput_t.as_object();
 
 		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
