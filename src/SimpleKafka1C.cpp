@@ -4,6 +4,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/json.hpp>
+#include <boost/json/monotonic_resource.hpp>
 #ifdef _WINDOWS
 #include <process.h>
 #endif
@@ -1264,7 +1265,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t &msgJson, const variant_
 		// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
 		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
 
-		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson));
+		boost::json::monotonic_resource mr;
+		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson), &mr);
 		const boost::json::object jsonInput = jsonInput_t.as_object();
 
 		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
