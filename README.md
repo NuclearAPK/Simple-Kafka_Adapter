@@ -2,6 +2,9 @@
 
 Внешняя компонента, адаптер к 1С, позволяющий писать, а так же получать сообщения из топиков Apache Kafka. Объем поддержки Kafka достаточный для поддержки витрин данных СМЭВ 4.
 
+## Проект входит в ТОП-500 репозиториев OpenYellow
+[![OpenYellow](https://img.shields.io/endpoint?url=https://openyellow.neocities.org/badges/2/609486812.json)](https://openyellow.notion.site/openyellow/24727888daa641af95514b46bee4d6f2?p=f9171a9a4a3045f6ab39730271af15a5&amp;pm=s)
+
 ## Использование
 
 Версия компоненты 1.1.0 и выше, имеет значительные, не совместимые изменения от более ранних версий. Документация по использованию ранних версий находится [здесь](./OldReleases.md).
@@ -37,6 +40,3 @@
 ✔ Windows 32/64
 
 ✔ Linux 64
-
-## Проект входит в ТОП-500 репозиториев OpenYellow
-[![OpenYellow](https://img.shields.io/endpoint?url=https://openyellow.neocities.org/badges/2/609486812.json)](https://openyellow.notion.site/openyellow/24727888daa641af95514b46bee4d6f2?p=f9171a9a4a3045f6ab39730271af15a5&amp;pm=s)
