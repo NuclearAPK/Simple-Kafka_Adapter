@@ -38,3 +38,5 @@
 
 ✔ Linux 64
 
+## Проект входит в ТОП-500 репозиториев OpenYellow
+[![OpenYellow](https://img.shields.io/endpoint?url=https://openyellow.neocities.org/badges/2/609486812.json)](https://openyellow.notion.site/openyellow/24727888daa641af95514b46bee4d6f2?p=f9171a9a4a3045f6ab39730271af15a5&amp;pm=s)
