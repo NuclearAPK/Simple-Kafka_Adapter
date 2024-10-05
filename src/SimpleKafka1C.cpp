@@ -1376,6 +1376,9 @@ variant_t SimpleKafka1C::getTopicOptions(const variant_t& topicName)
 	std::stringstream s{};
 
 	boost::property_tree::ptree jsonObj;
+
+
+	
 	//RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
 	//RdKafka::Conf* tconf = RdKafka::Conf::create(RdKafka::Conf::CONF_TOPIC);
 
