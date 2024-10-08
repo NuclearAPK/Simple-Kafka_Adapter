@@ -1600,9 +1600,9 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 					case avro::AVRO_UNION:
 						break;
 
-						default:
-							msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
-							break;
+					default:
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						break;
 					}
 				}
 				else
