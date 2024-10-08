@@ -37,4 +37,3 @@
 ✔ Windows 32/64
 
 ✔ Linux 64
-
