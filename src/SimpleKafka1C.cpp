@@ -219,7 +219,7 @@ void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer* consumer
 
 			consumer->assign(partitions);
 
-			for each (auto offset in offsets) {
+			for (auto offset : offsets) {
 				delete offset;
 			}
 
@@ -861,7 +861,7 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions)
 		auto meta = parsed_data.at("metadata");
 
 		if (meta.is_array()) {
-			for (int i = 0; i < meta.as_array().size(); i++)
+			for (size_t i = 0; i < meta.as_array().size(); i++)
 			{
 				std::string topic_ = value_to<std::string>(meta.at(i).at("topic"));
 				int partition_ = value_to<int>(meta.at(i).at("partition"));
@@ -1340,7 +1340,7 @@ variant_t SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times, c
 
 	delete metadata;
 
-	for each (auto tp in partitions)
+	for (auto tp : partitions)
 	{
 		boost::property_tree::ptree node;
 		node.put("topic", tp->topic());
