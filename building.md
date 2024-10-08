@@ -74,7 +74,7 @@ make
 
 Далее сборка внешней компоненты:
  ```
- cd /home/source/Simple-Kafka_Adapter
+cd /home/source/Simple-Kafka_Adapter
 cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 make
 ```
