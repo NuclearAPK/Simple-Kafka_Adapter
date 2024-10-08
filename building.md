@@ -75,7 +75,8 @@ cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/v
 make
 ```
 
-В основном файле CMakeLists.txt проекта надо указать пути в **target_include_directories** и **target_link_libraries** до файлов проекта avro и vcpkg.
+В основном файле CMakeLists.txt проекта надо указать пути в **target_include_directories** и **target_link_libraries** до файлов проекта avro и vcpkg. 
+В файле CMakeLists-linux.txt приведен пример файла CMakeLists.txt для Linux.
 
 Далее сборка внешней компоненты:
  ```
