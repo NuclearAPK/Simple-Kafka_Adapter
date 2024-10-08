@@ -1573,25 +1573,25 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						}
 						break;
 
-						case avro::AVRO_DOUBLE:
-							if (field->value().is_null())
-							{
-								fieldDatum.selectBranch(0);
-							}
-							else {
-								fieldDatum.value<double>() = field->value().as_double();
-							}
-							break;
+					case avro::AVRO_DOUBLE:
+						if (field->value().is_null())
+						{
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							fieldDatum.value<double>() = field->value().as_double();
+						}
+						break;
 
-						case avro::AVRO_BOOL:
-							if (field->value().is_null())
-							{
-								fieldDatum.selectBranch(0);
-							}
-							else {
-								fieldDatum.value<bool>() = field->value().as_bool();
-							}
-							break;
+					case avro::AVRO_BOOL:
+						if (field->value().is_null())
+						{
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							fieldDatum.value<bool>() = field->value().as_bool();
+						}
+						break;
 
 					case avro::AVRO_NULL:
 						fieldDatum.value<avro::null>() = avro::null();
