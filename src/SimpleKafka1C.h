@@ -31,6 +31,9 @@ private:
 	std::string statLogName;
 	std::string msg_err;
 
+	// for offsets assigment
+	//std::vector<RdKafka::TopicPartition*> offsets;
+
 	// message
 	std::string key;
 	std::string topic;
@@ -71,7 +74,9 @@ private:
 
 	// consumer
 	void clearMessageMetadata(); 
-	bool initConsumer(const variant_t &brokers, const variant_t &topic);
+	//bool initConsumer(const variant_t &brokers, const variant_t &topic);
+	bool initConsumer(const variant_t& brokers);// , const variant_t& topic);
+	bool subscribe(const variant_t& topic);
 	variant_t consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
@@ -85,16 +90,21 @@ private:
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
+	bool setReadingPositions(const variant_t& jsonTopicPartitions);
 	void stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 
 	// admin
 	variant_t getListOfTopics(const variant_t& brokers);
-	variant_t getTopicOptions(const variant_t& topicName);
+	variant_t getTopicOptions(const variant_t& topicName); // experemental
+	variant_t getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout);
+	variant_t getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
 
 	// Utilites
 	void message(const variant_t &msg);
 	bool sleep(const variant_t &delay);
+	void setLogDirectory(const variant_t& logDir);
+	void setFormatLogFiles(const variant_t& format);
 
 	// converting a message to avro format
 	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
@@ -136,11 +146,9 @@ private:
 	{
 	public:
 
-		std::string assignTopic = "";
-		int32_t assignOffset = -1;
-		int assignPartition = 0;
+		std::vector<RdKafka::TopicPartition*> offsets;
 
-		void rebalance_cb(RdKafka::KafkaConsumer *consumer,
+		void rebalance_cb(RdKafka::KafkaConsumer* consumer,
 			RdKafka::ErrorCode err,
 			std::vector<RdKafka::TopicPartition *> &partitions);
 	};
