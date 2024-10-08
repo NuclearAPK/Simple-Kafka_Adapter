@@ -24,35 +24,39 @@ set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_CMAKE_SYSTEM_NAME Linux)
  ```
-- Ставим пакеты:
+- Ставим пакеты Windows:
  ```
-
 vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
 
-vcpkg install boost-test --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install boost-test --overlay-triplets=static-triplets --triplet x64-linux
-
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install boost-json --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install boost-json --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-linux
 
 vcpkg install snappy --overlay-triplets=static-triplets --triplet x86-windows
 vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-windows
-vcpkg install snappy --overlay-triplets=static-triplets --triplet x86-linux
-vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
  ```
+
+- Ставим пакеты Linux:
+ ```
+vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-test --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-filesystem --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-iostreams --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-program-options --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-crc --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-math --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-format --overlay-triplets=static-triplets --triplet x64-linux
+```
+
 
 Сборку можно выполнить в Visual Studio как CMake проект или же командами
 
@@ -60,12 +64,13 @@ vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
 
 В версии для Linux необходимо avro-cpp собрать самостоятельно.
 ```
-wget https://dlcdn.apache.org/avro/avro-1.11.3/avro-src-1.11.3.tar.gz
-tar -zxvf avro-src-1.11.3.tar.gz
+wget https://dlcdn.apache.org/avro/avro-1.12.0/avro-src-1.12.0.tar.gz
+tar -zxvf avro-src-1.12.0.tar.gz
 ```
-Файл **avro/lang/c++/CMakeLists.txt** необходимо заменить файлом **avro-cpp-linux/CMakeLists.txt** данного проекта. В файле необходимо указать путь до **libz.a** из vcpkg. Сборка:
+Файл **avro/lang/c++/CMakeLists.txt** необходимо заменить файлом **avro-cpp-linux/CMakeLists.txt** данного проекта. 
+Сборка:
  ```
-cd /home/source/avro-src-1.11.3/lang/c++
+cd /home/source/avro-src-1.12.0/lang/c++
 cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
 make
 ```
