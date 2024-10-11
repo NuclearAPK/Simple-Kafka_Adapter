@@ -103,3 +103,5 @@ else ()
 	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
 	endif (NOT CMAKE_BUILD_TYPE)
 endif ()
+
+target_link_options(SimpleKafka1C PRIVATE -static-libgcc -static-libstdc++)
