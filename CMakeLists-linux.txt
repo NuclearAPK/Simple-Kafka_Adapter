@@ -75,13 +75,13 @@ else()
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
-		/home/source/avro-src-1.12.0/lang/c++/api)
+		/home/gaid/source/avro-src-1.12.0/lang/c++/api)
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
-		/home/source/avro-src-1.12.0/lang/c++/libavrocpp_s.a
-		/home/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
-		/home/source/vcpkg/installed/x64-linux/lib/libsnappy.a
-		/home/source/vcpkg/installed/x64-linux/lib/libz.a
+		/home/gaid/source/avro-src-1.12.0/lang/c++/libavrocpp_s.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libsnappy.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libz.a
 		RdKafka::rdkafka RdKafka::rdkafka++)
 endif ()
 
@@ -103,3 +103,5 @@ else ()
 	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
 	endif (NOT CMAKE_BUILD_TYPE)
 endif ()
+
+target_link_options(SimpleKafka1C PRIVATE -static-libgcc -static-libstdc++)
