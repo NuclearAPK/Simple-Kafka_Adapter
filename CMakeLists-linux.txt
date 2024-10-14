@@ -104,7 +104,7 @@ else ()
 	endif (NOT CMAKE_BUILD_TYPE)
 endif ()
 
-# Сборка вк для REDOS 7.3 на Ubuntu 7.3. Требуется поставить старый glibc по инструкциям и собрать вк вместе с этой версией glibc
+# Сборка вк для REDOS 7.3 на Ubuntu 20.04. Требуется поставить старый glibc по инструкциям и собрать вк вместе с этой версией glibc
 
 #wget http://ftp.gnu.org/gnu/glibc/glibc-2.28.tar.gz
 #tar zxvf glibc-2.28.tar.gz
