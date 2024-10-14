@@ -20,7 +20,7 @@ set(VCPKG_LIBRARY_LINKAGE static)
 "x64-linux.cmake"
  ```
 set(VCPKG_TARGET_ARCHITECTURE x64)
-set(VCPKG_CRT_LINKAGE static)
+set(VCPKG_CRT_LINKAGE dynamic)
 set(VCPKG_LIBRARY_LINKAGE static)
 set(VCPKG_CMAKE_SYSTEM_NAME Linux)
  ```
@@ -56,7 +56,6 @@ vcpkg install boost-math --overlay-triplets=static-triplets --triplet x64-linux
 vcpkg install boost-format --overlay-triplets=static-triplets --triplet x64-linux
 ```
 
-
 Сборку можно выполнить в Visual Studio как CMake проект или же командами
 
 # Linux
@@ -85,3 +84,6 @@ make
 ```
 
 Библиотека будет собрана для x64-linux.
+
+
+
