@@ -157,16 +157,17 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 	switch (message.status())
 	{
 	case RdKafka::Message::MSG_STATUS_NOT_PERSISTED:
+		delivered = false;
 		status_name = "NotPersisted";
 		break;
 	case RdKafka::Message::MSG_STATUS_POSSIBLY_PERSISTED:
 		status_name = "PossiblyPersisted";
 		break;
 	case RdKafka::Message::MSG_STATUS_PERSISTED:
-		delivered = true;
 		status_name = "Persisted";
 		break;
 	default:
+		delivered = false;
 		status_name = "Unknown?";
 		break;
 	}
@@ -422,16 +423,20 @@ bool SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName, co
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile{};
 
-		if (!cl_dr_cb.logDir.empty()) {
+		if (!cl_dr_cb.logDir.empty()) 
+		{
 			std::string bufname = producerLogName;
 
-			if (!cl_dr_cb.clientid.empty()) {
+			if (!cl_dr_cb.clientid.empty()) 
+			{
 				bufname = bufname + cl_dr_cb.clientid + "_";
 			}
 			eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);
 		}
+		cl_dr_cb.delivered = true;
 
-		if (eventFile.is_open()) {
+		if (eventFile.is_open()) 
+		{
 			eventFile << currentDateTime() << " Info: produce. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 		}
 
@@ -524,6 +529,11 @@ bool SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName, co
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 			return false;
 		}
+		if (!cl_dr_cb.delivered)
+		{
+			msg_err = "Не доставлено. Подробности см в логе";
+			return false;
+		}
 		if (eventFile.is_open()) {
 			eventFile << currentDateTime() << " Info: produce. Success" << std::endl;
 		}
@@ -543,10 +553,15 @@ bool SimpleKafka1C::produceWithWaitResult(const variant_t& msg, const variant_t&
 		return false;
 
 	hProducer->flush(20 * 1000);		 // wait for max 20 seconds
-	if (hProducer->outq_len() > 0) {
+	if (hProducer->outq_len() > 0) 
+	{
 		std::stringstream str{};
 		str << "Не доставлено сообщений - " << hProducer->outq_len() << std::endl;
 		msg_err = str.str();
+	}
+	else if (!cl_dr_cb.delivered)
+	{
+		msg_err = "Не доставлено. Подробности см в логе";
 	}
 
 	return msg_err.empty();
@@ -572,16 +587,20 @@ bool SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& par
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile{};
 
-		if (!cl_dr_cb.logDir.empty()) {
+		if (!cl_dr_cb.logDir.empty()) 
+		{
 			std::string bufname = producerLogName;
 
-			if (!cl_dr_cb.clientid.empty()) {
+			if (!cl_dr_cb.clientid.empty()) 
+			{
 				bufname = bufname + cl_dr_cb.clientid + "_";
 			}
 			eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);
 		}
+		cl_dr_cb.delivered = true;
 
-		if (eventFile.is_open()) {
+		if (eventFile.is_open()) 
+		{
 			eventFile << currentDateTime() << " Info: produceAvro. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 		}
 
@@ -630,6 +649,11 @@ bool SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& par
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 			return false;
 		}
+		if (!cl_dr_cb.delivered)
+		{
+			msg_err = "Не доставлено. Подробности см в логе";
+			return false;
+		}
 		if (eventFile.is_open()) {
 			eventFile << currentDateTime() << " Info: produceAvro. Success" << std::endl;
 		}
@@ -653,6 +677,10 @@ bool SimpleKafka1C::produceAvroWithWaitResult(const variant_t& topicName, const 
 		std::stringstream str{};
 		str << "Не доставлено сообщений - " << hProducer->outq_len() << std::endl;
 		msg_err = str.str();
+	}
+	else if (!cl_dr_cb.delivered)
+	{
+		msg_err = "Не доставлено. Подробности см в логе";
 	}
 
 	return msg_err.empty();
