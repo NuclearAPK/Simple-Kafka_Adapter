@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.4.7";
+	const char *Version = u8"1.4.8";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -133,7 +133,7 @@ private:
 	{
 	public:
 		unsigned pid;
-		bool delivered = false;
+		bool delivered = true;
 		char *formatLogFiles;
 		std::string logDir = "";
 		std::string producerLogName;
