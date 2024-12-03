@@ -46,7 +46,7 @@ add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
 if (CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -s -O3 -DNDEBUG")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
 endif ()
 
 set(SOURCE_FILES
@@ -75,13 +75,13 @@ else()
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
 		${Boost_INCLUDE_DIRS} 
 		${RdKafka_INCLUDE_DIRS} 
-		/home/source/avro-src-1.11.3/lang/c++/api)
+		/home/source/source/avro-src-1.12.0/lang/c++/api)
 	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
 		${SNAPPY_LIBRARIES} 
-		/home/source/avro-src-1.11.3/lang/c++/libavrocpp_s.a
-		/home/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
-		/home/source/vcpkg/installed/x64-linux/lib/libsnappy.a
-		/home/source/vcpkg/installed/x64-linux/lib/libz.a
+		/home/source/source/avro-src-1.12.0/lang/c++/libavrocpp_s.a
+		/home/source/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
+		/home/source/source/vcpkg/installed/x64-linux/lib/libsnappy.a
+		/home/source/source/vcpkg/installed/x64-linux/lib/libz.a
 		RdKafka::rdkafka RdKafka::rdkafka++)
 endif ()
 
@@ -102,4 +102,20 @@ else ()
 		  FORCE)
 	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
 	endif (NOT CMAKE_BUILD_TYPE)
+    target_link_options(SimpleKafka1C PRIVATE -static-libgcc -static-libstdc++)
 endif ()
+
+
+# Сборка вк для REDOS 7.3 на Ubuntu 20.04. Требуется поставить старый glibc по инструкциям и собрать вк вместе с этой версией glibc
+
+#wget http://ftp.gnu.org/gnu/glibc/glibc-2.28.tar.gz
+#tar zxvf glibc-2.28.tar.gz
+#cd glibc-2.28
+#mkdir build
+#../configure --prefix=/home/source/opt/glibc-2.28 --disable-werror --enable-cet --with-selinux=no
+#make -j4
+#make install
+
+#set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--rpath=/home/gaid/source/opt/glibc-2.28/lib") 
+#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I/home/gaid/source/opt/glibc-2.28/include/ -L/home/gaid/source/opt/glibc-2.28/lib") 
+
