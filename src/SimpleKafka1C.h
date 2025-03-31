@@ -31,9 +31,6 @@ private:
 	std::string statLogName;
 	std::string msg_err;
 
-	// for offsets assigment
-	//std::vector<RdKafka::TopicPartition*> offsets;
-
 	// message
 	std::string key;
 	std::string topic;
@@ -99,6 +96,7 @@ private:
 	variant_t getTopicOptions(const variant_t& topicName); // experemental
 	variant_t getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout);
 	variant_t getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
+	variant_t createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor);
 
 	// Utilites
 	void message(const variant_t &msg);
@@ -124,6 +122,7 @@ private:
 		std::string logDir = "";
 		std::string consumerLogName;
 		std::string statLogName;
+		bool statisticsOn = false;
 		std::string clientid;
 
 		void event_cb(RdKafka::Event &event);
@@ -133,7 +132,7 @@ private:
 	{
 	public:
 		unsigned pid;
-		bool delivered = true;
+		bool delivered = false;
 		char *formatLogFiles;
 		std::string logDir = "";
 		std::string producerLogName;

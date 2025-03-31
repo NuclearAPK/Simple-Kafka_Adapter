@@ -1,88 +1,81 @@
-﻿# CMakeList.txt : Top-level CMake project file, do global configuration
-# and include sub-projects here.
-#
-cmake_minimum_required (VERSION 3.12)
-
-set(CMAKE_CXX_STANDARD 17)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-set (CMAKE_LEGACY_CYGWIN_WIN32 0)
-
-if (NOT DEFINED CMAKE_CXX_STANDARD)
-    set(CMAKE_CXX_STANDARD 17)
-endif()
-
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.0)
-    # Enable MACOSX_RPATH by default
-    cmake_policy (SET CMP0042 NEW)
-endif()
-
-if (NOT DEFINED CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS)
-    set (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS ON)
-endif()
-
-project (SimpleKafka1C)
-set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
-
-find_package(Boost 1.38 REQUIRED COMPONENTS filesystem iostreams program_options regex system json)
-
-find_package(Snappy)
-if (SNAPPY_FOUND)
-    set(SNAPPY_PKG libsnappy)
-    add_definitions(-DSNAPPY_CODEC_AVAILABLE)
-    message("Enabled snappy codec")
-else (SNAPPY_FOUND)
-    set(SNAPPY_PKG "")
-    set(SNAPPY_LIBRARIES "")
-    set(SNAPPY_INCLUDE_DIR "")
-    message("Disabled snappy codec. libsnappy not found.")
-endif (SNAPPY_FOUND)
-
-find_package(RdKafka CONFIG REQUIRED)
-
-add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
-add_definitions("-DLIBRDKAFKA_STATICLIB")
-
-if (CMAKE_COMPILER_IS_GNUCXX)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
-endif ()
-
-set(SOURCE_FILES
-    src/stdafx.h
-    src/exports.cpp
-    src/md5.cpp
-    src/md5.h
-    src/Component.cpp
-    src/Component.h
-    src/SimpleKafka1C.cpp
-    src/SimpleKafka1C.h)
-
-add_library(SimpleKafka1C SHARED ${SOURCE_FILES})
+﻿cmake_minimum_required(VERSION 3.12)
 
 if (WIN32)
-	find_package(unofficial-avro-cpp CONFIG REQUIRED)
-	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
-		${Boost_INCLUDE_DIRS} 
-		${RdKafka_INCLUDE_DIRS} 
-		${unofficial-avro-cpp_INCLUDE_DIRS})
-	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
-		${SNAPPY_LIBRARIES} 
-		RdKafka::rdkafka RdKafka::rdkafka++
-		unofficial::avro-cpp::avrocpp)
+    set(CMAKE_PREFIX_PATH "D:/Libs/vcpkg/installed/x64-windows-static") 
+else()    
+    set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
+    "/home/shmell/vcpkg/installed/x64-linux/") 
+endif ()
+
+project(SimpleKafka1C)
+
+set(CMAKE_CXX_STANDARD 17)
+set(TARGET SimpleKafka1C)
+
+option(CASE_INSENSITIVE "Case insensitive method names" OFF)
+option(STATIC_CRT "Static CRT linkage" ON)
+option(OUT_PARAMS "Support output parameters" OFF)
+
+list(APPEND SOURCES
+        src/addin.def
+        src/stdafx.h
+        src/dllmain.cpp
+        src/exports.cpp
+        src/md5.cpp
+        src/md5.h
+        src/Component.cpp
+        src/Component.h
+        src/SimpleKafka1C.cpp
+        src/SimpleKafka1C.h)
+
+add_library(${TARGET} SHARED
+        ${SOURCES})
+
+add_definitions("-DLIBRDKAFKA_STATICLIB")
+
+target_compile_definitions(${TARGET} PRIVATE
+        UNICODE
+        _UNICODE)
+
+if (CASE_INSENSITIVE)
+    target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
+endif ()
+
+if (OUT_PARAMS)
+    target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
+endif ()
+
+#adding library
+if (WIN32)
+
+    set(Boost_USE_STATIC_LIBS ON)
+
+    find_package(RdKafka CONFIG REQUIRED)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    find_package(unofficial-avro-cpp CONFIG REQUIRED)
+    find_package(Snappy CONFIG REQUIRED)
+    find_package(Boost REQUIRED COMPONENTS json container)
+
+    target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
+    target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
+    target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp) 
+    target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
+    target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
+
+    target_include_directories(${TARGET} PRIVATE
+        include d:/sources/include)
+        
+    add_definitions("-D_WIN32_WINNT=0x0601")
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
 else()
-	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
-		${Boost_INCLUDE_DIRS} 
-		${RdKafka_INCLUDE_DIRS} 
-		/home/source/source/avro-src-1.12.0/lang/c++/api)
-	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
-		${SNAPPY_LIBRARIES} 
-		/home/source/source/avro-src-1.12.0/lang/c++/libavrocpp_s.a
-		/home/source/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
-		/home/source/source/vcpkg/installed/x64-linux/lib/libsnappy.a
-		/home/source/source/vcpkg/installed/x64-linux/lib/libz.a
-		RdKafka::rdkafka RdKafka::rdkafka++)
+    find_package(PkgConfig REQUIRED) 
+    target_link_libraries(${TARGET} PRIVATE
+    /usr/local/lib/librdkafka++.a
+    /usr/local/lib/librdkafka-static.a
+	/usr/local/lib/libavro.a
+    pthread)  
+    target_include_directories(${TARGET} PRIVATE
+        include /home/shmell/Source/include)
 endif ()
 
 if (WIN32 AND NOT MSVC)
@@ -90,32 +83,12 @@ if (WIN32 AND NOT MSVC)
 endif ()
 
 if (WIN32)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(SimpleKafka1C PRIVATE
+    if (STATIC_CRT)
+        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
+    endif ()
+    target_compile_definitions(${TARGET} PRIVATE
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
-    target_compile_options(SimpleKafka1C PRIVATE /utf-8)
-else ()
-	if (NOT CMAKE_BUILD_TYPE)
-		set (CMAKE_BUILD_TYPE Release CACHE STRING
-		  "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
-		  FORCE)
-	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
-	endif (NOT CMAKE_BUILD_TYPE)
-    target_link_options(SimpleKafka1C PRIVATE -static-libgcc -static-libstdc++)
+    target_compile_options(${TARGET} PRIVATE /utf-8)
 endif ()
-
-
-# Сборка вк для REDOS 7.3 на Ubuntu 20.04. Требуется поставить старый glibc по инструкциям и собрать вк вместе с этой версией glibc
-
-#wget http://ftp.gnu.org/gnu/glibc/glibc-2.28.tar.gz
-#tar zxvf glibc-2.28.tar.gz
-#cd glibc-2.28
-#mkdir build
-#../configure --prefix=/home/source/opt/glibc-2.28 --disable-werror --enable-cet --with-selinux=no
-#make -j4
-#make install
-
-#set(CMAKE_SHARED_LINKER_FLAGS "-Wl,--rpath=/home/gaid/source/opt/glibc-2.28/lib") 
-#set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -I/home/gaid/source/opt/glibc-2.28/include/ -L/home/gaid/source/opt/glibc-2.28/lib") 
-
