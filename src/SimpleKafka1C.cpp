@@ -863,7 +863,7 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions)
 		auto meta = parsed_data.at("metadata");
 
 		if (meta.is_array()) {
-			for (int i = 0; i < meta.as_array().size(); i++)
+			for (size_t i = 0; i < meta.as_array().size(); i++)
 			{
 				std::string topic_ = value_to<std::string>(meta.at(i).at("topic"));
 				int partition_ = value_to<int>(meta.at(i).at("partition"));
