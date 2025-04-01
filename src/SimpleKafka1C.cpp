@@ -863,7 +863,7 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions)
 		auto meta = parsed_data.at("metadata");
 
 		if (meta.is_array()) {
-			for (int i = 0; i < meta.as_array().size(); i++)
+			for (size_t i = 0; i < meta.as_array().size(); i++)
 			{
 				std::string topic_ = value_to<std::string>(meta.at(i).at("topic"));
 				int partition_ = value_to<int>(meta.at(i).at("partition"));
@@ -1667,6 +1667,16 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						}
 						break;
 
+					case avro::AVRO_DOUBLE:
+						if (field->value().is_null())
+						{
+							fieldDatum.selectBranch(0);
+						}
+						else {
+							fieldDatum.value<double>() = field->value().as_double();
+						}
+						break;
+
 					case avro::AVRO_BOOL:
 						if (field->value().is_null())
 						{
@@ -1685,7 +1695,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 
 					default:
-						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
 						break;
 					}
 				}
@@ -1709,6 +1719,10 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						fieldDatum.value<float>() = (float)field->value().as_double();
 						break;
 
+					case avro::AVRO_DOUBLE:
+						fieldDatum.value<double>() = field->value().as_double();
+						break;
+
 					case avro::AVRO_BOOL:
 						fieldDatum.value<bool>() = field->value().as_bool();
 						break;
@@ -1721,7 +1735,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 
 					default:
-						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
 						break;
 					}
 				}
