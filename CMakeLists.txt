@@ -53,13 +53,18 @@ if (WIN32)
     find_package(RdKafka CONFIG REQUIRED)
     find_package(nlohmann_json CONFIG REQUIRED)
     find_package(unofficial-avro-cpp CONFIG REQUIRED)
-    find_package(Snappy CONFIG REQUIRED)
     find_package(Boost REQUIRED COMPONENTS json container)
+    find_package(Snappy CONFIG REQUIRED)
+
+    if(Snappy_FOUND)
+        target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
+        message("Found Snappy")
+    endif()
 
     target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
     target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
     target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp) 
-    target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
+    
     target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 
     target_include_directories(${TARGET} PRIVATE
@@ -67,6 +72,10 @@ if (WIN32)
         
     add_definitions("-D_WIN32_WINNT=0x0601")
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+
+    if("${PORT}" STREQUAL "snappy")
+        list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS -DSNAPPY_HAVE_SSSE3=ON -DSNAPPY_HAVE_BMI2=ON)
+    endif()
 else()
     find_package(PkgConfig REQUIRED) 
     target_link_libraries(${TARGET} PRIVATE
