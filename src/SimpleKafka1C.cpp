@@ -389,6 +389,9 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 		eventFile.open(cl_dr_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_dr_cb.formatLogFiles) + ".log", std::ios_base::app);
 	}
 
+	if (eventFile.is_open())
+		eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
+
 	std::string tBrokers = std::get<std::string>(brokers);
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Info: initProducer. brokers-" << tBrokers << std::endl;
 

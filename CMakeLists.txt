@@ -54,17 +54,16 @@ if (WIN32)
     find_package(nlohmann_json CONFIG REQUIRED)
     find_package(unofficial-avro-cpp CONFIG REQUIRED)
     find_package(Boost REQUIRED COMPONENTS json container)
-    find_package(Snappy CONFIG REQUIRED)
+    #find_package(Snappy CONFIG REQUIRED)
 
-    if(Snappy_FOUND)
-        target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
-        message("Found Snappy")
-    endif()
+    #if(Snappy_FOUND)
+    #    target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
+    #    message("Found Snappy")
+    #endif()
 
     target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
     target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
     target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp) 
-    
     target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 
     target_include_directories(${TARGET} PRIVATE
