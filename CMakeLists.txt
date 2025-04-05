@@ -1,90 +1,88 @@
-﻿cmake_minimum_required(VERSION 3.12)
-
-if (WIN32)
-    set(CMAKE_PREFIX_PATH "D:/Libs/vcpkg/installed/x64-windows-static") 
-else()    
-    set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
-    "/home/shmell/vcpkg/installed/x64-linux/") 
-endif ()
-
-project(SimpleKafka1C)
+﻿# CMakeList.txt : Top-level CMake project file, do global configuration
+# and include sub-projects here.
+#
+cmake_minimum_required (VERSION 3.12)
 
 set(CMAKE_CXX_STANDARD 17)
-set(TARGET SimpleKafka1C)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-option(STATIC_CRT "Static CRT linkage" ON)
-option(OUT_PARAMS "Support output parameters" OFF)
+set (CMAKE_LEGACY_CYGWIN_WIN32 0)
 
-list(APPEND SOURCES
-        src/addin.def
-        src/stdafx.h
-        src/dllmain.cpp
-        src/exports.cpp
-        src/md5.cpp
-        src/md5.h
-        src/Component.cpp
-        src/Component.h
-        src/SimpleKafka1C.cpp
-        src/SimpleKafka1C.h)
+if (NOT DEFINED CMAKE_CXX_STANDARD)
+    set(CMAKE_CXX_STANDARD 17)
+endif()
 
-add_library(${TARGET} SHARED
-        ${SOURCES})
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if (CMAKE_VERSION VERSION_GREATER_EQUAL 3.0)
+    # Enable MACOSX_RPATH by default
+    cmake_policy (SET CMP0042 NEW)
+endif()
+
+if (NOT DEFINED CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS)
+    set (CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_NO_WARNINGS ON)
+endif()
+
+project (SimpleKafka1C)
+set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_SOURCE_DIR})
+
+find_package(Boost 1.38 REQUIRED COMPONENTS filesystem iostreams program_options regex system json)
+
+find_package(Snappy)
+if (SNAPPY_FOUND)
+    set(SNAPPY_PKG libsnappy)
+    add_definitions(-DSNAPPY_CODEC_AVAILABLE)
+    message("Enabled snappy codec")
+else (SNAPPY_FOUND)
+    set(SNAPPY_PKG "")
+    set(SNAPPY_LIBRARIES "")
+    set(SNAPPY_INCLUDE_DIR "")
+    message("Disabled snappy codec. libsnappy not found.")
+endif (SNAPPY_FOUND)
+
+find_package(RdKafka CONFIG REQUIRED)
+
+add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
-target_compile_definitions(${TARGET} PRIVATE
-        UNICODE
-        _UNICODE)
-
-if (CASE_INSENSITIVE)
-    target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
+if (CMAKE_COMPILER_IS_GNUCXX)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
 endif ()
 
-if (OUT_PARAMS)
-    target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
-endif ()
+set(SOURCE_FILES
+    src/stdafx.h
+    src/exports.cpp
+    src/md5.cpp
+    src/md5.h
+    src/Component.cpp
+    src/Component.h
+    src/SimpleKafka1C.cpp
+    src/SimpleKafka1C.h)
 
-#adding library
+add_library(SimpleKafka1C SHARED ${SOURCE_FILES})
+
 if (WIN32)
-
-    set(Boost_USE_STATIC_LIBS ON)
-
-    find_package(RdKafka CONFIG REQUIRED)
-    find_package(nlohmann_json CONFIG REQUIRED)
-    find_package(unofficial-avro-cpp CONFIG REQUIRED)
-    find_package(Boost REQUIRED COMPONENTS json container)
-    find_package(Snappy CONFIG REQUIRED)
-
-    if(Snappy_FOUND)
-        target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
-        message("Found Snappy")
-    endif()
-
-    target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
-    target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
-    target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp) 
-    
-    target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
-
-    target_include_directories(${TARGET} PRIVATE
-        include d:/sources/include)
-        
-    add_definitions("-D_WIN32_WINNT=0x0601")
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-
-    if("${PORT}" STREQUAL "snappy")
-        list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS -DSNAPPY_HAVE_SSSE3=ON -DSNAPPY_HAVE_BMI2=ON)
-    endif()
+	find_package(unofficial-avro-cpp CONFIG REQUIRED)
+	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
+		${Boost_INCLUDE_DIRS} 
+		${RdKafka_INCLUDE_DIRS} 
+		${unofficial-avro-cpp_INCLUDE_DIRS})
+	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
+		${SNAPPY_LIBRARIES} 
+		RdKafka::rdkafka RdKafka::rdkafka++
+		unofficial::avro-cpp::avrocpp)
 else()
-    find_package(PkgConfig REQUIRED) 
-    target_link_libraries(${TARGET} PRIVATE
-    /usr/local/lib/librdkafka++.a
-    /usr/local/lib/librdkafka-static.a
-	/usr/local/lib/libavro.a
-    pthread)  
-    target_include_directories(${TARGET} PRIVATE
-        include /home/shmell/Source/include)
+	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
+		${Boost_INCLUDE_DIRS} 
+		${RdKafka_INCLUDE_DIRS} 
+		/home/gaid/source/avro-src-1.12.0/lang/c++/api)
+	target_link_libraries(SimpleKafka1C ${Boost_LIBRARIES}
+		${SNAPPY_LIBRARIES} 
+		/home/gaid/source/avro-src-1.12.0/lang/c++/libavrocpp_s.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libboost_iostreams.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libsnappy.a
+		/home/gaid/source/vcpkg/installed/x64-linux/lib/libz.a
+		RdKafka::rdkafka RdKafka::rdkafka++)
 endif ()
 
 if (WIN32 AND NOT MSVC)
@@ -92,12 +90,18 @@ if (WIN32 AND NOT MSVC)
 endif ()
 
 if (WIN32)
-    if (STATIC_CRT)
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-    endif ()
-    target_compile_definitions(${TARGET} PRIVATE
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(SimpleKafka1C PRIVATE
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
-    target_compile_options(${TARGET} PRIVATE /utf-8)
+    target_compile_options(SimpleKafka1C PRIVATE /utf-8)
+else ()
+	if (NOT CMAKE_BUILD_TYPE)
+		set (CMAKE_BUILD_TYPE Release CACHE STRING
+		  "Choose the type of build, options are: None Debug Release RelWithDebInfo MinSizeRel."
+		  FORCE)
+	        message("CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE}")
+	endif (NOT CMAKE_BUILD_TYPE)
+    target_link_options(SimpleKafka1C PRIVATE)
 endif ()
+

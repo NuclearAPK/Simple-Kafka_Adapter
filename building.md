@@ -54,6 +54,7 @@ vcpkg install boost-program-options --overlay-triplets=static-triplets --triplet
 vcpkg install boost-crc --overlay-triplets=static-triplets --triplet x64-linux
 vcpkg install boost-math --overlay-triplets=static-triplets --triplet x64-linux
 vcpkg install boost-format --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install boost-test --overlay-triplets=static-triplets --triplet x64-linux
 ```
 
 Сборку можно выполнить в Visual Studio как CMake проект или же командами

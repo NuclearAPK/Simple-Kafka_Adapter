@@ -223,7 +223,7 @@ void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer* consumer
 
 			consumer->assign(partitions);
 
-			for each (auto offset in offsets) {
+			for (auto offset : offsets) {	// GCC supports only this variant
 				delete offset;
 			}
 
@@ -433,7 +433,7 @@ bool SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName, co
 
 	try
 	{
-		msg_err = "";
+		msg_err.clear();
 		std::string tTopicName = std::get<std::string>(topicName);
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile{};
@@ -583,7 +583,7 @@ bool SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& par
 
 	try
 	{
-		msg_err = "";
+		msg_err.clear();
 		std::string tTopicName = std::get<std::string>(topicName);
 		auto currentPartition = std::get<int>(partition);
 		std::ofstream eventFile{};
@@ -1434,7 +1434,7 @@ variant_t SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times, c
 
 	delete metadata;
 
-	for each (auto tp in partitions)
+	for (auto tp : partitions)	// GCC supports only this variant
 	{
 		boost::property_tree::ptree node;
 		node.put("topic", tp->topic());
@@ -1563,43 +1563,57 @@ bool SimpleKafka1C::putAvroSchema(const variant_t& schemaJsonName, const variant
 
 bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_t& schemaJsonName)
 {
+	avroFile.clear();
+    msg_err.clear();
+	std::string key;
+	std::string type;
+	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+	avro::ValidSchema schema;
+	if (it != schemesMap.end())
+	{
+		schema = it->second;
+	}
+	else
+	{
+		msg_err = "Имя схемы не известно - " + std::get<std::string>(schemaJsonName);
+		return false;
+	}
+
+	avro::GenericDatum datum(schema);
+	if (datum.type() != avro::AVRO_RECORD)
+	{
+		msg_err = "Некорректная схема";
+		return false;
+	}
+
+	// Разбираем исходный json
+	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
+	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
+
+	boost::json::monotonic_resource mr;
+	boost::json::value jsonInput_t;
 	try
 	{
-		auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
-		avro::ValidSchema schema;
-		if (it != schemesMap.end())
-		{
-			schema = it->second;
-		}
-		else
-		{
-			msg_err = "Имя схемы не известно - " + std::get<std::string>(schemaJsonName);
-			return false;
-		}
+		jsonInput_t = boost::json::parse(std::get<std::string>(msgJson), &mr);
+	}
+	catch (std::exception const& ex)
+	{
+		msg_err = "Error parsing scheme - ";
+		msg_err += ex.what();
+		return false;
+	}
+	const boost::json::object jsonInput = jsonInput_t.as_object();
 
-		avro::GenericDatum datum(schema);
-		if (datum.type() != avro::AVRO_RECORD)
-		{
-			msg_err = "Некорректная схема";
-			return false;
-		}
+	MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+	std::unique_ptr<avro::OutputStream> os(memOutStr);
+	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 
-		// Разбираем исходный json
-		// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
-		// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
+	// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
+	const auto first_array = jsonInput.cbegin();
+	const size_t numElements = first_array->value().as_array().size();
 
-		boost::json::monotonic_resource mr;
-		const auto jsonInput_t = boost::json::parse(std::get<std::string>(msgJson), &mr);
-		const boost::json::object jsonInput = jsonInput_t.as_object();
-
-		MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
-		std::unique_ptr<avro::OutputStream> os(memOutStr);
-		avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
-
-		// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
-		const auto first_array = jsonInput.cbegin();
-		const size_t numElements = first_array->value().as_array().size();
-
+	try
+	{
 		for (size_t i = 0; i < numElements; i++)
 		{
 			// построчное преобразование
@@ -1615,6 +1629,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 			for (auto field = jsonRecord.cbegin(); field != jsonRecord.cend(); ++field)
 			{
 				avro::GenericDatum& fieldDatum = record.field(field->key_c_str());
+				type = toString(fieldDatum.type());
+				key = field->key_c_str();
 
 				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
 				// Тип устанавливается при помощи функции selectBranch() 
@@ -1662,7 +1678,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						{
 							fieldDatum.selectBranch(0);
 						}
-						else {
+						else 
+                        {
 							fieldDatum.value<float>() = (float)field->value().as_double();
 						}
 						break;
@@ -1672,7 +1689,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						{
 							fieldDatum.selectBranch(0);
 						}
-						else {
+						else 
+                        {
 							fieldDatum.value<double>() = field->value().as_double();
 						}
 						break;
@@ -1682,7 +1700,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						{
 							fieldDatum.selectBranch(0);
 						}
-						else {
+						else 
+                        {
 							fieldDatum.value<bool>() = field->value().as_bool();
 						}
 						break;
@@ -1695,7 +1714,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 
 					default:
-						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						msg_err += "Unsupported type '" + type + "' on '" + key + "'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION. ";
 						break;
 					}
 				}
@@ -1735,7 +1754,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 
 					default:
-						msg_err = "Неподдерживаемый тип. Поддерживаются: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION";
+						msg_err += "Unsupported type '" + type + "' on '" + key + "'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION. ";
 						break;
 					}
 				}
@@ -1744,15 +1763,13 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 		}
 
 		writer.flush();
-		avroFile.clear();
 		memOutStr->snapshot(avroFile);
-		writer.close();
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err = ex.what();
-		return false;
+		msg_err += "Error while proceesing key '" + key + "' with type '" + type + "' - " + ex.what();
 	}
+	writer.close();
 	return msg_err.empty();
 }
 
