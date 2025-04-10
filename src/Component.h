@@ -28,10 +28,10 @@
 #include <variant>
 #include <vector>
 
-#include <AddInDefBase.h>
-#include <ComponentBase.h>
-#include <IMemoryManager.h>
-#include <types.h>
+#include "ComponentBase.h"
+#include "AddInDefBase.h"
+#include "IMemoryManager.h"
+//#include <types.h>
 
 template<class... Ts>
 struct overloaded : Ts ... {
@@ -54,54 +54,41 @@ typedef std::variant<
 
 class Component : public IComponentBase {
 public:
-
-    bool ADDIN_API Init(void *connection_) final;
-
-    bool ADDIN_API setMemManager(void *memory_manager_) final;
-
-    long ADDIN_API GetInfo() final { return 2100; };
-
-    void ADDIN_API Done() final {};
-
-    void ADDIN_API SetLocale(const WCHAR_T *locale) final;
-
-    bool ADDIN_API RegisterExtensionAs(WCHAR_T **ext_name) final;
-
-    long ADDIN_API GetNProps() final;
-
-    long ADDIN_API FindProp(const WCHAR_T *prop_name) final;
-
-    const WCHAR_T *ADDIN_API GetPropName(long num, long lang_alias) final;
-
-    bool ADDIN_API GetPropVal(const long num, tVariant *value) final;
-
-    bool ADDIN_API SetPropVal(const long num, tVariant *value) final;
-
-    bool ADDIN_API IsPropReadable(const long lPropNum) final;
-
-    bool ADDIN_API IsPropWritable(const long lPropNum) final;
-
-    long ADDIN_API GetNMethods() final;
-
-    long ADDIN_API FindMethod(const WCHAR_T *method_name) final;
-
-    const WCHAR_T *ADDIN_API GetMethodName(const long num, const long lang_alias) final;
-
-    long ADDIN_API GetNParams(const long method_num) final;
-
-    bool ADDIN_API GetParamDefValue(const long method_num, const long param_num, tVariant *def_value) final;
-
-    bool ADDIN_API HasRetVal(const long method_num) final;
-
-    bool ADDIN_API CallAsProc(const long method_num, tVariant *params, const long array_size) final;
-
-    bool ADDIN_API CallAsFunc(const long method_num, tVariant *ret_value, tVariant *params,
-                              const long array_size) final;
+    // IInitDoneBase
+    virtual bool ADDIN_API Init(void*) override;
+    virtual bool ADDIN_API setMemManager(void* mem) override;
+    virtual long ADDIN_API GetInfo() override;
+    virtual void ADDIN_API Done() override;
+    // ILanguageExtenderBase
+    virtual bool ADDIN_API RegisterExtensionAs(WCHAR_T**) override;
+    virtual long ADDIN_API GetNProps() override;
+    virtual long ADDIN_API FindProp(const WCHAR_T* wsPropName) override;
+    virtual const WCHAR_T* ADDIN_API GetPropName(long lPropNum, long lPropAlias) override;
+    virtual bool ADDIN_API GetPropVal(const long lPropNum, tVariant* pvarPropVal) override;
+    virtual bool ADDIN_API SetPropVal(const long lPropNum, tVariant* varPropVal) override;
+    virtual bool ADDIN_API IsPropReadable(const long lPropNum) override;
+    virtual bool ADDIN_API IsPropWritable(const long lPropNum) override;
+    virtual long ADDIN_API GetNMethods() override;
+    virtual long ADDIN_API FindMethod(const WCHAR_T* wsMethodName) override;
+    virtual const WCHAR_T* ADDIN_API GetMethodName(const long lMethodNum, 
+                            const long lMethodAlias) override;
+    virtual long ADDIN_API GetNParams(const long lMethodNum) override;
+    virtual bool ADDIN_API GetParamDefValue(const long lMethodNum, const long lParamNum,
+                            tVariant *pvarParamDefValue) override;   
+    virtual bool ADDIN_API HasRetVal(const long lMethodNum) override;
+    virtual bool ADDIN_API CallAsProc(const long lMethodNum,
+                    tVariant* paParams, const long lSizeArray) override;
+    virtual bool ADDIN_API CallAsFunc(const long lMethodNum,
+                tVariant* pvarRetValue, tVariant* paParams, const long lSizeArray) override;
+    // LocaleBase
+    virtual void ADDIN_API SetLocale(const WCHAR_T* loc) override;
+    // UserLanguageBase
+    virtual void ADDIN_API SetUserInterfaceLanguageCode(const WCHAR_T* lang) override;
 
 protected:
     virtual std::string extensionName() = 0;
 
-    void AddError(unsigned short code, const std::string &src, const std::string &msg, bool throw_excp);
+    bool AddError(unsigned short code, const std::string &src, const std::string &msg, long scode);
 
     bool ExternalEvent(const std::string &src, const std::string &msg, const std::string &data);
 
@@ -121,6 +108,7 @@ protected:
                    std::map<long, variant_t> &&def_args = {});
 
 private:
+    static constexpr char UNKNOWN_EXCP[] = u8"Unknown unhandled exception";
     class PropertyMeta;
 
     class MethodMeta;
@@ -152,11 +140,11 @@ private:
 
     static std::wstring toUpper(std::wstring str);
 
+    std::u16string m_userLang;
     IAddInDefBase *connection;
     IMemoryManager *memory_manager;
     std::vector<PropertyMeta> properties_meta;
     std::vector<MethodMeta> methods_meta;
-    static constexpr char UNKNOWN_EXCP[] = u8"Unknown unhandled exception";
 
 };
 

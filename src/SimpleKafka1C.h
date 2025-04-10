@@ -9,12 +9,13 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.5.1";
+	static constexpr char Version[] = u8"1.5.1_3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
 
 private:
+	static constexpr char EMPTYSTR[] = u8"";
 
 	// property
 	std::shared_ptr<variant_t> logDirectory;
@@ -63,16 +64,15 @@ private:
 
 	// producer
 	bool initProducer(const variant_t &brokers);
-	bool produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	void stopProducer();
 
 	// consumer
 	void clearMessageMetadata(); 
-	//bool initConsumer(const variant_t &brokers, const variant_t &topic);
-	bool initConsumer(const variant_t& brokers);// , const variant_t& topic);
+	bool initConsumer(const variant_t& brokers);
 	bool subscribe(const variant_t& topic);
 	variant_t consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
@@ -100,14 +100,16 @@ private:
 
 	// Utilites
 	void message(const variant_t &msg);
-	bool sleep(const variant_t &delay);
+	void sleep(const variant_t &delay);
 	void setLogDirectory(const variant_t& logDir);
 	void setFormatLogFiles(const variant_t& format);
+    void openEventFile(const std::string& logName, std::ofstream& eventFile);
+    bool AddError(const std::string &msg, long scode);
 
 	// converting a message to avro format
-	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
-	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
-	bool saveAvroFile(const variant_t &fileName);
+	void putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
+	void convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
+	void saveAvroFile(const variant_t &fileName);
 
 	struct KafkaSettings {
 		std::string Key;
@@ -132,7 +134,7 @@ private:
 	{
 	public:
 		unsigned pid;
-		bool delivered = false;
+		int32_t delivered;
 		char *formatLogFiles;
 		std::string logDir = "";
 		std::string producerLogName;

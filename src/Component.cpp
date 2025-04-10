@@ -24,9 +24,21 @@
 
 #include "Component.h"
 
+#define BASE_ERRNO     7
+
 #ifdef _WINDOWS
 #pragma warning (disable : 4267)
 #endif
+
+// utility wrapper to adapt locale-bound facets for wstring/wbuffer convert
+template<class Facet>
+struct deletable_facet : Facet
+{
+    template<class ...Args>
+    deletable_facet(Args&& ...args) : Facet(std::forward<Args>(args)...) 
+{}
+    ~deletable_facet() {}
+};
 
 bool Component::Init(void *connection_) {
     connection = static_cast<IAddInDefBase *>(connection_);
@@ -110,10 +122,10 @@ bool Component::GetPropVal(const long num, tVariant *value) {
         auto tmp = properties_meta[num].getter();
         storeVariable(*tmp, *value);
     } catch (const std::exception &e) {
-        AddError(ADDIN_E_FAIL, extensionName(), e.what(), true);
+        AddError(ADDIN_E_FAIL, extensionName(), e.what(), 1005);
         return false;
     } catch (...) {
-        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, true);
+        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, 1006);
         return false;
     }
 
@@ -126,10 +138,10 @@ bool Component::SetPropVal(const long num, tVariant *value) {
         auto tmp = toStlVariant(*value);
         properties_meta[num].setter(std::move(tmp));
     } catch (const std::exception &e) {
-        AddError(ADDIN_E_FAIL, extensionName(), e.what(), true);
+        AddError(ADDIN_E_FAIL, extensionName(), e.what(), 1007);
         return false;
     } catch (...) {
-        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, true);
+        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, 1008);
         return false;
     }
 
@@ -219,10 +231,10 @@ bool Component::CallAsProc(const long method_num, tVariant *params, const long a
         storeParams(args, params);
 #endif
     } catch (const std::exception &e) {
-        AddError(ADDIN_E_FAIL, extensionName(), e.what(), true);
+        AddError(ADDIN_E_FAIL, extensionName(), e.what(), 1001);
         return false;
     } catch (...) {
-        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, true);
+        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, 1002);
         return false;
     }
 
@@ -239,10 +251,10 @@ bool Component::CallAsFunc(const long method_num, tVariant *ret_value, tVariant 
         storeParams(args, params);
 #endif
     } catch (const std::exception &e) {
-        AddError(ADDIN_E_FAIL, extensionName(), e.what(), true);
+        AddError(ADDIN_E_FAIL, extensionName(), e.what(), 1003);
         return false;
     } catch (...) {
-        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, true);
+        AddError(ADDIN_E_FAIL, extensionName(), UNKNOWN_EXCP, 1004);
         return false;
     }
 
@@ -250,18 +262,26 @@ bool Component::CallAsFunc(const long method_num, tVariant *ret_value, tVariant 
 
 }
 
-void Component::AddError(unsigned short code, const std::string &src, const std::string &msg, bool throw_excp) {
+bool Component::AddError(unsigned short code, const std::string &src, const std::string &msg, long scode) {
     WCHAR_T *source = nullptr;
     WCHAR_T *descr = nullptr;
 
     storeVariable(src, &source);
     storeVariable(msg, &descr);
 
-    connection->AddError(code, source, descr, throw_excp);
+    bool success = connection->AddError(code, source, descr, RESULT_FROM_ERRNO(scode));
 
     memory_manager->FreeMemory(reinterpret_cast<void **>(&source));
     memory_manager->FreeMemory(reinterpret_cast<void **>(&descr));
+
+    return success;
 }
+
+void Component::SetUserInterfaceLanguageCode(const WCHAR_T * lang)
+{
+    m_userLang.assign(lang);
+}
+
 
 bool Component::ExternalEvent(const std::string &src, const std::string &msg, const std::string &data) {
     WCHAR_T *wszSource = nullptr;
@@ -435,35 +455,21 @@ std::wstring Component::toUpper(std::wstring str) {
 }
 
 std::string Component::toUTF8String(std::basic_string_view<WCHAR_T> src) {
-#ifdef _WINDOWS
-    // VS bug
-    // https://social.msdn.microsoft.com/Forums/en-US/8f40dcd8-c67f-4eba-9134-a19b9178e481/vs-2015-rc-linker-stdcodecvt-error?forum=vcgeneral
-    static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> cvt_utf8_utf16;
-    return cvt_utf8_utf16.to_bytes(src.data(), src.data() + src.size());
-#else
-    static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> cvt_utf8_utf16;
-    return cvt_utf8_utf16.to_bytes(reinterpret_cast<const char16_t *>(src.data()),
-                                   reinterpret_cast<const char16_t *>(src.data() + src.size()));
-#endif
+    static std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> conv16;
+    return conv16.to_bytes(src.data());
 }
 
 std::wstring Component::toWstring(std::basic_string_view<WCHAR_T> src) {
 #ifdef _WINDOWS
     return std::wstring(src);
 #else
-    std::wstring_convert<std::codecvt_utf16<wchar_t, 0x10ffff, std::little_endian>> conv;
+    static std::wstring_convert<std::codecvt_utf16<wchar_t, 0x10ffff, std::little_endian>> conv;
     return conv.from_bytes(reinterpret_cast<const char*>(src.data()),
                            reinterpret_cast<const char*>(src.data() + src.size()));
 #endif
 }
 
 std::u16string Component::toUTF16String(std::string_view src) {
-#ifdef _WINDOWS
-    static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> cvt_utf8_utf16;
-    std::wstring tmp = cvt_utf8_utf16.from_bytes(src.data(), src.data() + src.size());
-    return std::u16string(reinterpret_cast<const char16_t *>(tmp.data()), tmp.size());
-#else
-    static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> cvt_utf8_utf16;
-    return cvt_utf8_utf16.from_bytes(src.data(), src.data() + src.size());
-#endif
+    static std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> conv16;
+    return conv16.from_bytes(src.data());
 }
