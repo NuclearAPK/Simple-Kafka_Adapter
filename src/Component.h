@@ -57,8 +57,8 @@ public:
     // IInitDoneBase
     virtual bool ADDIN_API Init(void*) override;
     virtual bool ADDIN_API setMemManager(void* mem) override;
-    virtual long ADDIN_API GetInfo() override;
-    virtual void ADDIN_API Done() override;
+    virtual long ADDIN_API GetInfo() override { return 2100; }
+    virtual void ADDIN_API Done() override {}
     // ILanguageExtenderBase
     virtual bool ADDIN_API RegisterExtensionAs(WCHAR_T**) override;
     virtual long ADDIN_API GetNProps() override;
@@ -86,6 +86,8 @@ public:
     virtual void ADDIN_API SetUserInterfaceLanguageCode(const WCHAR_T* lang) override;
 
 protected:
+	std::string msg_err;
+
     virtual std::string extensionName() = 0;
 
     bool AddError(unsigned short code, const std::string &src, const std::string &msg, long scode);
@@ -178,6 +180,8 @@ public:
     std::wstring alias_ru;
     long params_count;
     bool returns_value;
+    bool returns_bool;
+    bool returns_int32_t;
     std::map<long, variant_t> default_args;
     std::function<variant_t(std::vector<variant_t> &params)> call;
 };
@@ -191,7 +195,11 @@ template<typename T, typename C, typename ... Ts>
 void Component::AddMethod(const std::wstring &alias, const std::wstring &alias_ru, C *c, T(C::*f)(Ts ...),
                           std::map<long, variant_t> &&def_args) {
 
-    MethodMeta meta{alias, alias_ru, sizeof...(Ts), !std::is_same<T, void>::value, std::move(def_args),
+    MethodMeta meta{alias, alias_ru, sizeof...(Ts), 
+                    !std::is_same<T, void>::value, 
+                    !std::is_same<T, bool>::value, 
+                    !std::is_same<T, int32_t>::value, 
+                    std::move(def_args),
                     [f, c](std::vector<variant_t> &params) -> variant_t {
                         auto args = refTupleGen(params, std::make_index_sequence<sizeof...(Ts)>());
                         if constexpr (std::is_same<T, void>::value) {

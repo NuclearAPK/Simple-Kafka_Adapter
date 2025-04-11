@@ -1,0 +1,10 @@
+{
+         global:
+                *DllMain*;
+                *GetClassObject*;
+                *DestroyObject*;
+                *GetClassNames*;
+                *SetPlatformCapabilities*;
+         local: 
+                *;
+};

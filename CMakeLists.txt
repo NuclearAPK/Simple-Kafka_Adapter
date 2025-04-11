@@ -37,6 +37,20 @@ set(SOURCE_FILES
 
 add_library(SimpleKafka1C SHARED ${SOURCE_FILES})
 
+if (UNIX)
+    if (APPLE)
+        ADD_DEFINITIONS(-D__APPLE__ )
+    endif()
+else()
+    add_definitions(-DUNICODE -DWIN32 -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_DEPRECATE -DADDINCPP_EXPORTS)
+    IF(TARGET_PLATFORM_32)
+        add_definitions(-D_USE_32BIT_TIME_T )
+    ENDIF()
+endif()
+IF (UNIX AND NOT APPLE)
+    set_target_properties(SimpleKafka1C PROPERTIES LINK_FLAGS "-Wl,--no-undefined -Xlinker --version-script -Xlinker src/version.script" )
+ENDIF()
+
 if (WIN32)
 	find_package(unofficial-avro-cpp CONFIG REQUIRED)
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
@@ -47,6 +61,11 @@ if (WIN32)
 		${SNAPPY_LIBRARIES} 
 		RdKafka::rdkafka RdKafka::rdkafka++
 		unofficial::avro-cpp::avrocpp)
+    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(SimpleKafka1C PRIVATE
+            _WINDOWS
+            _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
+    target_compile_options(SimpleKafka1C PRIVATE /utf-8)
 else()
 	target_include_directories(SimpleKafka1C PRIVATE include ${SOURCES}/include 
 		${Boost_INCLUDE_DIRS} 
@@ -59,14 +78,6 @@ else()
 		/home/gaid/source/vcpkg/installed/x64-linux/lib/libsnappy.a
 		/home/gaid/source/vcpkg/installed/x64-linux/lib/libz.a
 		RdKafka::rdkafka RdKafka::rdkafka++)
-endif ()
-
-if (WIN32)
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-    target_compile_definitions(SimpleKafka1C PRIVATE
-            _WINDOWS
-            _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
-    target_compile_options(SimpleKafka1C PRIVATE /utf-8)
-else ()
     target_link_options(SimpleKafka1C PRIVATE)
 endif ()
+
