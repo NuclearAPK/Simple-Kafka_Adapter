@@ -110,7 +110,7 @@ protected:
                    std::map<long, variant_t> &&def_args = {});
 
 private:
-    static constexpr char UNKNOWN_EXCP[] = u8"Unknown unhandled exception";
+    static constexpr char UNKNOWN_EXCP[] = "Unknown unhandled exception";
     class PropertyMeta;
 
     class MethodMeta;

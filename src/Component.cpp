@@ -478,7 +478,7 @@ std::string Component::toUTF8String(std::basic_string_view<WCHAR_T> src) {
 }
 
 std::wstring Component::toWstring(std::basic_string_view<WCHAR_T> src) {
-#ifdef _WINDOWS
+#if (defined _WINDOWS && _MSC_VER < 1930)
     return std::wstring(src);
 #else
     static std::wstring_convert<std::codecvt_utf16<wchar_t, 0x10ffff, std::little_endian>> conv;
