@@ -1008,8 +1008,8 @@ void SimpleKafka1C::clearMessageMetadata()
 
 	this->messageLen = 0;
 	this->timestamp = 0;
-	this->key = "";
-	this->topic = "";
+	this->key = EMPTYSTR;
+	this->topic = EMPTYSTR;
 	this->broker_id = 0;
 	this->partition = 0;
 	this->offset = 0;
