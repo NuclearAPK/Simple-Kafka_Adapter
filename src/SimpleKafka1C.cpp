@@ -265,7 +265,7 @@ SimpleKafka1C::SimpleKafka1C()
 			auto s = std::string(Version);
 			return std::make_shared<variant_t>(std::move(s)); });
 
-    // firts method must be GetLastError
+    // The first method must be GetLastError
 	AddMethod(L"GetLastError", L"ПолучитьСообщениеОбОшибке", this, &SimpleKafka1C::getLastError);
 	AddMethod(L"SetParameter", L"УстановитьПараметр", this, &SimpleKafka1C::setParameter);
 	AddMethod(L"InitializeProducer", L"ИнициализироватьПродюсера", this, &SimpleKafka1C::initProducer);
