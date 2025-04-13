@@ -1,7 +1,7 @@
 ﻿cmake_minimum_required(VERSION 3.12)
 
 if (WIN32)
-    set(CMAKE_PREFIX_PATH "C:/Users/Gaidukov_A/source/repos/vcpkg/installed/x64-windows-static") 
+    set(CMAKE_PREFIX_PATH "D:/Libs/vcpkg/installed/x64-windows-static") 
 else()    
     set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
     "/home/shmell/vcpkg/installed/x64-linux/") 
@@ -16,7 +16,7 @@ option(CASE_INSENSITIVE "Case insensitive method names" OFF)
 option(STATIC_CRT "Static CRT linkage" ON)
 option(OUT_PARAMS "Support output parameters" OFF)
 
-list(APPEND SOURCES
+list(APPEND SOURCE_FILES
         src/addin.def
         src/stdafx.h
         src/dllmain.cpp
@@ -28,8 +28,17 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-add_library(${TARGET} SHARED
-        ${SOURCES})
+add_library(${TARGET} SHARED ${SOURCE_FILES})
+
+if (WIN32)
+    add_definitions(-DUNICODE -DWIN32 -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_DEPRECATE -DADDINCPP_EXPORTS)
+    IF(TARGET_PLATFORM_32)
+        add_definitions(-D_USE_32BIT_TIME_T )
+    ENDIF()
+endif()
+IF (UNIX AND NOT APPLE)
+    set_target_properties(SimpleKafka1C PROPERTIES LINK_FLAGS "-Wl,--no-undefined -Xlinker --version-script -Xlinker src/version.script") 
+ENDIF()
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
@@ -89,4 +98,8 @@ if (WIN32)
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
+else ()
+    if (CMAKE_COMPILER_IS_GNUCXX)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
+    endif ()
 endif ()
