@@ -118,7 +118,7 @@ private:
 	public:
 		unsigned pid;
 		char *formatLogFiles;
-		std::string logDir = "";
+		std::string logDir;
 		std::string consumerLogName;
 		std::string statLogName;
 		bool statisticsOn = false;
@@ -133,7 +133,7 @@ private:
 		unsigned pid;
 		int32_t delivered;
 		char *formatLogFiles;
-		std::string logDir = "";
+		std::string logDir;
 		std::string producerLogName;
 		std::string clientid;
 
@@ -172,8 +172,7 @@ public:
 
 	~MemoryOutputStream() final
 	{
-		for (std::vector<uint8_t *>::const_iterator it = data_.begin();
-			it != data_.end(); ++it)
+		for (std::vector<uint8_t *>::const_iterator it = data_.begin(); it != data_.end(); ++it)
 			delete[] * it;
 	}
 

@@ -655,8 +655,7 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	cl_event_cb.clientid = clientID();
 
 	openEventFile(consumerLogName, eventFile);
-	if (eventFile.is_open())
-		eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
+	if (eventFile.is_open()) eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
 	
 	// дополнительные параметры
 	for (size_t i = 0; i < settings.size(); i++)
@@ -949,7 +948,7 @@ std::string SimpleKafka1C::getMessageHeaders()
 
 int32_t SimpleKafka1C::getMessageOffset()
 {
-	return int32_t(this->offset);
+	return (int32_t) this->offset;
 }
 
 std::string SimpleKafka1C::getMessageTopicName()
@@ -964,7 +963,7 @@ int32_t SimpleKafka1C::getMessageBrokerID()
 
 int32_t SimpleKafka1C::getMessageTimestamp()
 {
-	return (int32_t)this->timestamp / 1000;
+	return (int32_t) this->timestamp / 1000;
 }
 
 int32_t SimpleKafka1C::getMessagePartition()
