@@ -50,7 +50,7 @@ documentation and/or software.
 class MD5
 {
 public:
-  typedef unsigned __int32 size_type; // must be 32bit
+  typedef unsigned int size_type; // must be 32bit
  
   MD5();
   MD5(const std::string& text);
