@@ -16,7 +16,7 @@ option(CASE_INSENSITIVE "Case insensitive method names" OFF)
 option(STATIC_CRT "Static CRT linkage" ON)
 option(OUT_PARAMS "Support output parameters" OFF)
 
-list(APPEND SOURCES
+list(APPEND SOURCE_FILES
         src/addin.def
         src/stdafx.h
         src/dllmain.cpp
@@ -28,8 +28,17 @@ list(APPEND SOURCES
         src/SimpleKafka1C.cpp
         src/SimpleKafka1C.h)
 
-add_library(${TARGET} SHARED
-        ${SOURCES})
+add_library(${TARGET} SHARED ${SOURCE_FILES})
+
+if (WIN32)
+    add_definitions(-DUNICODE -DWIN32 -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_DEPRECATE -DADDINCPP_EXPORTS)
+    IF(TARGET_PLATFORM_32)
+        add_definitions(-D_USE_32BIT_TIME_T )
+    ENDIF()
+endif()
+IF (UNIX AND NOT APPLE)
+    set_target_properties(SimpleKafka1C PROPERTIES LINK_FLAGS "-Wl,--no-undefined -Xlinker --version-script -Xlinker src/version.script") 
+ENDIF()
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
 
@@ -51,23 +60,13 @@ if (WIN32)
     set(Boost_USE_STATIC_LIBS ON)
 
     find_package(RdKafka CONFIG REQUIRED)
-    find_package(nlohmann_json CONFIG REQUIRED)
     find_package(unofficial-avro-cpp CONFIG REQUIRED)
     find_package(Boost REQUIRED COMPONENTS json container)
-    #find_package(Snappy CONFIG REQUIRED)
-
-    #if(Snappy_FOUND)
-    #    target_link_libraries(${TARGET} PRIVATE Snappy::snappy)
-    #    message("Found Snappy")
-    #endif()
-
     target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
-    target_link_libraries(${TARGET} PRIVATE nlohmann_json::nlohmann_json)
     target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp) 
     target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 
-    target_include_directories(${TARGET} PRIVATE
-        include d:/sources/include)
+    target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
         
     add_definitions("-D_WIN32_WINNT=0x0601")
     add_definitions(-D_CRT_SECURE_NO_WARNINGS)
@@ -99,4 +98,8 @@ if (WIN32)
             _WINDOWS
             _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
     target_compile_options(${TARGET} PRIVATE /utf-8)
+else ()
+    if (CMAKE_COMPILER_IS_GNUCXX)
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
+    endif ()
 endif ()

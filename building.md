@@ -1,64 +1,39 @@
 # Сборка внешней компоненты с использованием vcpkg
 - Поставить https://github.com/microsoft/vcpkg по инструкции:
  ```
+git clone https://github.com/microsoft/vcpkg
 bootstrap-vcpkg
 vcpkg integrate install
  ```
-- В файле CMakeLists.json указан путь до vcpkg. Этот файл для Visual Studio.
-- Создать папку ".\vcpkg\static-triplets" на одном уровне с папкой "triplets" в которой создать файл "x64-windows.cmake" с содержимым:
- ```
-set(VCPKG_TARGET_ARCHITECTURE x64)
-set(VCPKG_CRT_LINKAGE dynamic)
-set(VCPKG_LIBRARY_LINKAGE static)
- ```
-"x86-windows.cmake" с содержимым:
- ```
-set(VCPKG_TARGET_ARCHITECTURE x86)
-set(VCPKG_CRT_LINKAGE dynamic)
-set(VCPKG_LIBRARY_LINKAGE static)
- ```
-"x64-linux.cmake"
- ```
-set(VCPKG_TARGET_ARCHITECTURE x64)
-set(VCPKG_CRT_LINKAGE dynamic)
-set(VCPKG_LIBRARY_LINKAGE static)
-set(VCPKG_CMAKE_SYSTEM_NAME Linux)
- ```
+
 - Ставим пакеты Windows:
  ```
-vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-windows
-
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install avro-cpp --overlay-triplets=static-triplets --triplet x64-windows
-
-vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-windows
-
-vcpkg install boost-json --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-windows
-
-vcpkg install snappy --overlay-triplets=static-triplets --triplet x86-windows
-vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-windows
+vcpkg install librdkafka --triplet x64-windows-static
+vcpkg install avro-cpp --triplet x64-windows-static
+vcpkg install boost-property-tree --triplet x64-windows-static
+vcpkg install boost-json --triplet x64-windows-static
+vcpkg install snappy --triplet x64-windows-static
  ```
+
+В файле CMakeLists.txt в 4-й строке указать путь до библиотек VCPKG, должен оканчиваться на /vcpkg/installed/x64-windows-static.
+Сборку можно выполнить в Visual Studio как CMake проект.
+
+# Linux
 
 - Ставим пакеты Linux:
  ```
-vcpkg install librdkafka --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-property-tree --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-json --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install snappy --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-filesystem --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-iostreams --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-program-options --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-crc --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-math --overlay-triplets=static-triplets --triplet x64-linux
-vcpkg install boost-format --overlay-triplets=static-triplets --triplet x64-linux
+vcpkg install librdkafka --triplet  x64-linux-static
+vcpkg install boost-property-tree --triplet  x64-linux-static
+vcpkg install boost-json --triplet  x64-linux-static
+vcpkg install snappy --triplet  x64-linux-static
+vcpkg install boost-filesystem --triplet  x64-linux-static
+vcpkg install boost-iostreams --triplet  x64-linux-static
+vcpkg install boost-program-options --triplet  x64-linux-static
+vcpkg install boost-crc --triplet  x64-linux-static
+vcpkg install boost-math --triplet  x64-linux-static
+vcpkg install boost-format --triplet  x64-linux-static
+vcpkg install boost-test --triplet  x64-linux-static
 ```
-
-Сборку можно выполнить в Visual Studio как CMake проект или же командами
-
-# Linux
 
 В версии для Linux необходимо avro-cpp собрать самостоятельно.
 ```
@@ -69,21 +44,18 @@ tar -zxvf avro-src-1.12.0.tar.gz
 Сборка:
  ```
 cd /home/source/avro-src-1.12.0/lang/c++
-cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-static
 make
 ```
 
-В основном файле CMakeLists.txt проекта надо указать пути в **target_include_directories** и **target_link_libraries** до файлов проекта avro и vcpkg. 
-В файле CMakeLists-linux.txt приведен пример файла CMakeLists.txt для Linux.
+В основном файле CMakeLists.txt проекта надо указать пути до файлов проекта avro и vcpkg. 
 
 Далее сборка внешней компоненты:
  ```
 cd /home/source/Simple-Kafka_Adapter
-cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux
+cmake -B . -S . -DCMAKE_TOOLCHAIN_FILE=/home/source/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-static
 make
 ```
-
-Библиотека будет собрана для x64-linux.
 
 
 

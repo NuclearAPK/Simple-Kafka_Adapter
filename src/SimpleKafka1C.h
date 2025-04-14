@@ -9,12 +9,13 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	const char *Version = u8"1.5.0";
+	static constexpr char Version[] = u8"1.5.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
 
 private:
+	static constexpr char EMPTYSTR[] = u8"";
 
 	// property
 	std::shared_ptr<variant_t> logDirectory;
@@ -26,10 +27,9 @@ private:
 	int32_t waitMessageTimeout;
 	unsigned pid;
 
-	std::string consumerLogName;
-	std::string producerLogName;
-	std::string statLogName;
-	std::string msg_err;
+	static constexpr char consumerLogName[] = "consumer_";
+	static constexpr char producerLogName[] = "producer_";
+	static constexpr char statLogName[] = "statistics_";
 
 	// message
 	std::string key;
@@ -58,51 +58,50 @@ private:
 	void setParameter(const variant_t &key, const variant_t &value);
 
 	std::string clientID();
-	std::string extensionName();
-	std::string getLastError();
+	std::string extensionName() override;
 
 	// producer
 	bool initProducer(const variant_t &brokers);
-	bool produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	bool produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
-	void stopProducer();
+	int32_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	bool stopProducer();
 
 	// consumer
 	void clearMessageMetadata(); 
-	//bool initConsumer(const variant_t &brokers, const variant_t &topic);
-	bool initConsumer(const variant_t& brokers);// , const variant_t& topic);
+	bool initConsumer(const variant_t& brokers);
 	bool subscribe(const variant_t& topic);
-	variant_t consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
+	std::string consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
-	variant_t getMessageKey();
-	variant_t getMessageHeaders();
-	variant_t getMessageOffset();
-	variant_t getMessageTopicName();
-	variant_t getMessageBrokerID();
-	variant_t getMessageTimestamp();
-	variant_t getMessagePartition();
+	std::string getMessageKey();
+	std::string getMessageHeaders();
+	int32_t getMessageOffset();
+	std::string getMessageTopicName();
+	int32_t getMessageBrokerID();
+	int32_t getMessageTimestamp();
+	int32_t getMessagePartition();
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPositions(const variant_t& jsonTopicPartitions);
-	void stopConsumer();
+	bool stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 
 	// admin
-	variant_t getListOfTopics(const variant_t& brokers);
-	variant_t getTopicOptions(const variant_t& topicName); // experemental
-	variant_t getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout);
-	variant_t getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
-	variant_t createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor);
+	std::string getListOfTopics(const variant_t& brokers);
+	std::string getTopicOptions(const variant_t& topicName); // experemental
+	std::string getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout);
+	std::string getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
+	bool createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor);
 
 	// Utilites
-	void message(const variant_t &msg);
 	bool sleep(const variant_t &delay);
-	void setLogDirectory(const variant_t& logDir);
-	void setFormatLogFiles(const variant_t& format);
+	bool setLogDirectory(const variant_t& logDir);
+	bool setFormatLogFiles(const variant_t& format);
+	std::string getLastError() { return msg_err; }
+    void openEventFile(const std::string& logName, std::ofstream& eventFile);
 
 	// converting a message to avro format
 	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
@@ -119,7 +118,7 @@ private:
 	public:
 		unsigned pid;
 		char *formatLogFiles;
-		std::string logDir = "";
+		std::string logDir;
 		std::string consumerLogName;
 		std::string statLogName;
 		bool statisticsOn = false;
@@ -132,9 +131,9 @@ private:
 	{
 	public:
 		unsigned pid;
-		bool delivered = false;
+		int32_t delivered;
 		char *formatLogFiles;
-		std::string logDir = "";
+		std::string logDir;
 		std::string producerLogName;
 		std::string clientid;
 
@@ -173,8 +172,7 @@ public:
 
 	~MemoryOutputStream() final
 	{
-		for (std::vector<uint8_t *>::const_iterator it = data_.begin();
-			it != data_.end(); ++it)
+		for (std::vector<uint8_t *>::const_iterator it = data_.begin(); it != data_.end(); ++it)
 			delete[] * it;
 	}
 
