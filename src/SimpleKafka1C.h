@@ -9,7 +9,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.5.1";
+	static constexpr char Version[] = u8"1.5.3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -80,7 +80,7 @@ private:
 	int32_t getMessageOffset();
 	std::string getMessageTopicName();
 	int32_t getMessageBrokerID();
-	int32_t getMessageTimestamp();
+	float getMessageTimestamp();
 	int32_t getMessagePartition();
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);

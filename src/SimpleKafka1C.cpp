@@ -961,9 +961,9 @@ int32_t SimpleKafka1C::getMessageBrokerID()
 	return this->broker_id;
 }
 
-int32_t SimpleKafka1C::getMessageTimestamp()
+float SimpleKafka1C::getMessageTimestamp()
 {
-	return (int32_t) this->timestamp / 1000;
+	return (int64_t)this->timestamp/1000;
 }
 
 int32_t SimpleKafka1C::getMessagePartition()

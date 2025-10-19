@@ -1,10 +1,10 @@
 ﻿cmake_minimum_required(VERSION 3.12)
 
 if (WIN32)
-    set(CMAKE_PREFIX_PATH "D:/Libs/vcpkg/installed/x64-windows-static") 
+    set(CMAKE_PREFIX_PATH "C:/Sources/vcpkg/installed/x64-windows-static") 
 else()    
     set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
-    "/home/shmell/vcpkg/installed/x64-linux/") 
+    "/home/shmell/vcpkg/installed/x64-linux-release/") 
 endif ()
 
 project(SimpleKafka1C)
@@ -41,6 +41,7 @@ IF (UNIX AND NOT APPLE)
 ENDIF()
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
+#add_definitions (${Boost_LIB_DIAGNOSTIC_DEFINITIONS})
 
 target_compile_definitions(${TARGET} PRIVATE
         UNICODE
@@ -75,14 +76,23 @@ if (WIN32)
         list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS -DSNAPPY_HAVE_SSSE3=ON -DSNAPPY_HAVE_BMI2=ON)
     endif()
 else()
+	set(Boost_USE_STATIC_LIBS ON)
     find_package(PkgConfig REQUIRED) 
+    find_package(unofficial-avro-cpp CONFIG REQUIRED)
+	find_package(Boost REQUIRED COMPONENTS json container)
+	find_package(RdKafka CONFIG REQUIRED)
+    target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
+	#target_link_libraries(${TARGET} PRIVATE Boost::json Boost::container)
+	target_link_libraries(${Boost_LIBRARIES})
+	target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
     target_link_libraries(${TARGET} PRIVATE
-    /usr/local/lib/librdkafka++.a
-    /usr/local/lib/librdkafka-static.a
-	/usr/local/lib/libavro.a
-    pthread)  
-    target_include_directories(${TARGET} PRIVATE
-        include /home/shmell/Source/include)
+#    /usr/local/lib/librdkafka++.a
+#    /usr/local/lib/librdkafka-static.a
+#	/usr/local/lib/libavro.a
+    pthread)
+	#target_include_directories(${TARGET} PRIVATE include ${Boost_INCLUDE_DIRS} /home/shmell/projects/librdkafka)	
+    #target_include_directories(${TARGET} PRIVATE
+    #    include /home/shmell/projects/librdkafka)
 endif ()
 
 if (WIN32 AND NOT MSVC)
