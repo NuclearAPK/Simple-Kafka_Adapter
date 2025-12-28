@@ -297,9 +297,11 @@ SimpleKafka1C::SimpleKafka1C()
 
 	// + admin api
 	AddMethod(L"GetTopics", L"ПолучитьСписокТопиков", this, &SimpleKafka1C::getListOfTopics);
+	AddMethod(L"GetTopicMetadata", L"ПолучитьМетаданныеТопика", this, &SimpleKafka1C::getTopicMetadata, { {2, 5000} });
 	AddMethod(L"getConsumerCurrentGroupOffset", L"ПолучитьСмещенияТекущегоКонсьюмера", this, &SimpleKafka1C::getConsumerCurrentGroupOffset, { {0, std::string("")}, {1, 5000}});
 	AddMethod(L"getConsumerGroupOffsets", L"ПолучитьСмещенияГруппыКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupOffsets, { {1, std::string("")}, {2, 5000}});
 	AddMethod(L"CreateTopic", L"СоздатьТопик", this, &SimpleKafka1C::createTopic);
+	AddMethod(L"DeleteTopic", L"УдалитьТопик", this, &SimpleKafka1C::deleteTopic);
 	// - admin api
 
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
@@ -1083,95 +1085,211 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 	return s.str();
 }
 
-//extern "C"
-//{
-//	int _createTopic(char& broker, char& topicname, int partition_cnt, int rep_factor);
-//}
-//
-//int _createTopic(const char* broker, const char* topicname, int partition_cnt, int rep_factor)
-//{
-//	char errstr[512];
-//	int timeout_ms = 10000;
-//	const size_t newt_cnt = 1;
-//	size_t res_cnt;
-//
-//	rd_kafka_t* rk;
-//	rd_kafka_NewTopic_t* newt[1];
-//	rd_kafka_queue_t* rkqu;
-//	rd_kafka_event_t* rkev;
-//	rd_kafka_AdminOptions_t* options;
-//	rd_kafka_resp_err_t err;
-//
-//	const rd_kafka_CreateTopics_result_t* res;
-//	const rd_kafka_topic_result_t** terr;
-//
-//	rd_kafka_conf_t* conf; /* Temporary configuration object */
-//
-//	rkqu = rd_kafka_queue_new(rk);
-//
-//	// config
-//	conf = rd_kafka_conf_new();
-//
-//	if (rd_kafka_conf_set(conf, "bootstrap.servers", broker, errstr,
-//		sizeof(errstr)) != RD_KAFKA_CONF_OK) {
-//		fprintf(stderr, "%s\n", errstr);
-//		return false;
-//	}
-//
-//	rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
-//	if (!rk) {
-//		fprintf(stderr, "%% Failed to create new producer: %s\n",
-//			errstr);
-//		return false;
-//	}
-//
-//	newt[0] = rd_kafka_NewTopic_new(topicname, partition_cnt, rep_factor,
-//		errstr, sizeof(errstr));
-//
-//	//for (size_t i = 0; i < settings.size(); i++)
-//	//	rd_kafka_NewTopic_set_config(newt[0], settings[i].Key.c_str(), settings[i].Value.c_str());
-//
-//	options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_CREATETOPICS);
-//	err = rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr));
-//
-//	rd_kafka_CreateTopics(rk, newt, newt_cnt, options, rkqu);
-//	rkev = rd_kafka_queue_poll(rkqu, timeout_ms + 2000);
-//	res = rd_kafka_event_CreateTopics_result(rkev);
-//	terr = rd_kafka_CreateTopics_result_topics(res, &res_cnt);
-//
-//	rd_kafka_event_destroy(rkev);
-//	rd_kafka_queue_destroy(rkqu);
-//	rd_kafka_AdminOptions_destroy(options);
-//	rd_kafka_NewTopic_destroy(newt[0]);
-//	rd_kafka_destroy(rk);
-//
-//	if (res_cnt == newt_cnt) {
-//		return 1;
-//	}
-//	else {
-//		return 0;
-//	}
-//}
-
-// TODO: refactoring
 bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor)
 {
-	//int result;
+	char errstr[512];
+	int timeout_ms = 10000;
 
-	//auto topicname = std::get<std::string>(topicName).c_str();
-	//auto partition_cnt = (int)std::get<std::int32_t>(partition);
-	//auto rep_factor = (int)std::get<std::int32_t>(replication_factor);
-	//auto broker = std::get<std::string>(brokers).c_str();
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int partition_cnt = std::get<int32_t>(partition);
+	int rep_factor = std::get<int32_t>(replication_factor);
 
-	//result = _createTopic(broker, topicname, partition_cnt, rep_factor);
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
 
-	//if (result == 0) {
-	//	return true;
-	//}
-	//else {
-	//	return false;
-	//}
-	return true;
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return false;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return false;
+	}
+
+	// создаем временного продюсера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return false;
+	}
+
+	// создаем очередь для получения результата
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем описание нового топика
+	rd_kafka_NewTopic_t* newt = rd_kafka_NewTopic_new(tTopicName.c_str(), partition_cnt, rep_factor, errstr, sizeof(errstr));
+	if (!newt)
+	{
+		msg_err = u8"Ошибка создания описания топика: " + std::string(errstr);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	// опции операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_CREATETOPICS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr));
+
+	// выполняем создание топика
+	rd_kafka_NewTopic_t* newt_arr[1] = { newt };
+	rd_kafka_CreateTopics(rk, newt_arr, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, timeout_ms + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_CreateTopics_result_t* res = rd_kafka_event_CreateTopics_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_topic_result_t** terr = rd_kafka_CreateTopics_result_topics(res, &res_cnt);
+
+				if (res_cnt > 0 && terr[0])
+				{
+					rd_kafka_resp_err_t err = rd_kafka_topic_result_error(terr[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+					{
+						msg_err = rd_kafka_topic_result_error_string(terr[0]);
+					}
+					else
+					{
+						success = true;
+					}
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = u8"Таймаут ожидания ответа";
+	}
+
+	// очистка ресурсов
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_NewTopic_destroy(newt);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return success;
+}
+
+bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topicName)
+{
+	char errstr[512];
+	int timeout_ms = 10000;
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return false;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return false;
+	}
+
+	// создаем временного продюсера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return false;
+	}
+
+	// создаем очередь для получения результата
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем описание топика для удаления
+	rd_kafka_DeleteTopic_t* delt = rd_kafka_DeleteTopic_new(tTopicName.c_str());
+
+	// опции операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_DELETETOPICS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr));
+
+	// выполняем удаление топика
+	rd_kafka_DeleteTopic_t* delt_arr[1] = { delt };
+	rd_kafka_DeleteTopics(rk, delt_arr, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, timeout_ms + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_DeleteTopics_result_t* res = rd_kafka_event_DeleteTopics_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_topic_result_t** terr = rd_kafka_DeleteTopics_result_topics(res, &res_cnt);
+
+				if (res_cnt > 0 && terr[0])
+				{
+					rd_kafka_resp_err_t err = rd_kafka_topic_result_error(terr[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+					{
+						msg_err = rd_kafka_topic_result_error_string(terr[0]);
+					}
+					else
+					{
+						success = true;
+					}
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = u8"Таймаут ожидания ответа";
+	}
+
+	// очистка ресурсов
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_DeleteTopic_destroy(delt);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return success;
 }
 
 std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout)
@@ -1272,21 +1390,156 @@ std::string SimpleKafka1C::getConsumerGroupOffsets(const variant_t& brokers, con
 	return result;
 }
 
-std::string SimpleKafka1C::getTopicOptions(const variant_t& topicName)
+std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout)
 {
 	std::string result;
 	std::stringstream s{};
 
 	boost::property_tree::ptree jsonObj;
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
 
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tTimeout = std::get<int32_t>(timeout);
 
-	
-	//RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
-	//RdKafka::Conf* tconf = RdKafka::Conf::create(RdKafka::Conf::CONF_TOPIC);
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
+		{
+			delete conf;
+			return result;
+		}
+	}
 
-	//tconf->dump();
+	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		delete conf;
+		return result;
+	}
 
-	//boost::property_tree::write_json(s, jsonObj, true);
+	// создаем временного продюсера для получения метаданных
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, msg_err);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка создания временного продюсера";
+		delete conf;
+		return result;
+	}
+
+	// получаем метаданные для конкретного топика
+	RdKafka::Topic* topicHandle = RdKafka::Topic::create(producer, tTopicName, nullptr, msg_err);
+	if (!topicHandle)
+	{
+		msg_err = u8"Ошибка создания дескриптора топика: " + msg_err;
+		delete producer;
+		delete conf;
+		return result;
+	}
+
+	class RdKafka::Metadata* metadata;
+	RdKafka::ErrorCode err = producer->metadata(false, topicHandle, &metadata, tTimeout);
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		delete topicHandle;
+		delete producer;
+		delete conf;
+		return result;
+	}
+
+	// информация о брокерах
+	boost::property_tree::ptree brokersChildren;
+	RdKafka::Metadata::BrokerMetadataIterator brokerIt;
+	for (brokerIt = metadata->brokers()->begin(); brokerIt != metadata->brokers()->end(); ++brokerIt)
+	{
+		boost::property_tree::ptree brokerNode;
+		brokerNode.put("id", (*brokerIt)->id());
+		brokerNode.put("host", (*brokerIt)->host());
+		brokerNode.put("port", (*brokerIt)->port());
+		brokersChildren.push_back(boost::property_tree::ptree::value_type("", brokerNode));
+	}
+
+	if (brokersChildren.size())
+	{
+		jsonObj.put_child("brokers", brokersChildren);
+	}
+
+	// информация о топике и его партициях
+	RdKafka::Metadata::TopicMetadataIterator topicIt;
+	for (topicIt = metadata->topics()->begin(); topicIt != metadata->topics()->end(); ++topicIt)
+	{
+		if ((*topicIt)->topic() == tTopicName)
+		{
+			jsonObj.put("topic", (*topicIt)->topic());
+
+			if ((*topicIt)->err() != RdKafka::ERR_NO_ERROR)
+			{
+				jsonObj.put("error", RdKafka::err2str((*topicIt)->err()));
+			}
+
+			boost::property_tree::ptree partitionsChildren;
+			typedef RdKafka::TopicMetadata::PartitionMetadataIterator PartitionIterator;
+
+			for (PartitionIterator partIt = (*topicIt)->partitions()->begin();
+				 partIt != (*topicIt)->partitions()->end(); ++partIt)
+			{
+				boost::property_tree::ptree partNode;
+				partNode.put("id", (*partIt)->id());
+				partNode.put("leader", (*partIt)->leader());
+
+				if ((*partIt)->err() != RdKafka::ERR_NO_ERROR)
+				{
+					partNode.put("error", RdKafka::err2str((*partIt)->err()));
+				}
+
+				// реплики
+				boost::property_tree::ptree replicasChildren;
+				const std::vector<int32_t>* replicas = (*partIt)->replicas();
+				for (size_t r = 0; r < replicas->size(); r++)
+				{
+					boost::property_tree::ptree replicaNode;
+					replicaNode.put("", (*replicas)[r]);
+					replicasChildren.push_back(boost::property_tree::ptree::value_type("", replicaNode));
+				}
+				if (replicasChildren.size())
+				{
+					partNode.put_child("replicas", replicasChildren);
+				}
+
+				// ISR (In-Sync Replicas)
+				boost::property_tree::ptree isrsChildren;
+				const std::vector<int32_t>* isrs = (*partIt)->isrs();
+				for (size_t isr = 0; isr < isrs->size(); isr++)
+				{
+					boost::property_tree::ptree isrNode;
+					isrNode.put("", (*isrs)[isr]);
+					isrsChildren.push_back(boost::property_tree::ptree::value_type("", isrNode));
+				}
+				if (isrsChildren.size())
+				{
+					partNode.put_child("isrs", isrsChildren);
+				}
+
+				partitionsChildren.push_back(boost::property_tree::ptree::value_type("", partNode));
+			}
+
+			if (partitionsChildren.size())
+			{
+				jsonObj.put("partitions_count", (*topicIt)->partitions()->size());
+				jsonObj.put_child("partitions", partitionsChildren);
+			}
+
+			break;
+		}
+	}
+
+	delete metadata;
+	delete topicHandle;
+	delete producer;
+	delete conf;
+
+	boost::property_tree::write_json(s, jsonObj, true);
 	return s.str();
 }
 
@@ -1424,13 +1677,14 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 				key = field->key_c_str();
 
 				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
-				// Тип устанавливается при помощи функции selectBranch() 
+				// Тип устанавливается при помощи функции selectBranch()
 				if (fieldDatum.isUnion())
 				{
 					fieldDatum.selectBranch(1);
 					switch (fieldDatum.type())
 					{
 					case avro::AVRO_STRING:
+						// Поддержка UUID (логический тип над string)
 						if (field->value().is_null())
 							fieldDatum.selectBranch(0);
 						else
@@ -1451,19 +1705,19 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 					case avro::AVRO_FLOAT:
 						if (field->value().is_null())
 							fieldDatum.selectBranch(0);
-						else 
+						else
 						fieldDatum.value<float>() = (float)field->value().as_double();
 						break;
 					case avro::AVRO_DOUBLE:
 						if (field->value().is_null())
 							fieldDatum.selectBranch(0);
-						else 
+						else
 							fieldDatum.value<double>() = field->value().as_double();
 						break;
 					case avro::AVRO_BOOL:
 						if (field->value().is_null())
 							fieldDatum.selectBranch(0);
-						else 
+						else
 							fieldDatum.value<bool>() = field->value().as_bool();
 						break;
 					case avro::AVRO_NULL:
@@ -1471,8 +1725,53 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 					case avro::AVRO_UNION:
 						break;
+					case avro::AVRO_FIXED:
+						// Поддержка FIXED (может использоваться для UUID как 16 байт)
+						if (field->value().is_null())
+						{
+							fieldDatum.selectBranch(0);
+						}
+						else
+						{
+							avro::GenericFixed& fixed = fieldDatum.value<avro::GenericFixed>();
+							std::string strVal = std::string(field->value().as_string());
+							// Если это UUID в строковом формате, конвертируем в байты
+							if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
+							{
+								// UUID формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+								std::string hex;
+								for (char c : strVal)
+								{
+									if (c != '-') hex += c;
+								}
+								std::vector<uint8_t>& bytes = fixed.value();
+								bytes.resize(16);
+								for (size_t i = 0; i < 16; i++)
+								{
+									std::string byteStr = hex.substr(i * 2, 2);
+									bytes[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
+								}
+							}
+							else
+							{
+								// Копируем как есть
+								std::vector<uint8_t>& bytes = fixed.value();
+								bytes.assign(strVal.begin(), strVal.end());
+							}
+						}
+						break;
+					case avro::AVRO_BYTES:
+						if (field->value().is_null())
+							fieldDatum.selectBranch(0);
+						else
+						{
+							std::string strVal = std::string(field->value().as_string());
+							std::vector<uint8_t> bytes(strVal.begin(), strVal.end());
+							fieldDatum.value<std::vector<uint8_t>>() = bytes;
+						}
+						break;
 					default:
-						msg_err += u8"Unsupported type '" + type + u8"' on '" + key + u8"'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION. ";
+						msg_err += u8"Unsupported type '" + type + u8"' on '" + key + u8"'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION, AVRO_FIXED, AVRO_BYTES. ";
 						break;
 					}
 				}
@@ -1481,6 +1780,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 					switch (fieldDatum.type())
 					{
 					case avro::AVRO_STRING:
+						// Поддержка UUID (логический тип над string)
 						fieldDatum.value<std::string>() = field->value().as_string();
 						break;
 					case avro::AVRO_LONG:
@@ -1503,8 +1803,45 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 						break;
 					case avro::AVRO_UNION:
 						break;
+					case avro::AVRO_FIXED:
+						{
+							// Поддержка FIXED (может использоваться для UUID как 16 байт)
+							avro::GenericFixed& fixed = fieldDatum.value<avro::GenericFixed>();
+							std::string strVal = std::string(field->value().as_string());
+							// Если это UUID в строковом формате, конвертируем в байты
+							if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
+							{
+								// UUID формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+								std::string hex;
+								for (char c : strVal)
+								{
+									if (c != '-') hex += c;
+								}
+								std::vector<uint8_t>& bytes = fixed.value();
+								bytes.resize(16);
+								for (size_t i = 0; i < 16; i++)
+								{
+									std::string byteStr = hex.substr(i * 2, 2);
+									bytes[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
+								}
+							}
+							else
+							{
+								// Копируем как есть
+								std::vector<uint8_t>& bytes = fixed.value();
+								bytes.assign(strVal.begin(), strVal.end());
+							}
+						}
+						break;
+					case avro::AVRO_BYTES:
+						{
+							std::string strVal = std::string(field->value().as_string());
+							std::vector<uint8_t> bytes(strVal.begin(), strVal.end());
+							fieldDatum.value<std::vector<uint8_t>>() = bytes;
+						}
+						break;
 					default:
-						msg_err += "Unsupported type '" + type + "' on '" + key + "'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION. ";
+						msg_err += "Unsupported type '" + type + "' on '" + key + "'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION, AVRO_FIXED, AVRO_BYTES. ";
 						break;
 					}
 				}

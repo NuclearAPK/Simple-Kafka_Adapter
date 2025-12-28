@@ -6,7 +6,9 @@
 /1C
 /build
 /.vs
+/.claude
 /debug_info
 /lib
 /out
+/pkg
 /CppProperties.json

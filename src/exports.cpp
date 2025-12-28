@@ -17,6 +17,7 @@
  *
  */
 
+#include "stdafx.h"
 #include <ComponentBase.h>
 #include <types.h>
 
