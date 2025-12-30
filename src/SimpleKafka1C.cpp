@@ -302,6 +302,10 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"getConsumerGroupOffsets", L"ПолучитьСмещенияГруппыКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupOffsets, { {1, std::string("")}, {2, 5000}});
 	AddMethod(L"CreateTopic", L"СоздатьТопик", this, &SimpleKafka1C::createTopic);
 	AddMethod(L"DeleteTopic", L"УдалитьТопик", this, &SimpleKafka1C::deleteTopic);
+	AddMethod(L"GetTopicConfig", L"ПолучитьНастройкиТопика", this, &SimpleKafka1C::getTopicConfig, { {2, 5000} });
+	AddMethod(L"SetTopicConfig", L"УстановитьНастройкиТопика", this, &SimpleKafka1C::setTopicConfig, { {3, 10000} });
+	AddMethod(L"GetConsumerLag", L"ПолучитьОтставаниеКонсьюмера", this, &SimpleKafka1C::getConsumerLag, { {3, 5000} });
+	AddMethod(L"GetTopicConsumerGroups", L"ПолучитьКонсьюмеровТопика", this, &SimpleKafka1C::getTopicConsumerGroups, { {2, 5000} });
 	// - admin api
 
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
@@ -1290,6 +1294,749 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	rd_kafka_destroy(rk);
 
 	return success;
+}
+
+std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout)
+{
+	std::string result;
+	std::stringstream s{};
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return result;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return result;
+	}
+
+	// создаем временного продюсера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return result;
+	}
+
+	// создаем очередь для получения результата
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем ресурс конфигурации для топика
+	rd_kafka_ConfigResource_t* config_resource = rd_kafka_ConfigResource_new(
+		RD_KAFKA_RESOURCE_TOPIC, tTopicName.c_str());
+
+	// опции операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	// выполняем запрос конфигурации
+	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
+	rd_kafka_DescribeConfigs(rk, config_arr, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, tTimeout + 2000);
+
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_DescribeConfigs_result_t* res = rd_kafka_event_DescribeConfigs_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_ConfigResource_t** resources = rd_kafka_DescribeConfigs_result_resources(res, &res_cnt);
+
+				if (res_cnt > 0)
+				{
+					boost::property_tree::ptree jsonObj;
+					boost::property_tree::ptree configChildren;
+
+					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+					{
+						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
+					}
+					else
+					{
+						jsonObj.put("topic", tTopicName);
+
+						size_t config_cnt;
+						const rd_kafka_ConfigEntry_t** entries = rd_kafka_ConfigResource_configs(resources[0], &config_cnt);
+
+						for (size_t i = 0; i < config_cnt; i++)
+						{
+							const char* name = rd_kafka_ConfigEntry_name(entries[i]);
+							const char* value = rd_kafka_ConfigEntry_value(entries[i]);
+							rd_kafka_ConfigSource_t source = rd_kafka_ConfigEntry_source(entries[i]);
+							int is_read_only = rd_kafka_ConfigEntry_is_read_only(entries[i]);
+							int is_default = rd_kafka_ConfigEntry_is_default(entries[i]);
+							int is_sensitive = rd_kafka_ConfigEntry_is_sensitive(entries[i]);
+
+							boost::property_tree::ptree node;
+							node.put("name", name ? name : "");
+							node.put("value", (value && !is_sensitive) ? value : "");
+							node.put("is_read_only", is_read_only ? true : false);
+							node.put("is_default", is_default ? true : false);
+							node.put("is_sensitive", is_sensitive ? true : false);
+
+							std::string source_str;
+							switch (source)
+							{
+							case RD_KAFKA_CONFIG_SOURCE_DYNAMIC_TOPIC_CONFIG:
+								source_str = "DYNAMIC_TOPIC_CONFIG";
+								break;
+							case RD_KAFKA_CONFIG_SOURCE_DYNAMIC_BROKER_CONFIG:
+								source_str = "DYNAMIC_BROKER_CONFIG";
+								break;
+							case RD_KAFKA_CONFIG_SOURCE_DYNAMIC_DEFAULT_BROKER_CONFIG:
+								source_str = "DYNAMIC_DEFAULT_BROKER_CONFIG";
+								break;
+							case RD_KAFKA_CONFIG_SOURCE_STATIC_BROKER_CONFIG:
+								source_str = "STATIC_BROKER_CONFIG";
+								break;
+							case RD_KAFKA_CONFIG_SOURCE_DEFAULT_CONFIG:
+								source_str = "DEFAULT_CONFIG";
+								break;
+							default:
+								source_str = "UNKNOWN";
+								break;
+							}
+							node.put("source", source_str);
+
+							configChildren.push_back(boost::property_tree::ptree::value_type("", node));
+						}
+
+						if (configChildren.size())
+						{
+							jsonObj.put_child("configs", configChildren);
+						}
+
+						boost::property_tree::write_json(s, jsonObj, true);
+						result = s.str();
+					}
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = u8"Таймаут ожидания ответа";
+	}
+
+	// очистка ресурсов
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_ConfigResource_destroy(config_resource);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return result;
+}
+
+bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout)
+{
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	std::string tConfigJson = std::get<std::string>(configJson);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return false;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return false;
+	}
+
+	// создаем временного продюсера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return false;
+	}
+
+	// создаем очередь для получения результата
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем ресурс конфигурации для топика
+	rd_kafka_ConfigResource_t* config_resource = rd_kafka_ConfigResource_new(
+		RD_KAFKA_RESOURCE_TOPIC, tTopicName.c_str());
+
+	// парсим JSON с настройками
+	// Формат: {"retention.ms": "86400000", "cleanup.policy": "delete"}
+	try
+	{
+		boost::json::value parsed = boost::json::parse(tConfigJson);
+		boost::json::object obj = parsed.as_object();
+
+		for (auto& kv : obj)
+		{
+			std::string key = kv.key();
+			std::string value;
+
+			if (kv.value().is_string())
+			{
+				value = kv.value().as_string();
+			}
+			else if (kv.value().is_int64())
+			{
+				value = std::to_string(kv.value().as_int64());
+			}
+			else if (kv.value().is_bool())
+			{
+				value = kv.value().as_bool() ? "true" : "false";
+			}
+			else if (kv.value().is_double())
+			{
+				value = std::to_string(kv.value().as_double());
+			}
+			else
+			{
+				continue;
+			}
+
+			rd_kafka_ConfigResource_set_config(config_resource, key.c_str(), value.c_str());
+		}
+	}
+	catch (std::exception const& ex)
+	{
+		msg_err = u8"Ошибка парсинга JSON: " + std::string(ex.what());
+		rd_kafka_ConfigResource_destroy(config_resource);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	// опции операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	// выполняем изменение конфигурации
+	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
+	rd_kafka_AlterConfigs(rk, config_arr, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, tTimeout + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_AlterConfigs_result_t* res = rd_kafka_event_AlterConfigs_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_ConfigResource_t** resources = rd_kafka_AlterConfigs_result_resources(res, &res_cnt);
+
+				if (res_cnt > 0)
+				{
+					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+					{
+						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
+					}
+					else
+					{
+						success = true;
+					}
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = u8"Таймаут ожидания ответа";
+	}
+
+	// очистка ресурсов
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_ConfigResource_destroy(config_resource);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return success;
+}
+
+std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const variant_t& topicName, const variant_t& consumerGroup, const variant_t& timeout)
+{
+	std::string result;
+	std::stringstream s{};
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	std::string tConsumerGroup = std::get<std::string>(consumerGroup);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return result;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return result;
+	}
+
+	if (rd_kafka_conf_set(conf, "group.id", tConsumerGroup.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return result;
+	}
+
+	// создаем консьюмера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return result;
+	}
+
+	// получаем метаданные топика для определения партиций
+	const rd_kafka_metadata_t* metadata;
+	rd_kafka_topic_t* rkt = rd_kafka_topic_new(rk, tTopicName.c_str(), nullptr);
+	if (!rkt)
+	{
+		msg_err = u8"Ошибка создания дескриптора топика";
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 0, rkt, &metadata, tTimeout);
+	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = rd_kafka_err2str(err);
+		rd_kafka_topic_destroy(rkt);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	// находим нужный топик в метаданных
+	const rd_kafka_metadata_topic_t* topic_metadata = nullptr;
+	for (int i = 0; i < metadata->topic_cnt; i++)
+	{
+		if (strcmp(metadata->topics[i].topic, tTopicName.c_str()) == 0)
+		{
+			topic_metadata = &metadata->topics[i];
+			break;
+		}
+	}
+
+	if (!topic_metadata)
+	{
+		msg_err = u8"Топик не найден";
+		rd_kafka_metadata_destroy(metadata);
+		rd_kafka_topic_destroy(rkt);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	int partition_cnt = topic_metadata->partition_cnt;
+
+	// создаем список партиций для запроса committed offsets
+	rd_kafka_topic_partition_list_t* partitions = rd_kafka_topic_partition_list_new(partition_cnt);
+	for (int i = 0; i < partition_cnt; i++)
+	{
+		rd_kafka_topic_partition_list_add(partitions, tTopicName.c_str(), metadata->topics[0].partitions[i].id);
+	}
+
+	// получаем committed offsets для группы консьюмеров
+	err = rd_kafka_committed(rk, partitions, tTimeout);
+	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = rd_kafka_err2str(err);
+		rd_kafka_topic_partition_list_destroy(partitions);
+		rd_kafka_metadata_destroy(metadata);
+		rd_kafka_topic_destroy(rkt);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	// формируем результат
+	boost::property_tree::ptree jsonObj;
+	boost::property_tree::ptree partitionsChildren;
+	int64_t totalLag = 0;
+
+	jsonObj.put("topic", tTopicName);
+	jsonObj.put("consumer_group", tConsumerGroup);
+
+	for (int i = 0; i < partitions->cnt; i++)
+	{
+		rd_kafka_topic_partition_t* part = &partitions->elems[i];
+
+		// получаем watermark offsets для партиции
+		int64_t low = 0, high = 0;
+		err = rd_kafka_query_watermark_offsets(rk, tTopicName.c_str(), part->partition, &low, &high, tTimeout);
+
+		boost::property_tree::ptree partNode;
+		partNode.put("partition", part->partition);
+		partNode.put("low_watermark", low);
+		partNode.put("high_watermark", high);
+
+		if (part->offset >= 0)
+		{
+			partNode.put("committed_offset", part->offset);
+			int64_t lag = high - part->offset;
+			if (lag < 0) lag = 0;
+			partNode.put("lag", lag);
+			totalLag += lag;
+		}
+		else
+		{
+			// offset не зафиксирован (-1001 = RD_KAFKA_OFFSET_INVALID)
+			partNode.put("committed_offset", "none");
+			partNode.put("lag", high - low);
+			totalLag += (high - low);
+		}
+
+		if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+		{
+			partNode.put("watermark_error", rd_kafka_err2str(err));
+		}
+
+		partitionsChildren.push_back(boost::property_tree::ptree::value_type("", partNode));
+	}
+
+	jsonObj.put("total_lag", totalLag);
+
+	if (partitionsChildren.size())
+	{
+		jsonObj.put_child("partitions", partitionsChildren);
+	}
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	result = s.str();
+
+	// очистка ресурсов
+	rd_kafka_topic_partition_list_destroy(partitions);
+	rd_kafka_metadata_destroy(metadata);
+	rd_kafka_topic_destroy(rkt);
+	rd_kafka_destroy(rk);
+
+	return result;
+}
+
+std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout)
+{
+	std::string result;
+	std::stringstream s{};
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return result;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return result;
+	}
+
+	// создаем клиента для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return result;
+	}
+
+	// создаем очередь для получения результатов
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// опции для операции ListConsumerGroups
+	rd_kafka_AdminOptions_t* list_options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPS);
+	rd_kafka_AdminOptions_set_request_timeout(list_options, tTimeout, errstr, sizeof(errstr));
+
+	// получаем список всех consumer groups
+	rd_kafka_ListConsumerGroups(rk, list_options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, tTimeout + 2000);
+	if (!rkev)
+	{
+		msg_err = u8"Таймаут при получении списка групп";
+		rd_kafka_AdminOptions_destroy(list_options);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	if (rd_kafka_event_error(rkev))
+	{
+		msg_err = rd_kafka_event_error_string(rkev);
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(list_options);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	const rd_kafka_ListConsumerGroups_result_t* list_result = rd_kafka_event_ListConsumerGroups_result(rkev);
+	if (!list_result)
+	{
+		msg_err = u8"Не удалось получить результат списка групп";
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(list_options);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	// получаем список групп и их состояния
+	size_t valid_cnt = 0;
+	const rd_kafka_ConsumerGroupListing_t** listings = rd_kafka_ListConsumerGroups_result_valid(list_result, &valid_cnt);
+
+	struct GroupInfo {
+		std::string group_id;
+		rd_kafka_consumer_group_state_t state;
+	};
+	std::vector<GroupInfo> allGroups;
+
+	for (size_t i = 0; i < valid_cnt; i++)
+	{
+		const char* group_id = rd_kafka_ConsumerGroupListing_group_id(listings[i]);
+		if (group_id)
+		{
+			GroupInfo info;
+			info.group_id = group_id;
+			info.state = rd_kafka_ConsumerGroupListing_state(listings[i]);
+			allGroups.push_back(info);
+		}
+	}
+
+	rd_kafka_event_destroy(rkev);
+	rd_kafka_AdminOptions_destroy(list_options);
+
+	if (allGroups.empty())
+	{
+		// Нет групп - возвращаем пустой результат
+		boost::property_tree::ptree jsonObj;
+		jsonObj.put("topic", tTopicName);
+		jsonObj.put("groups_count", 0);
+		boost::property_tree::ptree emptyGroups;
+		jsonObj.put_child("consumer_groups", emptyGroups);
+		boost::property_tree::write_json(s, jsonObj, true);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return s.str();
+	}
+
+	// получаем метаданные топика для определения партиций
+	const rd_kafka_metadata_t* metadata;
+	rd_kafka_topic_t* rkt = rd_kafka_topic_new(rk, tTopicName.c_str(), nullptr);
+	if (!rkt)
+	{
+		msg_err = u8"Ошибка создания дескриптора топика";
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 0, rkt, &metadata, tTimeout);
+	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = rd_kafka_err2str(err);
+		rd_kafka_topic_destroy(rkt);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	// находим количество партиций топика
+	int partition_cnt = 0;
+	for (int i = 0; i < metadata->topic_cnt; i++)
+	{
+		if (strcmp(metadata->topics[i].topic, tTopicName.c_str()) == 0)
+		{
+			partition_cnt = metadata->topics[i].partition_cnt;
+			break;
+		}
+	}
+
+	rd_kafka_metadata_destroy(metadata);
+	rd_kafka_topic_destroy(rkt);
+
+	if (partition_cnt == 0)
+	{
+		msg_err = u8"Топик не найден или не имеет партиций";
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return result;
+	}
+
+	// формируем результат
+	boost::property_tree::ptree jsonObj;
+	boost::property_tree::ptree groupsChildren;
+
+	jsonObj.put("topic", tTopicName);
+
+	// для каждой группы проверяем наличие committed offsets для топика
+	for (size_t i = 0; i < allGroups.size(); i++)
+	{
+		const std::string& group_id = allGroups[i].group_id;
+
+		// создаем список партиций для запроса
+		rd_kafka_topic_partition_list_t* partitions = rd_kafka_topic_partition_list_new(partition_cnt);
+		for (int p = 0; p < partition_cnt; p++)
+		{
+			rd_kafka_topic_partition_list_add(partitions, tTopicName.c_str(), p);
+		}
+
+		// создаем запрос ListConsumerGroupOffsets
+		rd_kafka_ListConsumerGroupOffsets_t* grp_offsets = rd_kafka_ListConsumerGroupOffsets_new(group_id.c_str(), partitions);
+		rd_kafka_ListConsumerGroupOffsets_t* grp_offsets_arr[1] = { grp_offsets };
+
+		rd_kafka_AdminOptions_t* offsets_options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPOFFSETS);
+		rd_kafka_AdminOptions_set_request_timeout(offsets_options, tTimeout, errstr, sizeof(errstr));
+
+		rd_kafka_ListConsumerGroupOffsets(rk, grp_offsets_arr, 1, offsets_options, rkqu);
+
+		rd_kafka_event_t* offset_ev = rd_kafka_queue_poll(rkqu, tTimeout + 1000);
+
+		bool hasOffsets = false;
+		boost::property_tree::ptree offsetsChildren;
+
+		if (offset_ev)
+		{
+			if (!rd_kafka_event_error(offset_ev))
+			{
+				const rd_kafka_ListConsumerGroupOffsets_result_t* offset_result =
+					rd_kafka_event_ListConsumerGroupOffsets_result(offset_ev);
+
+				if (offset_result)
+				{
+					size_t res_cnt = 0;
+					const rd_kafka_group_result_t** group_results =
+						rd_kafka_ListConsumerGroupOffsets_result_groups(offset_result, &res_cnt);
+
+					if (res_cnt > 0 && group_results[0])
+					{
+						const rd_kafka_topic_partition_list_t* result_partitions =
+							rd_kafka_group_result_partitions(group_results[0]);
+
+						if (result_partitions)
+						{
+							for (int p = 0; p < result_partitions->cnt; p++)
+							{
+								// offset >= 0 означает что группа имеет committed offset для этой партиции
+								if (result_partitions->elems[p].offset >= 0)
+								{
+									hasOffsets = true;
+
+									boost::property_tree::ptree offsetNode;
+									offsetNode.put("partition", result_partitions->elems[p].partition);
+									offsetNode.put("offset", result_partitions->elems[p].offset);
+									offsetsChildren.push_back(boost::property_tree::ptree::value_type("", offsetNode));
+								}
+							}
+						}
+					}
+				}
+			}
+			rd_kafka_event_destroy(offset_ev);
+		}
+
+		rd_kafka_AdminOptions_destroy(offsets_options);
+		rd_kafka_ListConsumerGroupOffsets_destroy(grp_offsets);
+		rd_kafka_topic_partition_list_destroy(partitions);
+
+		// если группа имеет offsets для этого топика - добавляем её в результат
+		if (hasOffsets)
+		{
+			boost::property_tree::ptree groupNode;
+			groupNode.put("group_id", group_id);
+			groupNode.put("state", rd_kafka_consumer_group_state_name(allGroups[i].state));
+
+			if (offsetsChildren.size())
+			{
+				groupNode.put_child("offsets", offsetsChildren);
+			}
+
+			groupsChildren.push_back(boost::property_tree::ptree::value_type("", groupNode));
+		}
+	}
+
+	jsonObj.put("groups_count", groupsChildren.size());
+	jsonObj.put_child("consumer_groups", groupsChildren);
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	result = s.str();
+
+	// очистка ресурсов
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return result;
 }
 
 std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout)

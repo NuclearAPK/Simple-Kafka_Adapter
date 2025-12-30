@@ -17,7 +17,7 @@ option(STATIC_CRT "Static CRT linkage" ON)
 option(OUT_PARAMS "Support output parameters" OFF)
 
 list(APPEND SOURCE_FILES
-        #src/addin.def
+        src/addin.def
         src/stdafx.h
         src/dllmain.cpp
         src/exports.cpp
