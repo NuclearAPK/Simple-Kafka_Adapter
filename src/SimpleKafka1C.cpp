@@ -404,6 +404,7 @@ SimpleKafka1C::SimpleKafka1C()
     // The first method must be GetLastError
 	AddMethod(L"GetLastError", L"ПолучитьСообщениеОбОшибке", this, &SimpleKafka1C::getLastError);
 	AddMethod(L"SetParameter", L"УстановитьПараметр", this, &SimpleKafka1C::setParameter);
+	AddMethod(L"GetParameters", L"ПолучитьПараметры", this, &SimpleKafka1C::getParameters);
 	AddMethod(L"InitializeProducer", L"ИнициализироватьПродюсера", this, &SimpleKafka1C::initProducer);
 	AddMethod(L"Produce", L"ОтправитьСообщение", this, &SimpleKafka1C::produce,
 		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
@@ -490,6 +491,23 @@ SimpleKafka1C::~SimpleKafka1C()
 void SimpleKafka1C::setParameter(const variant_t& key, const variant_t& value)
 {
 	settings.push_back({ std::get<std::string>(key), std::get<std::string>(value) });
+}
+
+std::string SimpleKafka1C::getParameters()
+{
+	boost::json::object result;
+	boost::json::array parametersArray;
+
+	for (const auto& setting : settings)
+	{
+		boost::json::object paramObj;
+		paramObj["key"] = setting.Key;
+		paramObj["value"] = setting.Value;
+		parametersArray.push_back(paramObj);
+	}
+
+	result["parameters"] = parametersArray;
+	return boost::json::serialize(result);
 }
 
 std::string SimpleKafka1C::clientID()
