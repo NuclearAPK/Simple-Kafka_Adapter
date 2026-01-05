@@ -1,16 +1,14 @@
 # Simple Kafka Connector 1C
 
 Внешняя компонента, адаптер к 1С, позволяющий писать, а так же получать сообщения из топиков Apache Kafka. Компонента использует библиотеку [Librdkafka](https://github.com/confluentinc/librdkafka).
-
-Объем поддержки Kafka достаточный для поддержки витрин данных СМЭВ 4.
-
+Реализована поддержка AVRO и Protocol Buffers (Protobuf) для чтения и записи бинарных форматов данных.
 **Компонента разрабатывается при поддержке [denvic.tech](https://denvic.tech)**
 
 ## Использование
 
 Версия компоненты 1.1.0 и выше, имеет значительные, не совместимые изменения от более ранних версий. Документация по использованию ранних версий находится [здесь](./docs/OldReleases.md).
 
-[Сборка](./docs/building.md)
+[Сборка](./docs/building.md) | [Сборка через Visual Studio](./docs/visual_studio_build.md) | [Статическая линковка Protobuf](./docs/protobuf_static_linking.md)
 
 [Подключение внешней компоненты](./docs/connection.md)
 
@@ -25,6 +23,8 @@
 [Статистика](./docs/statistic.md)
 
 [Формирование сообщений в формате AVRO](./docs/avro.md)
+
+[Формирование сообщений в формате Protocol Buffers (Protobuf)](./docs/protobuf.md)
 
 [Обработка исключений](./docs/exceptionHandling.md)
 

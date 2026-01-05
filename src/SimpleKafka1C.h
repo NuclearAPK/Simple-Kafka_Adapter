@@ -11,7 +11,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.6.0";
+	static constexpr char Version[] = u8"1.6.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -55,9 +55,15 @@ private:
 	std::map<std::string, avro::ValidSchema> schemesMap;	// кеш для хранение компилированных схем Avro
 	std::vector<uint8_t> avroFile;		// формируемый avro
 
-	// parameters set 
+	// protobuf - using forward declarations to avoid including protobuf headers in .h
+	class ProtobufContext;	// forward declaration
+	std::shared_ptr<ProtobufContext> protoContext;	// контекст для работы с protobuf
+	std::string protobufData;		// формируемый protobuf
+
+	// parameters set
 	// https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
 	void setParameter(const variant_t &key, const variant_t &value);
+	std::string getParameters();
 
 	std::string clientID();
 	std::string extensionName() override;
@@ -114,6 +120,15 @@ private:
 	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
 	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
 	bool saveAvroFile(const variant_t &fileName);
+	variant_t decodeAvroMessage(const variant_t &avroData, const variant_t &schemaJsonName, const variant_t &asJson);
+
+	// converting a message to protobuf format
+	bool putProtoSchema(const variant_t &schemaName, const variant_t &protoSchema);
+	bool convertToProtobufFormat(const variant_t &msgJson, const variant_t &schemaName);
+	bool saveProtobufFile(const variant_t &fileName);
+	variant_t decodeProtobufMessage(const variant_t &protobufData, const variant_t &schemaName, const variant_t &asJson);
+	int32_t produceProtobuf(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceProtobufWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 
 	struct KafkaSettings {
 		std::string Key;
@@ -224,6 +239,48 @@ public:
 			std::copy(*it, *it + n, std::back_inserter(result));
 			c -= n;
 		}
+	}
+};
+
+// internal class for reading from memory
+class MemoryInputStream : public avro::InputStream
+{
+public:
+	const uint8_t* data_;
+	size_t size_;
+	size_t position_;
+
+	MemoryInputStream(const uint8_t* data, size_t size) : data_(data), size_(size), position_(0) {}
+
+	bool next(const uint8_t** data, size_t* len) final
+	{
+		if (position_ >= size_)
+		{
+			return false;
+		}
+		*data = data_ + position_;
+		*len = size_ - position_;
+		position_ = size_;
+		return true;
+	}
+
+	void backup(size_t len) final
+	{
+		position_ -= len;
+	}
+
+	void skip(size_t len) final
+	{
+		position_ += len;
+		if (position_ > size_)
+		{
+			position_ = size_;
+		}
+	}
+
+	size_t byteCount() const final
+	{
+		return position_;
 	}
 };
 

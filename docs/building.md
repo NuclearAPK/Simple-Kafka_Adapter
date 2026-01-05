@@ -10,6 +10,9 @@ vcpkg integrate install
  ```
 vcpkg install librdkafka --triplet x64-windows-static
 vcpkg install avro-cpp --triplet x64-windows-static
+vcpkg install protobuf --triplet x64-windows-static
+vcpkg install abseil --triplet x64-windows-static
+vcpkg install utf8-range --triplet x64-windows-static
 vcpkg install boost-property-tree --triplet x64-windows-static
 vcpkg install boost-json --triplet x64-windows-static
 vcpkg install snappy --triplet x64-windows-static
@@ -23,6 +26,9 @@ vcpkg install snappy --triplet x64-windows-static
 - Ставим пакеты Linux:
  ```
 vcpkg install librdkafka --triplet  x64-linux-static
+vcpkg install protobuf --triplet x64-linux-static
+vcpkg install abseil --triplet x64-linux-static
+vcpkg install utf8-range --triplet x64-linux-static
 vcpkg install boost-property-tree --triplet  x64-linux-static
 vcpkg install boost-json --triplet  x64-linux-static
 vcpkg install snappy --triplet  x64-linux-static

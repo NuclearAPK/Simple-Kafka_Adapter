@@ -1,11 +1,17 @@
 ﻿cmake_minimum_required(VERSION 3.12)
 
+# Force static triplet for vcpkg (important for Visual Studio builds)
 if (WIN32)
+    set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "")
     set(CMAKE_PREFIX_PATH "C:/Sources/vcpkg/installed/x64-windows-static")
 else()
+    set(VCPKG_TARGET_TRIPLET "x64-linux-static" CACHE STRING "")
     set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
     "/home/shmell/vcpkg/installed/x64-linux-release/")
 endif ()
+
+# Force static linking (before project())
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
 
 project(SimpleKafka1C)
 
@@ -41,10 +47,12 @@ IF (UNIX AND NOT APPLE)
 ENDIF()
 
 add_definitions("-DLIBRDKAFKA_STATICLIB")
+add_definitions("-DPROTOBUF_USE_DLLS=0")
 
 target_compile_definitions(${TARGET} PRIVATE
         UNICODE
-        _UNICODE)
+        _UNICODE
+        PROTOBUF_USE_DLLS=0)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
@@ -56,14 +64,64 @@ endif ()
 
 #adding library
 set(Boost_USE_STATIC_LIBS ON)
+set(protobuf_MSVC_STATIC_RUNTIME ON)
+set(Protobuf_USE_STATIC_LIBS ON)
 
 find_package(RdKafka CONFIG REQUIRED)
 find_package(unofficial-avro-cpp CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json container)
+find_package(Protobuf CONFIG REQUIRED)
+find_package(absl CONFIG REQUIRED)
+find_package(utf8_range CONFIG REQUIRED)
+
+# Print debug info
+message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
+message(STATUS "Protobuf_INCLUDE_DIRS: ${Protobuf_INCLUDE_DIRS}")
+
+# Force protobuf to be statically linked (critical for Visual Studio)
+add_compile_definitions(PROTOBUF_USE_DLLS=0)
+add_compile_definitions(LIBPROTOBUF_EXPORTS=)
+if (MSVC)
+    # Remove any dynamic linking flags that might be set
+    string(REPLACE "PROTOBUF_USE_DLLS=1" "PROTOBUF_USE_DLLS=0" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+    string(REPLACE "/DPROTOBUF_USE_DLLS" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+endif()
 
 target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
 target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
+
+# Link protobuf and all its dependencies statically
+target_link_libraries(${TARGET} PRIVATE
+    protobuf::libprotobuf
+    protobuf::libprotobuf-lite)
+target_link_libraries(${TARGET} PRIVATE utf8_range::utf8_validity utf8_range::utf8_range)
+target_link_libraries(${TARGET} PRIVATE
+    absl::strings
+    absl::string_view
+    absl::str_format
+    absl::cord
+    absl::status
+    absl::statusor
+    absl::log_internal_message
+    absl::log_internal_check_op
+    absl::synchronization
+    absl::stacktrace
+    absl::symbolize
+    absl::debugging_internal
+    absl::demangle_internal
+    absl::malloc_internal
+    absl::time
+    absl::civil_time
+    absl::time_zone
+    absl::bad_optional_access
+    absl::bad_variant_access
+    absl::base
+    absl::throw_delegate
+    absl::raw_logging_internal
+    absl::log_severity
+    absl::spinlock_wait
+)
 
 target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
 
