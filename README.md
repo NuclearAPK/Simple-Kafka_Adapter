@@ -1,7 +1,11 @@
 # Simple Kafka Connector 1C
 
-Внешняя компонента, адаптер к 1С, позволяющий писать, а так же получать сообщения из топиков Apache Kafka. Компонента использует библиотеку [Librdkafka](https://github.com/confluentinc/librdkafka).
+Внешняя компонента, адаптер к 1С, позволяющий писать, а так же получать сообщения из топиков Apache Kafka. 
+
+Компонента использует библиотеку [Librdkafka](https://github.com/confluentinc/librdkafka).
+
 Реализована поддержка AVRO и Protocol Buffers (Protobuf) для чтения и записи бинарных форматов данных.
+
 **Компонента разрабатывается при поддержке [denvic.tech](https://denvic.tech)**
 
 ## Использование
