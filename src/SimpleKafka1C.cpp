@@ -175,7 +175,7 @@ boost::json::value GetJsonFromProtobufField(const google::protobuf::Message& mes
 
 	switch (field->type()) {
 	case google::protobuf::FieldDescriptor::TYPE_STRING:
-		return reflection->GetString(message, field);
+		return boost::json::string(reflection->GetString(message, field));
 	case google::protobuf::FieldDescriptor::TYPE_INT32:
 	case google::protobuf::FieldDescriptor::TYPE_SINT32:
 	case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
@@ -2782,7 +2782,6 @@ static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum
 {
 	if (datum.isUnion())
 	{
-		size_t branch = datum.unionBranch();
 		const avro::GenericDatum& actualDatum = datum.value<avro::GenericUnion>().datum();
 		if (actualDatum.type() == avro::AVRO_NULL)
 		{
@@ -2794,7 +2793,7 @@ static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum
 	switch (datum.type())
 	{
 	case avro::AVRO_STRING:
-		return datum.value<std::string>();
+		return boost::json::string(datum.value<std::string>());
 	case avro::AVRO_LONG:
 		return datum.value<int64_t>();
 	case avro::AVRO_INT:
@@ -2811,7 +2810,7 @@ static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum
 	{
 		const std::vector<uint8_t>& bytes = datum.value<std::vector<uint8_t>>();
 		std::string str(bytes.begin(), bytes.end());
-		return str;
+		return boost::json::string(str);
 	}
 	case avro::AVRO_FIXED:
 	{
@@ -2827,12 +2826,12 @@ static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum
 				bytes[4], bytes[5], bytes[6], bytes[7],
 				bytes[8], bytes[9], bytes[10], bytes[11],
 				bytes[12], bytes[13], bytes[14], bytes[15]);
-			return std::string(uuidStr);
+			return boost::json::string(uuidStr);
 		}
 		else
 		{
 			std::string str(bytes.begin(), bytes.end());
-			return str;
+			return boost::json::string(str);
 		}
 	}
 	default:
