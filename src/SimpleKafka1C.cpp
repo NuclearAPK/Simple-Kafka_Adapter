@@ -439,6 +439,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"getConsumerGroupOffsets", L"ПолучитьСмещенияГруппыКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupOffsets, { {1, std::string("")}, {2, 5000}});
 	AddMethod(L"CreateTopic", L"СоздатьТопик", this, &SimpleKafka1C::createTopic);
 	AddMethod(L"DeleteTopic", L"УдалитьТопик", this, &SimpleKafka1C::deleteTopic);
+	AddMethod(L"DeleteRecords", L"УдалитьЗаписи", this, &SimpleKafka1C::deleteRecords, { {3, 10000} });
 	AddMethod(L"GetTopicConfig", L"ПолучитьНастройкиТопика", this, &SimpleKafka1C::getTopicConfig, { {2, 5000} });
 	AddMethod(L"SetTopicConfig", L"УстановитьНастройкиТопика", this, &SimpleKafka1C::setTopicConfig, { {3, 10000} });
 	AddMethod(L"GetConsumerLag", L"ПолучитьОтставаниеКонсьюмера", this, &SimpleKafka1C::getConsumerLag, { {3, 5000} });
@@ -1456,6 +1457,163 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	// очистка ресурсов
 	rd_kafka_AdminOptions_destroy(options);
 	rd_kafka_DeleteTopic_destroy(delt);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return success;
+}
+
+bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionsJson, const variant_t& timeout)
+{
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	std::string tPartitionsJson = std::get<std::string>(partitionsJson);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// парсим JSON с партициями и офсетами
+	boost::property_tree::ptree pt;
+	std::stringstream ss(tPartitionsJson);
+
+	try {
+		boost::property_tree::read_json(ss, pt);
+	}
+	catch (const std::exception& e) {
+		msg_err = u8"Ошибка парсинга JSON: " + std::string(e.what());
+		return false;
+	}
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return false;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return false;
+	}
+
+	// создаем временного продюсера для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return false;
+	}
+
+	// создаем список партиций и офсетов для удаления
+	rd_kafka_topic_partition_list_t* partitions = rd_kafka_topic_partition_list_new(1);
+
+	try {
+		for (const auto& partition_node : pt.get_child("partitions"))
+		{
+			int32_t partition = partition_node.second.get<int32_t>("partition");
+			int64_t offset = partition_node.second.get<int64_t>("offset");
+
+			rd_kafka_topic_partition_list_add(partitions, tTopicName.c_str(), partition)->offset = offset;
+		}
+	}
+	catch (const std::exception& e) {
+		msg_err = u8"Ошибка чтения данных партиций: " + std::string(e.what());
+		rd_kafka_topic_partition_list_destroy(partitions);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	if (partitions->cnt == 0)
+	{
+		msg_err = u8"Не указаны партиции для удаления записей";
+		rd_kafka_topic_partition_list_destroy(partitions);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	// создаем очередь для получения результата
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем описание для удаления записей
+	rd_kafka_DeleteRecords_t* delr = rd_kafka_DeleteRecords_new(partitions);
+
+	// опции операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_DELETERECORDS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	// выполняем удаление записей
+	rd_kafka_DeleteRecords_t* delr_arr[1] = { delr };
+	rd_kafka_DeleteRecords(rk, delr_arr, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, tTimeout + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_DeleteRecords_result_t* res = rd_kafka_event_DeleteRecords_result(rkev);
+			if (res)
+			{
+				const rd_kafka_topic_partition_list_t* offsets = rd_kafka_DeleteRecords_result_offsets(res);
+
+				if (offsets && offsets->cnt > 0)
+				{
+					// проверяем результаты для каждой партиции
+					bool all_ok = true;
+					std::stringstream error_details;
+
+					for (int i = 0; i < offsets->cnt; i++)
+					{
+						const rd_kafka_topic_partition_t* part = &offsets->elems[i];
+						if (part->err != RD_KAFKA_RESP_ERR_NO_ERROR)
+						{
+							all_ok = false;
+							error_details << u8"Партиция " << part->partition
+								<< u8": " << rd_kafka_err2str(part->err) << "; ";
+						}
+					}
+
+					if (all_ok)
+					{
+						success = true;
+					}
+					else
+					{
+						msg_err = error_details.str();
+					}
+				}
+				else
+				{
+					msg_err = u8"Пустой результат удаления записей";
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = u8"Таймаут ожидания ответа";
+	}
+
+	// очистка ресурсов
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_DeleteRecords_destroy(delr);
+	rd_kafka_topic_partition_list_destroy(partitions);
 	rd_kafka_queue_destroy(rkqu);
 	rd_kafka_destroy(rk);
 

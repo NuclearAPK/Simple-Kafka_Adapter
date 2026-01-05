@@ -11,7 +11,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.6.1";
+	static constexpr char Version[] = u8"1.6.2";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -104,6 +104,7 @@ private:
 	std::string getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
 	bool createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor);
 	bool deleteTopic(const variant_t& brokers, const variant_t& topicName);
+	bool deleteRecords(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionsJson, const variant_t& timeout);
 	std::string getTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 	bool setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout);
 	std::string getConsumerLag(const variant_t& brokers, const variant_t& topicName, const variant_t& consumerGroup, const variant_t& timeout);
