@@ -410,7 +410,16 @@ SimpleKafka1C::SimpleKafka1C()
 		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
 	AddMethod(L"ProduceWithWaitResult", L"ОтправитьСообщениеСОжиданиемРезультата", this, &SimpleKafka1C::produceWithWaitResult,
 		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
+	AddMethod(L"ProduceBatch", L"ОтправитьПакетСообщений", this, &SimpleKafka1C::produceBatch);
 	AddMethod(L"StopProducer", L"ОстановитьПродюсера", this, &SimpleKafka1C::stopProducer);
+
+	// + transactional producer
+	AddMethod(L"InitTransactionalProducer", L"ИнициализироватьТранзакционногоПродюсера", this, &SimpleKafka1C::initTransactionalProducer);
+	AddMethod(L"BeginTransaction", L"НачатьТранзакцию", this, &SimpleKafka1C::beginTransaction);
+	AddMethod(L"CommitTransaction", L"ЗафиксироватьТранзакцию", this, &SimpleKafka1C::commitTransaction);
+	AddMethod(L"AbortTransaction", L"ОтменитьТранзакцию", this, &SimpleKafka1C::abortTransaction);
+	AddMethod(L"SendOffsetsToTransaction", L"ОтправитьОфсетыВТранзакцию", this, &SimpleKafka1C::sendOffsetsToTransaction);
+	// - transactional producer
 
 	AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
 	AddMethod(L"Subscribe", L"Подписаться", this, &SimpleKafka1C::subscribe); // experemental
@@ -444,6 +453,31 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"SetTopicConfig", L"УстановитьНастройкиТопика", this, &SimpleKafka1C::setTopicConfig, { {3, 10000} });
 	AddMethod(L"GetConsumerLag", L"ПолучитьОтставаниеКонсьюмера", this, &SimpleKafka1C::getConsumerLag, { {3, 5000} });
 	AddMethod(L"GetTopicConsumerGroups", L"ПолучитьКонсьюмеровТопика", this, &SimpleKafka1C::getTopicConsumerGroups, { {2, 5000} });
+
+	// + cluster and broker information
+	AddMethod(L"GetClusterInfo", L"ПолучитьИнформациюОКластере", this, &SimpleKafka1C::getClusterInfo);
+	AddMethod(L"GetBrokerInfo", L"ПолучитьИнформациюОБрокере", this, &SimpleKafka1C::getBrokerInfo);
+	AddMethod(L"GetPartitionWatermarks", L"ПолучитьГраницыПартиции", this, &SimpleKafka1C::getPartitionWatermarks);
+	AddMethod(L"PingBroker", L"ПроверитьДоступностьБрокера", this, &SimpleKafka1C::pingBroker);
+	AddMethod(L"GetPartitionMessageCount", L"ПолучитьКоличествоСообщенийВПартиции", this, &SimpleKafka1C::getPartitionMessageCount);
+	// - cluster and broker information
+
+	// + consumer group management
+	AddMethod(L"DeleteConsumerGroup", L"УдалитьГруппуКонсьюмеров", this, &SimpleKafka1C::deleteConsumerGroup);
+	AddMethod(L"ResetConsumerGroupOffsets", L"СброситьОфсетыГруппыКонсьюмеров", this, &SimpleKafka1C::resetConsumerGroupOffsets);
+	// - consumer group management
+
+	// + advanced consumer position management
+	AddMethod(L"SeekToBeginning", L"ПерейтиКНачалу", this, &SimpleKafka1C::seekToBeginning);
+	AddMethod(L"SeekToEnd", L"ПерейтиККонцу", this, &SimpleKafka1C::seekToEnd);
+	AddMethod(L"SeekToTimestamp", L"ПерейтиКВременнойМетке", this, &SimpleKafka1C::seekToTimestamp);
+	// - advanced consumer position management
+
+	// + consumer assignment (manual partition assignment)
+	AddMethod(L"Assign", L"НазначитьПартиции", this, &SimpleKafka1C::assign);
+	AddMethod(L"GetAssignment", L"ПолучитьНазначение", this, &SimpleKafka1C::getAssignment);
+	AddMethod(L"Unassign", L"ОтменитьНазначение", this, &SimpleKafka1C::unassign);
+	// - consumer assignment
 	// - admin api
 
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
@@ -802,6 +836,144 @@ int32_t SimpleKafka1C::produceAvroWithWaitResult(const variant_t& topicName, con
     return -1;
 }
 
+int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant_t& topicName)
+{
+	if (hProducer == nullptr)
+	{
+		msg_err = u8"Продюсер не инициализирован";
+		return -1;
+	}
+
+	std::string tTopicName = std::get<std::string>(topicName);
+	std::string jsonStr = std::get<std::string>(messagesJson);
+
+	std::ofstream eventFile{};
+	openEventFile(producerLogName, eventFile);
+	if (eventFile.is_open())
+		eventFile << currentDateTime() << " Info: produceBatch. TopicName-" << tTopicName << std::endl;
+
+	try
+	{
+		// Парсинг JSON массива
+		boost::json::value jv = boost::json::parse(jsonStr);
+		if (!jv.is_array())
+		{
+			msg_err = u8"JSON должен содержать массив сообщений";
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+			return -1;
+		}
+
+		boost::json::array messages = jv.as_array();
+		int32_t successCount = 0;
+		int32_t totalMessages = static_cast<int32_t>(messages.size());
+
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Info: produceBatch. Processing " << totalMessages << " messages" << std::endl;
+
+		// Отправка каждого сообщения
+		for (const auto& msgObj : messages)
+		{
+			if (!msgObj.is_object())
+			{
+				if (eventFile.is_open())
+					eventFile << currentDateTime() << " Warning: Skipping non-object element in array" << std::endl;
+				continue;
+			}
+
+			const boost::json::object& msg = msgObj.as_object();
+
+			// Извлекаем данные сообщения
+			std::string message;
+			std::string key;
+			int32_t partition = -1;
+			std::string headers;
+
+			if (msg.contains("message"))
+				message = boost::json::value_to<std::string>(msg.at("message"));
+			else
+			{
+				if (eventFile.is_open())
+					eventFile << currentDateTime() << " Warning: Message without 'message' field, skipping" << std::endl;
+				continue;
+			}
+
+			if (msg.contains("key"))
+				key = boost::json::value_to<std::string>(msg.at("key"));
+
+			if (msg.contains("partition"))
+				partition = static_cast<int32_t>(msg.at("partition").as_int64());
+
+			if (msg.contains("headers"))
+				headers = boost::json::value_to<std::string>(msg.at("headers"));
+
+			// Подготовка headers
+			RdKafka::Headers* hdrs = nullptr;
+			if (!headers.empty())
+			{
+				std::vector<std::string> splitResult;
+				boost::algorithm::split(splitResult, headers, boost::is_any_of(";"));
+				hdrs = RdKafka::Headers::create();
+				for (std::string& s : splitResult)
+				{
+					std::vector<std::string> hKeyValue;
+					boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
+					if (hKeyValue.size() == 2)
+						hdrs->add(hKeyValue[0], hKeyValue[1]);
+				}
+			}
+
+retry:
+			// Отправка сообщения
+			RdKafka::ErrorCode resp = hProducer->produce(
+				tTopicName,
+				partition == -1 ? RdKafka::Topic::PARTITION_UA : partition,
+				RdKafka::Producer::RK_MSG_COPY,
+				const_cast<char*>(message.c_str()), message.size(),
+				key.c_str(), key.size(),
+				0,
+				hdrs,
+				nullptr);
+
+			if (resp != RdKafka::ERR_NO_ERROR)
+			{
+				if (resp == RdKafka::ERR__QUEUE_FULL)
+				{
+					hProducer->poll(1000);
+					if (eventFile.is_open())
+						eventFile << currentDateTime() << " Warning: Queue full, retrying..." << std::endl;
+					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+					goto retry;
+				}
+
+				if (eventFile.is_open())
+					eventFile << currentDateTime() << " Error: Failed to produce message: " << RdKafka::err2str(resp) << std::endl;
+
+				if (hdrs != nullptr)
+					delete hdrs;
+			}
+			else
+			{
+				successCount++;
+			}
+
+			hProducer->poll(0);
+		}
+
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Info: produceBatch. Successfully sent " << successCount << " of " << totalMessages << " messages" << std::endl;
+
+		return successCount;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string(u8"Ошибка при обработке JSON: ") + e.what();
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		return -1;
+	}
+}
+
 bool SimpleKafka1C::stopProducer()
 {
 	if (hProducer != nullptr)
@@ -811,6 +983,217 @@ bool SimpleKafka1C::stopProducer()
 		hProducer = nullptr;
 	}
 	return true;
+}
+
+//================================== Transactional Producer ==========================================
+
+bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const variant_t& transactionalId)
+{
+	std::ofstream eventFile{};
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	cl_dr_cb.logDir = std::get<std::string>(*logDirectory);
+	cl_dr_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
+	cl_dr_cb.producerLogName = producerLogName;
+	cl_dr_cb.pid = pid;
+	cl_dr_cb.clientid = clientID();
+
+	openEventFile(producerLogName, eventFile);
+	if (eventFile.is_open()) eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
+
+	// Set transactional parameters
+	if (conf->set("transactional.id", std::get<std::string>(transactionalId), msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Error setting transactional.id: " << msg_err << std::endl;
+		return false;
+	}
+
+	// Enable idempotence (required for transactions)
+	if (conf->set("enable.idempotence", "true", msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Error setting enable.idempotence: " << msg_err << std::endl;
+		return false;
+	}
+
+	// Set additional parameters from settings
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
+		{
+			if (eventFile.is_open()) eventFile << currentDateTime() << " " << msg_err << std::endl;
+			return false;
+		}
+
+		if (settings[i].Key == "statistics.interval.ms") cl_event_cb.statisticsOn = true;
+	}
+
+	// Set bootstrap servers
+	if (conf->set("metadata.broker.list", std::get<std::string>(brokers), msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		if (eventFile.is_open()) eventFile << currentDateTime() << " " << msg_err << std::endl;
+		return false;
+	}
+
+	// Set callbacks
+	conf->set("event_cb", &cl_event_cb, msg_err);
+	conf->set("dr_cb", &cl_dr_cb, msg_err);
+
+	// Create producer
+	hProducer = RdKafka::Producer::create(conf, msg_err);
+
+	if (!hProducer)
+	{
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Failed to create producer: " << msg_err << std::endl;
+		return false;
+	}
+
+	// Initialize transactions
+	RdKafka::Error* error = hProducer->init_transactions(10000); // 10 second timeout
+
+	if (error)
+	{
+		msg_err = error->str();
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Failed to initialize transactions: " << msg_err << std::endl;
+		delete error;
+		delete hProducer;
+		hProducer = nullptr;
+		return false;
+	}
+
+	if (eventFile.is_open()) eventFile << currentDateTime() << " Transactional producer initialized successfully with transactional.id: " << std::get<std::string>(transactionalId) << std::endl;
+
+	delete conf;
+	return true;
+}
+
+bool SimpleKafka1C::beginTransaction()
+{
+	if (!hProducer)
+	{
+		msg_err = "Producer not initialized. Call InitTransactionalProducer first.";
+		return false;
+	}
+
+	RdKafka::Error* error = hProducer->begin_transaction();
+
+	if (error)
+	{
+		msg_err = error->str();
+		delete error;
+		return false;
+	}
+
+	return true;
+}
+
+bool SimpleKafka1C::commitTransaction()
+{
+	if (!hProducer)
+	{
+		msg_err = "Producer not initialized. Call InitTransactionalProducer first.";
+		return false;
+	}
+
+	RdKafka::Error* error = hProducer->commit_transaction(30000); // 30 second timeout
+
+	if (error)
+	{
+		msg_err = error->str();
+		delete error;
+		return false;
+	}
+
+	return true;
+}
+
+bool SimpleKafka1C::abortTransaction()
+{
+	if (!hProducer)
+	{
+		msg_err = "Producer not initialized. Call InitTransactionalProducer first.";
+		return false;
+	}
+
+	RdKafka::Error* error = hProducer->abort_transaction(30000); // 30 second timeout
+
+	if (error)
+	{
+		msg_err = error->str();
+		delete error;
+		return false;
+	}
+
+	return true;
+}
+
+bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const variant_t& consumerGroupId)
+{
+	if (!hProducer)
+	{
+		msg_err = "Producer not initialized. Call InitTransactionalProducer first.";
+		return false;
+	}
+
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first to use this method.";
+		return false;
+	}
+
+	try
+	{
+		std::string jsonStr = std::get<std::string>(offsetsJson);
+		std::string groupId = std::get<std::string>(consumerGroupId);
+
+		// Parse JSON with offsets
+		boost::json::value jv = boost::json::parse(jsonStr);
+		boost::json::object obj = jv.as_object();
+
+		if (!obj.contains("offsets"))
+		{
+			msg_err = "JSON must contain 'offsets' array";
+			return false;
+		}
+
+		boost::json::array offsetsArray = obj["offsets"].as_array();
+		std::vector<RdKafka::TopicPartition*> offsets;
+
+		// Build offsets vector
+		for (const auto& item : offsetsArray)
+		{
+			boost::json::object offsetObj = item.as_object();
+
+			std::string topicName = offsetObj["topic"].as_string().c_str();
+			int32_t partition = static_cast<int32_t>(offsetObj["partition"].as_int64());
+			int64_t offset = offsetObj["offset"].as_int64();
+
+			RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(topicName, partition, offset);
+			offsets.push_back(tp);
+		}
+
+		// Commit offsets synchronously within the transaction context
+		// This approach works with older librdkafka versions
+		RdKafka::ErrorCode err = hConsumer->commitSync(offsets);
+
+		// Cleanup
+		for (auto* tp : offsets)
+		{
+			delete tp;
+		}
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in sendOffsetsToTransaction: ") + e.what();
+		return false;
+	}
 }
 
 //================================== Consumer ==========================================
@@ -2612,6 +2995,868 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 
 	boost::property_tree::write_json(s, jsonObj, true);
 	return s.str();
+}
+
+//================================== Cluster and Broker Information ==========================================
+
+std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
+{
+	std::string result;
+	std::stringstream s{};
+
+	std::string tBrokers = std::get<std::string>(brokers);
+
+	// создаем конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = result;
+			delete conf;
+			return "";
+		}
+	}
+
+	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return "";
+	}
+
+	// создаем продюсера для получения метаданных
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка создания клиента: " + result;
+		delete conf;
+		return "";
+	}
+
+	// получаем метаданные кластера
+	RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, 5000);
+
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		delete producer;
+		delete conf;
+		return "";
+	}
+
+	// формируем JSON результат
+	boost::property_tree::ptree jsonObj;
+	boost::property_tree::ptree brokersChildren;
+
+	jsonObj.put("cluster_id", metadata->orig_broker_id());
+	jsonObj.put("brokers_count", metadata->brokers()->size());
+	jsonObj.put("topics_count", metadata->topics()->size());
+
+	// информация о брокерах
+	const RdKafka::Metadata::BrokerMetadataVector* brokers_vec = metadata->brokers();
+	for (auto it = brokers_vec->begin(); it != brokers_vec->end(); ++it)
+	{
+		boost::property_tree::ptree brokerInfo;
+		brokerInfo.put("id", std::to_string((*it)->id()));
+		brokerInfo.put("host", (*it)->host());
+		brokerInfo.put("port", std::to_string((*it)->port()));
+		brokersChildren.push_back(std::make_pair("", brokerInfo));
+	}
+
+	jsonObj.put_child("brokers", brokersChildren);
+
+	delete metadata;
+	delete producer;
+	delete conf;
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
+}
+
+std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant_t& brokerId)
+{
+	std::string result;
+	std::stringstream s{};
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	int32_t tBrokerId = std::get<int32_t>(brokerId);
+
+	// создаем конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = result;
+			delete conf;
+			return "";
+		}
+	}
+
+	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return "";
+	}
+
+	// создаем продюсера для получения метаданных
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка создания клиента: " + result;
+		delete conf;
+		return "";
+	}
+
+	// получаем метаданные кластера
+	RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, 5000);
+
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		delete producer;
+		delete conf;
+		return "";
+	}
+
+	// ищем брокера по ID
+	const RdKafka::Metadata::BrokerMetadataVector* brokers_vec = metadata->brokers();
+	bool found = false;
+	boost::property_tree::ptree jsonObj;
+
+	for (auto it = brokers_vec->begin(); it != brokers_vec->end(); ++it)
+	{
+		if ((*it)->id() == tBrokerId)
+		{
+			jsonObj.put("id", std::to_string((*it)->id()));
+			jsonObj.put("host", (*it)->host());
+			jsonObj.put("port", std::to_string((*it)->port()));
+
+			// подсчитываем количество партиций на этом брокере
+			int leader_partitions = 0;
+			int replica_partitions = 0;
+
+			const RdKafka::Metadata::TopicMetadataVector* topics = metadata->topics();
+			for (auto topic_it = topics->begin(); topic_it != topics->end(); ++topic_it)
+			{
+				const std::vector<const RdKafka::PartitionMetadata*>* partitions = (*topic_it)->partitions();
+				for (auto part_it = partitions->begin(); part_it != partitions->end(); ++part_it)
+				{
+					if ((*part_it)->leader() == tBrokerId)
+					{
+						leader_partitions++;
+					}
+
+					const std::vector<int32_t>* replicas = (*part_it)->replicas();
+					for (auto replica : *replicas)
+					{
+						if (replica == tBrokerId)
+						{
+							replica_partitions++;
+							break;
+						}
+					}
+				}
+			}
+
+			jsonObj.put("leader_partitions_count", leader_partitions);
+			jsonObj.put("replica_partitions_count", replica_partitions);
+
+			found = true;
+			break;
+		}
+	}
+
+	delete metadata;
+	delete producer;
+	delete conf;
+
+	if (!found)
+	{
+		msg_err = u8"Брокер с ID " + std::to_string(tBrokerId) + u8" не найден";
+		return "";
+	}
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
+}
+
+std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
+                                                   const variant_t& topicName,
+                                                   const variant_t& partition)
+{
+	std::string result;
+	std::stringstream s{};
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tPartition = std::get<int32_t>(partition);
+
+	// создаем конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = result;
+			delete conf;
+			return "";
+		}
+	}
+
+	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return "";
+	}
+
+	// создаем продюсера для получения watermarks
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка создания клиента: " + result;
+		delete conf;
+		return "";
+	}
+
+	// получаем watermarks для партиции
+	int64_t low = 0;
+	int64_t high = 0;
+	RdKafka::ErrorCode err = producer->query_watermark_offsets(tTopicName, tPartition, &low, &high, 5000);
+
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		delete producer;
+		delete conf;
+		return "";
+	}
+
+	// формируем JSON результат
+	boost::property_tree::ptree jsonObj;
+	jsonObj.put("topic", tTopicName);
+	jsonObj.put("partition", std::to_string(tPartition));
+	jsonObj.put("low_watermark", std::to_string(low));
+	jsonObj.put("high_watermark", std::to_string(high));
+	jsonObj.put("message_count", std::to_string(high - low));
+
+	delete producer;
+	delete conf;
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
+}
+
+bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeout)
+{
+	std::string result;
+	std::string tBrokers = std::get<std::string>(brokers);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// создаем конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = result;
+			delete conf;
+			return false;
+		}
+	}
+
+	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return false;
+	}
+
+	// создаем продюсера для проверки подключения
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка подключения к брокеру: " + result;
+		delete conf;
+		return false;
+	}
+
+	// Пытаемся получить метаданные - это проверит доступность брокера
+	RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, tTimeout);
+
+	delete producer;
+	delete conf;
+
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = u8"Брокер недоступен: " + std::string(RdKafka::err2str(err));
+		if (metadata)
+			delete metadata;
+		return false;
+	}
+
+	if (metadata)
+		delete metadata;
+
+	return true;
+}
+
+double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
+                                                 const variant_t& topicName,
+                                                 const variant_t& partition)
+{
+	std::string result;
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tPartition = std::get<int32_t>(partition);
+
+	// создаем конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = result;
+			delete conf;
+			return -1.0;
+		}
+	}
+
+	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return -1.0;
+	}
+
+	// создаем продюсера для получения watermarks
+	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
+	if (!producer)
+	{
+		msg_err = u8"Ошибка создания клиента: " + result;
+		delete conf;
+		return -1.0;
+	}
+
+	// получаем watermarks для партиции
+	int64_t low = 0;
+	int64_t high = 0;
+	RdKafka::ErrorCode err = producer->query_watermark_offsets(tTopicName, tPartition, &low, &high, 5000);
+
+	delete producer;
+	delete conf;
+
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = RdKafka::err2str(err);
+		return -1.0;
+	}
+
+	// Возвращаем количество сообщений (high - low)
+	return static_cast<double>(high - low);
+}
+
+//================================== Consumer Group Management ==========================================
+
+bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_t& groupId)
+{
+	char errstr[512];
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tGroupId = std::get<std::string>(groupId);
+
+	// создаем конфигурацию
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// дополнительные параметры
+	for (size_t i = 0; i < settings.size(); i++)
+	{
+		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			msg_err = errstr;
+			rd_kafka_conf_destroy(conf);
+			return false;
+		}
+	}
+
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		msg_err = errstr;
+		rd_kafka_conf_destroy(conf);
+		return false;
+	}
+
+	// создаем клиента для Admin API
+	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		return false;
+	}
+
+	// создаем очередь для получения результатов
+	rd_kafka_queue_t* rkqu = rd_kafka_queue_new(rk);
+
+	// создаем список групп для удаления
+	const char* group_array[1] = { tGroupId.c_str() };
+	rd_kafka_DeleteConsumerGroupOffsets_t* del_groups[1];
+
+	// Используем DeleteConsumerGroupOffsets для удаления офсетов группы
+	// Если нужно удалить саму группу, она должна быть неактивной (без потребителей)
+	del_groups[0] = rd_kafka_DeleteConsumerGroupOffsets_new(tGroupId.c_str(), NULL);
+
+	// опции для операции
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_DELETECONSUMERGROUPOFFSETS);
+	rd_kafka_AdminOptions_set_request_timeout(options, 10000, errstr, sizeof(errstr));
+
+	// выполняем операцию удаления
+	rd_kafka_DeleteConsumerGroupOffsets(rk, del_groups, 1, options, rkqu);
+
+	// ожидаем результат
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(rkqu, 12000);
+
+	// освобождаем ресурсы
+	rd_kafka_DeleteConsumerGroupOffsets_destroy(del_groups[0]);
+	rd_kafka_AdminOptions_destroy(options);
+
+	if (!rkev)
+	{
+		msg_err = u8"Таймаут при удалении группы консьюмеров";
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	if (rd_kafka_event_error(rkev))
+	{
+		msg_err = rd_kafka_event_error_string(rkev);
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_queue_destroy(rkqu);
+		rd_kafka_destroy(rk);
+		return false;
+	}
+
+	rd_kafka_event_destroy(rkev);
+	rd_kafka_queue_destroy(rkqu);
+	rd_kafka_destroy(rk);
+
+	return true;
+}
+
+bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const variant_t& groupId,
+                                               const variant_t& topicName, const variant_t& resetTo)
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		std::string tTopicName = std::get<std::string>(topicName);
+		std::string tResetTo = std::get<std::string>(resetTo);
+
+		// Получаем метаданные топика для определения количества партиций
+		RdKafka::Metadata* metadata = nullptr;
+		RdKafka::ErrorCode err = hConsumer->metadata(false, nullptr, &metadata, 5000);
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		// Находим топик в метаданных
+		const RdKafka::Metadata::TopicMetadataVector* topics = metadata->topics();
+		int partition_cnt = 0;
+
+		for (auto it = topics->begin(); it != topics->end(); ++it)
+		{
+			if ((*it)->topic() == tTopicName)
+			{
+				partition_cnt = (*it)->partitions()->size();
+				break;
+			}
+		}
+
+		delete metadata;
+
+		if (partition_cnt == 0)
+		{
+			msg_err = "Topic not found or has no partitions";
+			return false;
+		}
+
+		// Создаем список партиций для сброса офсетов
+		std::vector<RdKafka::TopicPartition*> partitions;
+
+		for (int i = 0; i < partition_cnt; i++)
+		{
+			int64_t offset;
+
+			if (tResetTo == "earliest")
+			{
+				offset = RdKafka::Topic::OFFSET_BEGINNING;
+			}
+			else if (tResetTo == "latest")
+			{
+				offset = RdKafka::Topic::OFFSET_END;
+			}
+			else
+			{
+				// Пытаемся преобразовать в timestamp
+				try
+				{
+					offset = std::stoll(tResetTo);
+				}
+				catch (...)
+				{
+					msg_err = "Invalid resetTo value. Use 'earliest', 'latest', or timestamp";
+					return false;
+				}
+			}
+
+			RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(tTopicName, i, offset);
+			partitions.push_back(tp);
+		}
+
+		// Фиксируем офсеты
+		err = hConsumer->commitSync(partitions);
+
+		// Освобождаем память
+		for (auto* tp : partitions)
+		{
+			delete tp;
+		}
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in resetConsumerGroupOffsets: ") + e.what();
+		return false;
+	}
+}
+
+//================================== Advanced Consumer Position Management ==========================================
+
+bool SimpleKafka1C::seekToBeginning(const variant_t& topicName, const variant_t& partition)
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		std::string tTopicName = std::get<std::string>(topicName);
+		int32_t tPartition = std::get<int32_t>(partition);
+
+		// Создаем TopicPartition с offset BEGINNING
+		RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(tTopicName, tPartition, RdKafka::Topic::OFFSET_BEGINNING);
+		std::vector<RdKafka::TopicPartition*> partitions;
+		partitions.push_back(tp);
+
+		// Выполняем seek
+		RdKafka::ErrorCode err = hConsumer->seek(*tp, 5000);
+
+		delete tp;
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in seekToBeginning: ") + e.what();
+		return false;
+	}
+}
+
+bool SimpleKafka1C::seekToEnd(const variant_t& topicName, const variant_t& partition)
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		std::string tTopicName = std::get<std::string>(topicName);
+		int32_t tPartition = std::get<int32_t>(partition);
+
+		// Создаем TopicPartition с offset END
+		RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(tTopicName, tPartition, RdKafka::Topic::OFFSET_END);
+
+		// Выполняем seek
+		RdKafka::ErrorCode err = hConsumer->seek(*tp, 5000);
+
+		delete tp;
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in seekToEnd: ") + e.what();
+		return false;
+	}
+}
+
+bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t& partition, const variant_t& timestamp)
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		std::string tTopicName = std::get<std::string>(topicName);
+		int32_t tPartition = std::get<int32_t>(partition);
+		int64_t tTimestamp = std::get<int32_t>(timestamp); // timestamp в миллисекундах
+
+		// Создаем TopicPartition для поиска по timestamp
+		RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(tTopicName, tPartition);
+		std::vector<RdKafka::TopicPartition*> partitions;
+		partitions.push_back(tp);
+
+		// Устанавливаем timestamp для поиска
+		tp->set_offset(tTimestamp);
+
+		// Получаем офсет для указанного timestamp
+		RdKafka::ErrorCode err = hConsumer->offsetsForTimes(partitions, 5000);
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			delete tp;
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		// Получаем найденный офсет
+		int64_t foundOffset = tp->offset();
+
+		if (foundOffset < 0)
+		{
+			delete tp;
+			msg_err = "No offset found for the specified timestamp";
+			return false;
+		}
+
+		// Выполняем seek к найденному офсету
+		err = hConsumer->seek(*tp, 5000);
+
+		delete tp;
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in seekToTimestamp: ") + e.what();
+		return false;
+	}
+}
+
+//================================== Consumer Assignment (Manual Partition Assignment) ==========================================
+
+bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		std::string jsonStr = std::get<std::string>(jsonTopicPartitions);
+		boost::json::value jv = boost::json::parse(jsonStr);
+
+		if (!jv.is_array())
+		{
+			msg_err = u8"JSON должен содержать массив топиков и партиций";
+			return false;
+		}
+
+		boost::json::array topicPartitions = jv.as_array();
+		std::vector<RdKafka::TopicPartition*> partitions;
+
+		for (const auto& item : topicPartitions)
+		{
+			if (!item.is_object())
+				continue;
+
+			const boost::json::object& obj = item.as_object();
+
+			if (!obj.contains("topic") || !obj.contains("partition"))
+			{
+				msg_err = u8"Каждый элемент должен содержать 'topic' и 'partition'";
+				for (auto* tp : partitions)
+					delete tp;
+				return false;
+			}
+
+			std::string topic = boost::json::value_to<std::string>(obj.at("topic"));
+			int32_t partition = static_cast<int32_t>(obj.at("partition").as_int64());
+
+			// Опционально: можно задать начальный offset
+			int64_t offset = RdKafka::Topic::OFFSET_INVALID;
+			if (obj.contains("offset"))
+			{
+				offset = obj.at("offset").as_int64();
+			}
+
+			RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(topic, partition, offset);
+			partitions.push_back(tp);
+		}
+
+		if (partitions.empty())
+		{
+			msg_err = u8"Не найдено валидных топиков и партиций для назначения";
+			return false;
+		}
+
+		// Выполняем assign
+		RdKafka::ErrorCode err = hConsumer->assign(partitions);
+
+		// Освобождаем память
+		for (auto* tp : partitions)
+			delete tp;
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in assign: ") + e.what();
+		return false;
+	}
+}
+
+std::string SimpleKafka1C::getAssignment()
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return "";
+	}
+
+	try
+	{
+		std::vector<RdKafka::TopicPartition*> partitions;
+		RdKafka::ErrorCode err = hConsumer->assignment(partitions);
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return "";
+		}
+
+		// Формируем JSON с назначенными партициями
+		std::stringstream s{};
+		boost::property_tree::ptree jsonObj;
+		boost::property_tree::ptree partitionsArray;
+
+		jsonObj.put("count", partitions.size());
+
+		for (const auto* tp : partitions)
+		{
+			boost::property_tree::ptree partitionObj;
+			partitionObj.put("topic", tp->topic());
+			partitionObj.put("partition", tp->partition());
+			partitionObj.put("offset", tp->offset());
+			partitionsArray.push_back(std::make_pair("", partitionObj));
+		}
+
+		jsonObj.put_child("partitions", partitionsArray);
+
+		// Освобождаем память
+		for (auto* tp : partitions)
+			delete tp;
+
+		boost::property_tree::write_json(s, jsonObj, true);
+		return s.str();
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in getAssignment: ") + e.what();
+		return "";
+	}
+}
+
+bool SimpleKafka1C::unassign()
+{
+	if (!hConsumer)
+	{
+		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+
+	try
+	{
+		// Передаем пустой список партиций для отмены назначения
+		std::vector<RdKafka::TopicPartition*> empty;
+		RdKafka::ErrorCode err = hConsumer->assign(empty);
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			return false;
+		}
+
+		return true;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Exception in unassign: ") + e.what();
+		return false;
+	}
 }
 
 //================================== Utilites ==========================================

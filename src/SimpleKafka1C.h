@@ -11,7 +11,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.6.2";
+	static constexpr char Version[] = u8"1.7.0";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -74,7 +74,15 @@ private:
 	int32_t produceWithWaitResult(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	int32_t produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	int32_t produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
+	int32_t produceBatch(const variant_t &messagesJson, const variant_t &topicName);
 	bool stopProducer();
+
+	// transactional producer
+	bool initTransactionalProducer(const variant_t &brokers, const variant_t &transactionalId);
+	bool beginTransaction();
+	bool commitTransaction();
+	bool abortTransaction();
+	bool sendOffsetsToTransaction(const variant_t &offsetsJson, const variant_t &consumerGroupId);
 
 	// consumer
 	void clearMessageMetadata(); 
@@ -97,6 +105,11 @@ private:
 	bool stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 
+	// consumer assignment (manual partition assignment)
+	bool assign(const variant_t& jsonTopicPartitions);
+	std::string getAssignment();
+	bool unassign();
+
 	// admin
 	std::string getListOfTopics(const variant_t& brokers);
 	std::string getTopicMetadata(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
@@ -109,6 +122,22 @@ private:
 	bool setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout);
 	std::string getConsumerLag(const variant_t& brokers, const variant_t& topicName, const variant_t& consumerGroup, const variant_t& timeout);
 	std::string getTopicConsumerGroups(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
+
+	// cluster and broker information
+	std::string getClusterInfo(const variant_t& brokers);
+	std::string getBrokerInfo(const variant_t& brokers, const variant_t& brokerId);
+	std::string getPartitionWatermarks(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
+	bool pingBroker(const variant_t& brokers, const variant_t& timeout);
+	double getPartitionMessageCount(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
+
+	// consumer group management
+	bool deleteConsumerGroup(const variant_t& brokers, const variant_t& groupId);
+	bool resetConsumerGroupOffsets(const variant_t& brokers, const variant_t& groupId, const variant_t& topicName, const variant_t& resetTo);
+
+	// advanced consumer position management
+	bool seekToBeginning(const variant_t& topicName, const variant_t& partition);
+	bool seekToEnd(const variant_t& topicName, const variant_t& partition);
+	bool seekToTimestamp(const variant_t& topicName, const variant_t& partition, const variant_t& timestamp);
 
 	// Utilites
 	bool sleep(const variant_t &delay);
