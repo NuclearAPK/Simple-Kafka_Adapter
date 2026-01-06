@@ -4,6 +4,8 @@
 
 Компонента использует библиотеку [Librdkafka](https://github.com/confluentinc/librdkafka).
 
+Полная поддержка **Exactly-Once** семантики.
+
 Реализована поддержка AVRO и Protocol Buffers (Protobuf) для чтения и записи бинарных форматов данных.
 
 **Компонента разрабатывается при поддержке [denvic.tech](https://denvic.tech)**
