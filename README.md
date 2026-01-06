@@ -4,7 +4,7 @@
 
 Компонента использует библиотеку [Librdkafka](https://github.com/confluentinc/librdkafka).
 
-Полная поддержка **Exactly-Once** семантики. [Примеры использования](./docs/examples/transactions_examples.md).
+Полная поддержка [**Exactly-Once**](./docs/transactions.md) семантики. [Примеры использования](./docs/examples/transactions_examples.md).
 
 Реализована поддержка AVRO и Protocol Buffers (Protobuf) для чтения и записи бинарных форматов данных.
 
