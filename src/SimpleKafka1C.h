@@ -11,7 +11,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.7.0";
+	static constexpr char Version[] = u8"1.7.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -129,6 +129,7 @@ private:
 	std::string getPartitionWatermarks(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
 	bool pingBroker(const variant_t& brokers, const variant_t& timeout);
 	double getPartitionMessageCount(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
+	std::string getBuiltinFeatures();
 
 	// consumer group management
 	bool deleteConsumerGroup(const variant_t& brokers, const variant_t& groupId);

@@ -460,6 +460,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"GetPartitionWatermarks", L"ПолучитьГраницыПартиции", this, &SimpleKafka1C::getPartitionWatermarks);
 	AddMethod(L"PingBroker", L"ПроверитьДоступностьБрокера", this, &SimpleKafka1C::pingBroker);
 	AddMethod(L"GetPartitionMessageCount", L"ПолучитьКоличествоСообщенийВПартиции", this, &SimpleKafka1C::getPartitionMessageCount);
+	AddMethod(L"GetBuiltinFeatures", L"ПолучитьВозможностиБиблиотеки", this, &SimpleKafka1C::getBuiltinFeatures);
 	// - cluster and broker information
 
 	// + consumer group management
@@ -2872,6 +2873,13 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 		return result;
 	}
 
+	// запрещаем автосоздание топиков при запросе метаданных
+	if (conf->set("allow.auto.create.topics", "false", msg_err) != RdKafka::Conf::CONF_OK)
+	{
+		delete conf;
+		return result;
+	}
+
 	// создаем временного продюсера для получения метаданных
 	RdKafka::Producer* producer = RdKafka::Producer::create(conf, msg_err);
 	if (!producer)
@@ -3221,6 +3229,14 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 		return "";
 	}
 
+	// запрещаем автосоздание топиков
+	if (conf->set("allow.auto.create.topics", "false", result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return "";
+	}
+
 	// создаем продюсера для получения watermarks
 	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
 	if (!producer)
@@ -3345,6 +3361,14 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
 		return -1.0;
 	}
 
+	// запрещаем автосоздание топиков
+	if (conf->set("allow.auto.create.topics", "false", result) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = result;
+		delete conf;
+		return -1.0;
+	}
+
 	// создаем продюсера для получения watermarks
 	RdKafka::Producer* producer = RdKafka::Producer::create(conf, result);
 	if (!producer)
@@ -3370,6 +3394,44 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
 
 	// Возвращаем количество сообщений (high - low)
 	return static_cast<double>(high - low);
+}
+
+std::string SimpleKafka1C::getBuiltinFeatures()
+{
+	std::stringstream s{};
+	boost::property_tree::ptree jsonObj;
+
+	// Версия librdkafka
+	jsonObj.put("version", RdKafka::version_str());
+
+	// Получаем builtin.features через конфигурацию
+	RdKafka::Conf* conf = RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL);
+	std::string features;
+
+	if (conf->get("builtin.features", features) == RdKafka::Conf::CONF_OK)
+	{
+		jsonObj.put("builtin_features", features);
+
+		// Разбираем на отдельные флаги для удобства
+		boost::property_tree::ptree featuresArray;
+		std::istringstream iss(features);
+		std::string feature;
+		while (std::getline(iss, feature, ','))
+		{
+			boost::property_tree::ptree node;
+			node.put("", feature);
+			featuresArray.push_back(boost::property_tree::ptree::value_type("", node));
+		}
+		if (featuresArray.size())
+		{
+			jsonObj.put_child("features", featuresArray);
+		}
+	}
+
+	delete conf;
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	return s.str();
 }
 
 //================================== Consumer Group Management ==========================================
