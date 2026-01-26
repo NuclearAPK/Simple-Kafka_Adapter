@@ -6,12 +6,14 @@
 #include <avro/ValidSchema.hh>
 #include <avro/Stream.hh>
 #include <avro/LogicalType.hh>
+#include <curl/curl.h>
+#include <atomic>
 #include "Component.h"
 
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.7.1";
+	static constexpr char Version[] = u8"1.8.0";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -27,6 +29,10 @@ private:
 	RdKafka::KafkaConsumer *hConsumer;
 
 	int32_t waitMessageTimeout;
+	int32_t producerFlushTimeout = 20000;
+	int32_t adminOperationTimeout = 10000;
+	std::string partitionerStrategy = "consistent_random";
+	CURL* curlHandle = nullptr;
 	unsigned pid;
 
 	static constexpr char consumerLogName[] = "consumer_";
@@ -49,6 +55,46 @@ private:
 		std::string Value;
 	};
 
+	// Metrics structures
+	struct ProducerMetrics {
+		std::atomic<uint64_t> messagesProduced{0};
+		std::atomic<uint64_t> bytesProduced{0};
+		std::atomic<uint64_t> errorsCount{0};
+		std::atomic<uint64_t> retriesCount{0};
+		std::chrono::steady_clock::time_point startTime;
+
+		ProducerMetrics() : startTime(std::chrono::steady_clock::now()) {}
+
+		void reset() {
+			messagesProduced = 0;
+			bytesProduced = 0;
+			errorsCount = 0;
+			retriesCount = 0;
+			startTime = std::chrono::steady_clock::now();
+		}
+	};
+
+	struct ConsumerMetrics {
+		std::atomic<uint64_t> messagesConsumed{0};
+		std::atomic<uint64_t> bytesConsumed{0};
+		std::atomic<uint64_t> errorsCount{0};
+		std::atomic<uint64_t> pollTimeouts{0};
+		std::chrono::steady_clock::time_point startTime;
+
+		ConsumerMetrics() : startTime(std::chrono::steady_clock::now()) {}
+
+		void reset() {
+			messagesConsumed = 0;
+			bytesConsumed = 0;
+			errorsCount = 0;
+			pollTimeouts = 0;
+			startTime = std::chrono::steady_clock::now();
+		}
+	};
+
+	ProducerMetrics producerMetrics;
+	ConsumerMetrics consumerMetrics;
+
 	std::vector<HeadersMessage> messageHeaders;
 
 	// avro
@@ -64,6 +110,7 @@ private:
 	// https://github.com/edenhill/librdkafka/blob/master/CONFIGURATION.md
 	void setParameter(const variant_t &key, const variant_t &value);
 	std::string getParameters();
+	bool setPartitioner(const variant_t &partitionerType);
 
 	std::string clientID();
 	std::string extensionName() override;
@@ -90,13 +137,14 @@ private:
 	bool subscribe(const variant_t& topic);
 	std::string consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
+	std::string consumeBatch(const variant_t &maxMessages, const variant_t &maxWaitMs);	// пакетное чтение
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
 	std::string getMessageKey();
 	std::string getMessageHeaders();
 	int32_t getMessageOffset();
 	std::string getMessageTopicName();
 	int32_t getMessageBrokerID();
-	float getMessageTimestamp();
+	double getMessageTimestamp();
 	int32_t getMessagePartition();
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
@@ -104,6 +152,8 @@ private:
 	bool setReadingPositions(const variant_t& jsonTopicPartitions);
 	bool stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
+	bool setProducerFlushTimeout(const variant_t &timeout);
+	bool setAdminOperationTimeout(const variant_t &timeout);
 
 	// consumer assignment (manual partition assignment)
 	bool assign(const variant_t& jsonTopicPartitions);
@@ -145,7 +195,21 @@ private:
 	bool setLogDirectory(const variant_t& logDir);
 	bool setFormatLogFiles(const variant_t& format);
 	std::string getLastError() { return msg_err; }
-    void openEventFile(const std::string& logName, std::ofstream& eventFile);
+	void openEventFile(const std::string& logName, std::ofstream& eventFile);
+
+	// Metrics API
+	std::string getProducerMetrics();
+	std::string getConsumerMetrics();
+	bool resetMetrics();
+
+	// Schema Registry API
+	std::string httpRequest(const std::string& url, const std::string& method,
+	                        const std::string& body = "", const std::string& contentType = "application/json");
+	std::string registerSchema(const variant_t& registryUrl, const variant_t& subject, const variant_t& schema);
+	std::string getSchemaById(const variant_t& registryUrl, const variant_t& schemaId);
+	std::string getLatestSchema(const variant_t& registryUrl, const variant_t& subject);
+	std::string getSchemaVersions(const variant_t& registryUrl, const variant_t& subject);
+	bool deleteSchema(const variant_t& registryUrl, const variant_t& subject, const variant_t& version);
 
 	// converting a message to avro format
 	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
@@ -164,6 +228,25 @@ private:
 	struct KafkaSettings {
 		std::string Key;
 		std::string Value;
+	};
+
+	// RAII class для управления Admin API ресурсами
+	class AdminClientScope {
+	public:
+		AdminClientScope(const std::string& brokers,
+		                 const std::vector<KafkaSettings>& settings,
+		                 rd_kafka_type_t type = RD_KAFKA_PRODUCER);
+		~AdminClientScope();
+
+		bool isValid() const { return rk != nullptr; }
+		rd_kafka_t* get() const { return rk; }
+		rd_kafka_queue_t* queue() const { return rkqu; }
+		const std::string& error() const { return errstr_msg; }
+
+	private:
+		rd_kafka_t* rk = nullptr;
+		rd_kafka_queue_t* rkqu = nullptr;
+		std::string errstr_msg;
 	};
 
 	class clEventCb : public RdKafka::EventCb

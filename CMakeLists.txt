@@ -73,6 +73,7 @@ find_package(Boost REQUIRED COMPONENTS json container)
 find_package(Protobuf CONFIG REQUIRED)
 find_package(absl CONFIG REQUIRED)
 find_package(utf8_range CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 
 # Print debug info
 message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
@@ -90,6 +91,7 @@ endif()
 target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
 target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
+target_link_libraries(${TARGET} PRIVATE CURL::libcurl)
 
 # Link protobuf and all its dependencies statically
 target_link_libraries(${TARGET} PRIVATE

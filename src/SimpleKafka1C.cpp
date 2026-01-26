@@ -25,6 +25,8 @@
 
 #include <thread>
 #include <chrono>
+#include <set>
+#include <atomic>
 
 #include "md5.h"
 #include "SimpleKafka1C.h"
@@ -405,6 +407,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"GetLastError", L"ПолучитьСообщениеОбОшибке", this, &SimpleKafka1C::getLastError);
 	AddMethod(L"SetParameter", L"УстановитьПараметр", this, &SimpleKafka1C::setParameter);
 	AddMethod(L"GetParameters", L"ПолучитьПараметры", this, &SimpleKafka1C::getParameters);
+	AddMethod(L"SetPartitioner", L"УстановитьПартишионер", this, &SimpleKafka1C::setPartitioner);
 	AddMethod(L"InitializeProducer", L"ИнициализироватьПродюсера", this, &SimpleKafka1C::initProducer);
 	AddMethod(L"Produce", L"ОтправитьСообщение", this, &SimpleKafka1C::produce,
 		{ {2, -1}, {3, std::string("")}, {4, std::string("")} });
@@ -422,15 +425,19 @@ SimpleKafka1C::SimpleKafka1C()
 	// - transactional producer
 
 	AddMethod(L"InitializeConsumer", L"ИнициализироватьКонсьюмера", this, &SimpleKafka1C::initConsumer);
-	AddMethod(L"Subscribe", L"Подписаться", this, &SimpleKafka1C::subscribe); // experemental
+	AddMethod(L"Subscribe", L"Подписаться", this, &SimpleKafka1C::subscribe); // experimental
 	AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
 	AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, { {2, 0} });
 	AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, { {2, 0} });
-	AddMethod(L"SetReadingPositions", L"УстановитьПозицииЧтения", this, &SimpleKafka1C::setReadingPositions); // experemental
+	AddMethod(L"SetReadingPositions", L"УстановитьПозицииЧтения", this, &SimpleKafka1C::setReadingPositions); // experimental
 	AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
 	AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
+	AddMethod(L"SetProducerFlushTimeout", L"УстановитьТаймаутОчисткиПродюсера", this, &SimpleKafka1C::setProducerFlushTimeout);
+	AddMethod(L"SetAdminOperationTimeout", L"УстановитьТаймаутАдминОпераций", this, &SimpleKafka1C::setAdminOperationTimeout);
 	// + modern methods
 	AddMethod(L"ReadMessage", L"ПрочитатьСообщение", this, &SimpleKafka1C::getMessage);
+	AddMethod(L"ConsumeBatch", L"ЧитатьПакетСообщений", this, &SimpleKafka1C::consumeBatch,
+		{ {0, 100}, {1, 1000} });
 	AddMethod(L"GetMessageData", L"ПолучитьДанныеСообщения", this, &SimpleKafka1C::getMessageData, { {0, false} });
 	AddMethod(L"GetMessageKey", L"ПолучитьКлючСообщения", this, &SimpleKafka1C::getMessageKey);
 	AddMethod(L"GetMessageHeaders", L"ПолучитьЗаголовкиСообщения", this, &SimpleKafka1C::getMessageHeaders);
@@ -485,6 +492,11 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"SetLogDirectory", L"УстановитьКаталогЛогов", this, &SimpleKafka1C::setLogDirectory);
 	AddMethod(L"SetFormatLogFiles", L"УстановитьФорматЛогов", this, &SimpleKafka1C::setFormatLogFiles);
 
+	// Metrics API
+	AddMethod(L"GetProducerMetrics", L"ПолучитьМетрикиПродюсера", this, &SimpleKafka1C::getProducerMetrics);
+	AddMethod(L"GetConsumerMetrics", L"ПолучитьМетрикиКонсьюмера", this, &SimpleKafka1C::getConsumerMetrics);
+	AddMethod(L"ResetMetrics", L"СброситьМетрики", this, &SimpleKafka1C::resetMetrics);
+
 	AddMethod(L"PutAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
 	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
 	AddMethod(L"ProduceAvro", L"ОтправитьСообщениеAVRO", this, &SimpleKafka1C::produceAvro,
@@ -505,6 +517,13 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"ProduceProtobufWithWaitResult", L"ОтправитьСообщениеProtobufСОжиданиемРезультата", this, &SimpleKafka1C::produceProtobufWithWaitResult,
 		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
 
+	// Schema Registry API
+	AddMethod(L"RegisterSchema", L"ЗарегистрироватьСхему", this, &SimpleKafka1C::registerSchema);
+	AddMethod(L"GetSchemaById", L"ПолучитьСхемуПоИД", this, &SimpleKafka1C::getSchemaById);
+	AddMethod(L"GetLatestSchema", L"ПолучитьПоследнююСхему", this, &SimpleKafka1C::getLatestSchema);
+	AddMethod(L"GetSchemaVersions", L"ПолучитьВерсииСхемы", this, &SimpleKafka1C::getSchemaVersions);
+	AddMethod(L"DeleteSchema", L"УдалитьСхему", this, &SimpleKafka1C::deleteSchema);
+
 	waitMessageTimeout = 500;
 
 #ifdef _WINDOWS
@@ -520,6 +539,13 @@ SimpleKafka1C::~SimpleKafka1C()
 
 	stopConsumer();
 	stopProducer();
+
+	// Очистка CURL handle
+	if (curlHandle)
+	{
+		curl_easy_cleanup(curlHandle);
+		curlHandle = nullptr;
+	}
 }
 
 //================================== Settings ==========================================
@@ -544,6 +570,34 @@ std::string SimpleKafka1C::getParameters()
 
 	result["parameters"] = parametersArray;
 	return boost::json::serialize(result);
+}
+
+bool SimpleKafka1C::setPartitioner(const variant_t& partitionerType)
+{
+	std::string type = std::get<std::string>(partitionerType);
+
+	// Валидация типа партиционера
+	static const std::set<std::string> validPartitioners = {
+		"consistent",
+		"consistent_random",
+		"murmur2",
+		"murmur2_random",
+		"fnv1a",
+		"fnv1a_random",
+		"random"
+	};
+
+	if (validPartitioners.find(type) == validPartitioners.end())
+	{
+		msg_err = u8"Неизвестный тип партиционера: " + type +
+			u8". Допустимые значения: consistent, consistent_random, murmur2, murmur2_random, fnv1a, fnv1a_random, random";
+		return false;
+	}
+
+	partitionerStrategy = type;
+	// Устанавливаем параметр через setParameter для применения при инициализации продюсера
+	settings.push_back({ "partitioner", type });
+	return true;
 }
 
 std::string SimpleKafka1C::clientID()
@@ -651,61 +705,78 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 		}
 	}
 
-retry:
-
 	RdKafka::ErrorCode resp;
 
-	if (std::holds_alternative<std::string>(msg))
+	while (true)
 	{
-		resp = hProducer->produce(
-			tTopicName,
-			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-			RdKafka::Producer::RK_MSG_COPY,
-			const_cast<char*>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
-			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-			0,
-			hdrs,
-			nullptr);
-	}
-	else
-	{
-		auto d = std::get<std::vector<char>>(msg);
-		unsigned char* pubMsg = new unsigned char[d.size()];
-
-		for (size_t i = 0; i < d.size(); i++)
+		if (std::holds_alternative<std::string>(msg))
 		{
-			pubMsg[i] = d.at(i);
+			resp = hProducer->produce(
+				tTopicName,
+				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+				RdKafka::Producer::RK_MSG_COPY,
+				const_cast<char*>(std::get<std::string>(msg).c_str()), std::get<std::string>(msg).size(),
+				std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+				0,
+				hdrs,
+				nullptr);
+		}
+		else
+		{
+			auto d = std::get<std::vector<char>>(msg);
+			unsigned char* pubMsg = new unsigned char[d.size()];
+
+			for (size_t i = 0; i < d.size(); i++)
+			{
+				pubMsg[i] = d.at(i);
+			}
+
+			resp = hProducer->produce(
+				tTopicName,
+				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+				RdKafka::Producer::RK_MSG_COPY,
+				pubMsg, d.size(),
+				std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+				0,
+				hdrs,
+				nullptr);
 		}
 
-		resp = hProducer->produce(
-			tTopicName,
-			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-			RdKafka::Producer::RK_MSG_COPY,
-			pubMsg, d.size(),
-			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-			0,
-			hdrs,
-			nullptr);
-	}
-
-	if (resp != RdKafka::ERR_NO_ERROR)
-	{
 		if (resp == RdKafka::ERR__QUEUE_FULL)
 		{
 			hProducer->poll(1000 /*block for max 1000ms*/);
-			if (eventFile.is_open()) 
+			if (eventFile.is_open())
 			{
 				eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			goto retry;
+			continue;
 		}
+		break;
+	}
+
+	if (resp != RdKafka::ERR_NO_ERROR)
+	{
 		msg_err = RdKafka::err2str(resp);
 		if (hdrs != nullptr)
 		{
 			delete hdrs;
 		}
 		cl_dr_cb.delivered = -1;
+		producerMetrics.errorsCount++;
+	}
+	else
+	{
+		// Обновляем метрики при успешной отправке
+		producerMetrics.messagesProduced++;
+		if (std::holds_alternative<std::string>(msg))
+		{
+			producerMetrics.bytesProduced += std::get<std::string>(msg).size();
+		}
+		else
+		{
+			producerMetrics.bytesProduced += std::get<std::vector<char>>(msg).size();
+		}
 	}
 
 	hProducer->poll(0);
@@ -713,7 +784,7 @@ retry:
 	if (eventFile.is_open()) {
 		if (!msg_err.empty())
 			eventFile << currentDateTime() << " Error produce: " << msg_err << std::endl;
-		else if (resp != RdKafka::ERR_NO_ERROR) 
+		else if (resp != RdKafka::ERR_NO_ERROR)
 			eventFile << " Errorcode produce: " << resp << std::endl;
 		else
 			eventFile << currentDateTime() << " Info: produce. Success" << std::endl;
@@ -770,30 +841,36 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 		eventFile << currentDateTime() << " Info: produceAvro. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 	}
 
-retry:
-	RdKafka::ErrorCode resp = hProducer->produce(
-		tTopicName,
-		currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-		RdKafka::Producer::RK_MSG_COPY,
-		avroFile.data(),
-		avroFile.size(),
-		std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-		0,
-		nullptr,
-		nullptr);
+	RdKafka::ErrorCode resp;
 
-	if (resp != RdKafka::ERR_NO_ERROR)
+	while (true)
 	{
+		resp = hProducer->produce(
+			tTopicName,
+			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+			RdKafka::Producer::RK_MSG_COPY,
+			avroFile.data(),
+			avroFile.size(),
+			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+			0,
+			nullptr,
+			nullptr);
+
 		if (resp == RdKafka::ERR__QUEUE_FULL)
 		{
 			hProducer->poll(1000 /*block for max 1000ms*/);
-			if (eventFile.is_open()) 
+			if (eventFile.is_open())
 			{
 				eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
 			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			goto retry;
+			continue;
 		}
+		break;
+	}
+
+	if (resp != RdKafka::ERR_NO_ERROR)
+	{
 		msg_err = RdKafka::err2str(resp);
 		cl_dr_cb.delivered = -1;
 	}
@@ -817,7 +894,7 @@ int32_t SimpleKafka1C::produceAvroWithWaitResult(const variant_t& topicName, con
 {
 	if (produceAvro(topicName, partition, key, heads) != -1)
 	{
-		hProducer->flush(20 * 1000);		 // wait for max 10 seconds
+		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
 		if (hProducer->outq_len() > 0)
 		{
 			msg_err = u8"Не доставлено сообщений - " + hProducer->outq_len();
@@ -924,29 +1001,34 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 				}
 			}
 
-retry:
-			// Отправка сообщения
-			RdKafka::ErrorCode resp = hProducer->produce(
-				tTopicName,
-				partition == -1 ? RdKafka::Topic::PARTITION_UA : partition,
-				RdKafka::Producer::RK_MSG_COPY,
-				const_cast<char*>(message.c_str()), message.size(),
-				key.c_str(), key.size(),
-				0,
-				hdrs,
-				nullptr);
+			// Отправка сообщения с retry логикой
+			RdKafka::ErrorCode resp;
 
-			if (resp != RdKafka::ERR_NO_ERROR)
+			while (true)
 			{
+				resp = hProducer->produce(
+					tTopicName,
+					partition == -1 ? RdKafka::Topic::PARTITION_UA : partition,
+					RdKafka::Producer::RK_MSG_COPY,
+					const_cast<char*>(message.c_str()), message.size(),
+					key.c_str(), key.size(),
+					0,
+					hdrs,
+					nullptr);
+
 				if (resp == RdKafka::ERR__QUEUE_FULL)
 				{
 					hProducer->poll(1000);
 					if (eventFile.is_open())
 						eventFile << currentDateTime() << " Warning: Queue full, retrying..." << std::endl;
 					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-					goto retry;
+					continue;
 				}
+				break;
+			}
 
+			if (resp != RdKafka::ERR_NO_ERROR)
+			{
 				if (eventFile.is_open())
 					eventFile << currentDateTime() << " Error: Failed to produce message: " << RdKafka::err2str(resp) << std::endl;
 
@@ -1287,6 +1369,18 @@ bool SimpleKafka1C::setWaitingTimeout(const variant_t& timeout)
 	return true;
 }
 
+bool SimpleKafka1C::setProducerFlushTimeout(const variant_t& timeout)
+{
+	producerFlushTimeout = std::get<int32_t>(timeout);
+	return true;
+}
+
+bool SimpleKafka1C::setAdminOperationTimeout(const variant_t& timeout)
+{
+	adminOperationTimeout = std::get<int32_t>(timeout);
+	return true;
+}
+
 bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant_t& offset, const variant_t& partition)
 {
 	auto assignOffset = std::get<int32_t>(offset);
@@ -1446,12 +1540,20 @@ bool SimpleKafka1C::getMessage()
 		this->topic = msg->topic_name();
 		this->broker_id = msg->broker_id();
 
+		// Обновляем метрики консьюмера
+		consumerMetrics.messagesConsumed++;
+		consumerMetrics.bytesConsumed += this->messageLen;
+
 		delete msg;
 	}
 	else
 	{
-		if (resultConsume != RdKafka::ERR__TIMED_OUT) {
+		if (resultConsume == RdKafka::ERR__TIMED_OUT) {
+			consumerMetrics.pollTimeouts++;
+		}
+		else {
 			msg_err = msg->errstr();
+			consumerMetrics.errorsCount++;
 			if (eventFile.is_open()) eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		}
 		delete msg;
@@ -1459,6 +1561,110 @@ bool SimpleKafka1C::getMessage()
 	}
 
 	return true;
+}
+
+std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const variant_t& maxWaitMs)
+{
+	if (hConsumer == nullptr)
+	{
+		msg_err = u8"Консьюмер не инициализирован";
+		return "";
+	}
+
+	int32_t maxMsgCount = std::get<int32_t>(maxMessages);
+	int32_t maxWait = std::get<int32_t>(maxWaitMs);
+
+	if (maxMsgCount <= 0) maxMsgCount = 100;
+	if (maxWait <= 0) maxWait = 1000;
+
+	boost::json::array messagesArray;
+	auto startTime = std::chrono::steady_clock::now();
+	int32_t messagesRead = 0;
+
+	while (messagesRead < maxMsgCount)
+	{
+		// Проверяем, не истекло ли время ожидания
+		auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+			std::chrono::steady_clock::now() - startTime).count();
+
+		if (elapsed >= maxWait)
+			break;
+
+		int32_t remainingWait = static_cast<int32_t>(maxWait - elapsed);
+		if (remainingWait <= 0) remainingWait = 1;
+
+		RdKafka::Message* msg = hConsumer->consume(remainingWait);
+		RdKafka::ErrorCode resultConsume = msg->err();
+
+		if (resultConsume == RdKafka::ERR_NO_ERROR)
+		{
+			boost::json::object msgObj;
+
+			// Данные сообщения
+			char* payload = static_cast<char*>(msg->payload());
+			msgObj["message"] = std::string(payload, msg->len());
+
+			// Ключ
+			if (msg->key() && !msg->key()->empty())
+			{
+				msgObj["key"] = *msg->key();
+			}
+
+			// Метаданные
+			msgObj["topic"] = msg->topic_name();
+			msgObj["partition"] = msg->partition();
+			msgObj["offset"] = msg->offset();
+			msgObj["broker_id"] = msg->broker_id();
+
+			RdKafka::MessageTimestamp ts = msg->timestamp();
+			msgObj["timestamp"] = ts.timestamp;
+
+			// Заголовки
+			RdKafka::Headers* headers = msg->headers();
+			if (headers)
+			{
+				boost::json::array headersArray;
+				std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
+				for (const auto& hdr : hdrs)
+				{
+					boost::json::object headerObj;
+					headerObj["key"] = hdr.key();
+					headerObj["value"] = std::string(static_cast<const char*>(hdr.value()), hdr.value_size());
+					headersArray.push_back(headerObj);
+				}
+				msgObj["headers"] = headersArray;
+			}
+
+			messagesArray.push_back(msgObj);
+			messagesRead++;
+
+			// Обновляем метрики
+			consumerMetrics.messagesConsumed++;
+			consumerMetrics.bytesConsumed += msg->len();
+		}
+		else if (resultConsume == RdKafka::ERR__TIMED_OUT)
+		{
+			consumerMetrics.pollTimeouts++;
+			// При таймауте выходим из цикла, если уже есть сообщения
+			if (messagesRead > 0)
+			{
+				delete msg;
+				break;
+			}
+		}
+		else
+		{
+			consumerMetrics.errorsCount++;
+		}
+
+		delete msg;
+	}
+
+	boost::json::object result;
+	result["messages"] = messagesArray;
+	result["count"] = messagesRead;
+
+	return boost::json::serialize(result);
 }
 
 variant_t SimpleKafka1C::getMessageData(const variant_t& binaryResult)
@@ -1518,9 +1724,9 @@ int32_t SimpleKafka1C::getMessageBrokerID()
 	return this->broker_id;
 }
 
-float SimpleKafka1C::getMessageTimestamp()
+double SimpleKafka1C::getMessageTimestamp()
 {
-	return (int64_t)this->timestamp/1000;
+	return static_cast<double>(this->timestamp) / 1000.0;
 }
 
 int32_t SimpleKafka1C::getMessagePartition()
@@ -1538,7 +1744,14 @@ bool SimpleKafka1C::commitOffset(const variant_t& topicName, const variant_t& of
 	RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
 	offsets.push_back(ptr);
 
-	if (hConsumer->commitSync(offsets) != RdKafka::ERR_NO_ERROR)
+	RdKafka::ErrorCode err = hConsumer->commitSync(offsets);
+
+	// Очистка TopicPartition* для предотвращения утечки памяти
+	for (auto tp : offsets) {
+		delete tp;
+	}
+
+	if (err != RdKafka::ERR_NO_ERROR)
 	{
 		return false;
 	}
@@ -1569,6 +1782,59 @@ void SimpleKafka1C::clearMessageMetadata()
 	this->broker_id = 0;
 	this->partition = 0;
 	this->offset = 0;
+}
+
+//================================== AdminClientScope =========================================
+
+SimpleKafka1C::AdminClientScope::AdminClientScope(const std::string& brokers,
+                                                   const std::vector<KafkaSettings>& settings,
+                                                   rd_kafka_type_t type)
+{
+	char errstr[512];
+
+	rd_kafka_conf_t* conf = rd_kafka_conf_new();
+
+	// Применяем дополнительные настройки
+	for (const auto& setting : settings)
+	{
+		if (rd_kafka_conf_set(conf, setting.Key.c_str(), setting.Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			errstr_msg = errstr;
+			rd_kafka_conf_destroy(conf);
+			return;
+		}
+	}
+
+	// Устанавливаем bootstrap.servers
+	if (rd_kafka_conf_set(conf, "bootstrap.servers", brokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	{
+		errstr_msg = errstr;
+		rd_kafka_conf_destroy(conf);
+		return;
+	}
+
+	// Создаем клиента
+	rk = rd_kafka_new(type, conf, errstr, sizeof(errstr));
+	if (!rk)
+	{
+		errstr_msg = std::string(u8"Ошибка создания клиента: ") + errstr;
+		return;
+	}
+
+	// Создаем очередь для получения результатов
+	rkqu = rd_kafka_queue_new(rk);
+}
+
+SimpleKafka1C::AdminClientScope::~AdminClientScope()
+{
+	if (rkqu)
+	{
+		rd_kafka_queue_destroy(rkqu);
+	}
+	if (rk)
+	{
+		rd_kafka_destroy(rk);
+	}
 }
 
 //================================== Admin API =========================================
@@ -3957,6 +4223,231 @@ void SimpleKafka1C::openEventFile(const std::string& logName, std::ofstream& eve
 	}
 }
 
+//================================== Metrics API ==========================================
+
+std::string SimpleKafka1C::getProducerMetrics()
+{
+	boost::json::object result;
+
+	result["messages_produced"] = producerMetrics.messagesProduced.load();
+	result["bytes_produced"] = producerMetrics.bytesProduced.load();
+	result["errors_count"] = producerMetrics.errorsCount.load();
+	result["retries_count"] = producerMetrics.retriesCount.load();
+
+	// Вычисляем время работы в секундах
+	auto now = std::chrono::steady_clock::now();
+	auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - producerMetrics.startTime).count();
+	result["uptime_seconds"] = duration;
+
+	// Средняя скорость сообщений в секунду
+	if (duration > 0)
+	{
+		result["messages_per_second"] = static_cast<double>(producerMetrics.messagesProduced.load()) / duration;
+		result["bytes_per_second"] = static_cast<double>(producerMetrics.bytesProduced.load()) / duration;
+	}
+	else
+	{
+		result["messages_per_second"] = 0.0;
+		result["bytes_per_second"] = 0.0;
+	}
+
+	return boost::json::serialize(result);
+}
+
+std::string SimpleKafka1C::getConsumerMetrics()
+{
+	boost::json::object result;
+
+	result["messages_consumed"] = consumerMetrics.messagesConsumed.load();
+	result["bytes_consumed"] = consumerMetrics.bytesConsumed.load();
+	result["errors_count"] = consumerMetrics.errorsCount.load();
+	result["poll_timeouts"] = consumerMetrics.pollTimeouts.load();
+
+	// Вычисляем время работы в секундах
+	auto now = std::chrono::steady_clock::now();
+	auto duration = std::chrono::duration_cast<std::chrono::seconds>(now - consumerMetrics.startTime).count();
+	result["uptime_seconds"] = duration;
+
+	// Средняя скорость сообщений в секунду
+	if (duration > 0)
+	{
+		result["messages_per_second"] = static_cast<double>(consumerMetrics.messagesConsumed.load()) / duration;
+		result["bytes_per_second"] = static_cast<double>(consumerMetrics.bytesConsumed.load()) / duration;
+	}
+	else
+	{
+		result["messages_per_second"] = 0.0;
+		result["bytes_per_second"] = 0.0;
+	}
+
+	return boost::json::serialize(result);
+}
+
+bool SimpleKafka1C::resetMetrics()
+{
+	producerMetrics.reset();
+	consumerMetrics.reset();
+	return true;
+}
+
+//================================== Schema Registry API ==========================================
+
+// Callback для записи данных от CURL
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp)
+{
+	size_t totalSize = size * nmemb;
+	userp->append(static_cast<char*>(contents), totalSize);
+	return totalSize;
+}
+
+std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string& method,
+                                        const std::string& body, const std::string& contentType)
+{
+	std::string response;
+
+	if (!curlHandle)
+	{
+		curlHandle = curl_easy_init();
+	}
+
+	if (!curlHandle)
+	{
+		msg_err = u8"Ошибка инициализации CURL";
+		return "";
+	}
+
+	curl_easy_reset(curlHandle);
+
+	curl_easy_setopt(curlHandle, CURLOPT_URL, url.c_str());
+	curl_easy_setopt(curlHandle, CURLOPT_WRITEFUNCTION, WriteCallback);
+	curl_easy_setopt(curlHandle, CURLOPT_WRITEDATA, &response);
+	curl_easy_setopt(curlHandle, CURLOPT_TIMEOUT, 30L);
+
+	struct curl_slist* headers = nullptr;
+	headers = curl_slist_append(headers, ("Content-Type: " + contentType).c_str());
+	headers = curl_slist_append(headers, "Accept: application/vnd.schemaregistry.v1+json");
+	curl_easy_setopt(curlHandle, CURLOPT_HTTPHEADER, headers);
+
+	if (method == "POST")
+	{
+		curl_easy_setopt(curlHandle, CURLOPT_POST, 1L);
+		curl_easy_setopt(curlHandle, CURLOPT_POSTFIELDS, body.c_str());
+		curl_easy_setopt(curlHandle, CURLOPT_POSTFIELDSIZE, body.size());
+	}
+	else if (method == "DELETE")
+	{
+		curl_easy_setopt(curlHandle, CURLOPT_CUSTOMREQUEST, "DELETE");
+	}
+	else if (method == "PUT")
+	{
+		curl_easy_setopt(curlHandle, CURLOPT_CUSTOMREQUEST, "PUT");
+		curl_easy_setopt(curlHandle, CURLOPT_POSTFIELDS, body.c_str());
+		curl_easy_setopt(curlHandle, CURLOPT_POSTFIELDSIZE, body.size());
+	}
+
+	CURLcode res = curl_easy_perform(curlHandle);
+
+	curl_slist_free_all(headers);
+
+	if (res != CURLE_OK)
+	{
+		msg_err = std::string(u8"CURL ошибка: ") + curl_easy_strerror(res);
+		return "";
+	}
+
+	long httpCode = 0;
+	curl_easy_getinfo(curlHandle, CURLINFO_RESPONSE_CODE, &httpCode);
+
+	if (httpCode >= 400)
+	{
+		msg_err = u8"HTTP ошибка " + std::to_string(httpCode) + ": " + response;
+		return "";
+	}
+
+	return response;
+}
+
+std::string SimpleKafka1C::registerSchema(const variant_t& registryUrl, const variant_t& subject, const variant_t& schema)
+{
+	std::string url = std::get<std::string>(registryUrl);
+	std::string subj = std::get<std::string>(subject);
+	std::string schemaStr = std::get<std::string>(schema);
+
+	// Убираем trailing slash
+	if (!url.empty() && url.back() == '/')
+		url.pop_back();
+
+	std::string fullUrl = url + "/subjects/" + subj + "/versions";
+
+	// Формируем JSON тело запроса
+	boost::json::object requestBody;
+	requestBody["schema"] = schemaStr;
+
+	std::string body = boost::json::serialize(requestBody);
+
+	std::string response = httpRequest(fullUrl, "POST", body, "application/vnd.schemaregistry.v1+json");
+
+	return response;
+}
+
+std::string SimpleKafka1C::getSchemaById(const variant_t& registryUrl, const variant_t& schemaId)
+{
+	std::string url = std::get<std::string>(registryUrl);
+	int32_t id = std::get<int32_t>(schemaId);
+
+	// Убираем trailing slash
+	if (!url.empty() && url.back() == '/')
+		url.pop_back();
+
+	std::string fullUrl = url + "/schemas/ids/" + std::to_string(id);
+
+	return httpRequest(fullUrl, "GET");
+}
+
+std::string SimpleKafka1C::getLatestSchema(const variant_t& registryUrl, const variant_t& subject)
+{
+	std::string url = std::get<std::string>(registryUrl);
+	std::string subj = std::get<std::string>(subject);
+
+	// Убираем trailing slash
+	if (!url.empty() && url.back() == '/')
+		url.pop_back();
+
+	std::string fullUrl = url + "/subjects/" + subj + "/versions/latest";
+
+	return httpRequest(fullUrl, "GET");
+}
+
+std::string SimpleKafka1C::getSchemaVersions(const variant_t& registryUrl, const variant_t& subject)
+{
+	std::string url = std::get<std::string>(registryUrl);
+	std::string subj = std::get<std::string>(subject);
+
+	// Убираем trailing slash
+	if (!url.empty() && url.back() == '/')
+		url.pop_back();
+
+	std::string fullUrl = url + "/subjects/" + subj + "/versions";
+
+	return httpRequest(fullUrl, "GET");
+}
+
+bool SimpleKafka1C::deleteSchema(const variant_t& registryUrl, const variant_t& subject, const variant_t& version)
+{
+	std::string url = std::get<std::string>(registryUrl);
+	std::string subj = std::get<std::string>(subject);
+	std::string ver = std::get<std::string>(version);
+
+	// Убираем trailing slash
+	if (!url.empty() && url.back() == '/')
+		url.pop_back();
+
+	std::string fullUrl = url + "/subjects/" + subj + "/versions/" + ver;
+
+	std::string response = httpRequest(fullUrl, "DELETE");
+
+	return !response.empty();
+}
 
 //================================== Avro ==========================================
 
