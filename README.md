@@ -8,6 +8,8 @@
 
 Реализована поддержка AVRO и Protocol Buffers (Protobuf) для чтения и записи бинарных форматов данных.
 
+Интеграция с Confluent Schema Registry для централизованного управления схемами данных.
+
 **Компонента разрабатывается при поддержке [denvic.tech](https://denvic.tech)**
 
 ## Использование
@@ -33,6 +35,8 @@
 [Формирование сообщений в формате AVRO](./docs/avro.md)
 
 [Формирование сообщений в формате Protocol Buffers (Protobuf)](./docs/protobuf.md)
+
+[Schema Registry API](./docs/schema_registry.md)
 
 [Обработка исключений](./docs/exceptionHandling.md)
 
