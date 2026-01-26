@@ -8,6 +8,7 @@
 #include <avro/LogicalType.hh>
 #include <curl/curl.h>
 #include <atomic>
+#include <chrono>
 #include "Component.h"
 
 class SimpleKafka1C final : public Component
