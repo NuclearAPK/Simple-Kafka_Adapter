@@ -14,7 +14,7 @@
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.0";
+	static constexpr char Version[] = u8"1.8.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -31,6 +31,7 @@ private:
 
 	int32_t waitMessageTimeout;
 	int32_t producerFlushTimeout = 20000;
+	int32_t consumerCloseTimeout = 10000;
 	int32_t adminOperationTimeout = 10000;
 	std::string partitionerStrategy = "consistent_random";
 	CURL* curlHandle = nullptr;
@@ -154,6 +155,7 @@ private:
 	bool stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 	bool setProducerFlushTimeout(const variant_t &timeout);
+	bool setConsumerCloseTimeout(const variant_t &timeout);
 	bool setAdminOperationTimeout(const variant_t &timeout);
 
 	// consumer assignment (manual partition assignment)
@@ -181,6 +183,7 @@ private:
 	bool pingBroker(const variant_t& brokers, const variant_t& timeout);
 	double getPartitionMessageCount(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
 	std::string getBuiltinFeatures();
+	std::string getTopicSize(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 
 	// consumer group management
 	bool deleteConsumerGroup(const variant_t& brokers, const variant_t& groupId);

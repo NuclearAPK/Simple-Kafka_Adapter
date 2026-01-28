@@ -433,6 +433,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
 	AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
 	AddMethod(L"SetProducerFlushTimeout", L"УстановитьТаймаутОчисткиПродюсера", this, &SimpleKafka1C::setProducerFlushTimeout);
+	AddMethod(L"SetConsumerCloseTimeout", L"УстановитьТаймаутОчисткиКонсьюмера", this, &SimpleKafka1C::setConsumerCloseTimeout);
 	AddMethod(L"SetAdminOperationTimeout", L"УстановитьТаймаутАдминОпераций", this, &SimpleKafka1C::setAdminOperationTimeout);
 	// + modern methods
 	AddMethod(L"ReadMessage", L"ПрочитатьСообщение", this, &SimpleKafka1C::getMessage);
@@ -1061,9 +1062,26 @@ bool SimpleKafka1C::stopProducer()
 {
 	if (hProducer != nullptr)
 	{
-		hProducer->flush(10 * 1000 /* wait for max 10 seconds */);
+		RdKafka::ErrorCode flushResult = hProducer->flush(producerFlushTimeout);
+
+		// Проверяем, остались ли недоставленные сообщения
+		int outqLen = hProducer->outq_len();
+
 		delete hProducer;
 		hProducer = nullptr;
+
+		// Если flush завершился по таймауту или остались сообщения в очереди
+		if (flushResult == RdKafka::ERR__TIMED_OUT || outqLen > 0)
+		{
+			msg_err = "Producer flush timeout: " + std::to_string(outqLen) + " message(s) were not delivered";
+			return false;
+		}
+
+		if (flushResult != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = "Producer flush error: " + RdKafka::err2str(flushResult);
+			return false;
+		}
 	}
 	return true;
 }
@@ -1372,6 +1390,12 @@ bool SimpleKafka1C::setWaitingTimeout(const variant_t& timeout)
 bool SimpleKafka1C::setProducerFlushTimeout(const variant_t& timeout)
 {
 	producerFlushTimeout = std::get<int32_t>(timeout);
+	return true;
+}
+
+bool SimpleKafka1C::setConsumerCloseTimeout(const variant_t& timeout)
+{
+	consumerCloseTimeout = std::get<int32_t>(timeout);
 	return true;
 }
 
@@ -1762,10 +1786,27 @@ bool SimpleKafka1C::stopConsumer()
 {
 	if (hConsumer != nullptr)
 	{
-		hConsumer->close();
+		RdKafka::ErrorCode closeErr = hConsumer->close();
+
+		if (closeErr != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = "Consumer close error: " + RdKafka::err2str(closeErr);
+			delete hConsumer;
+			hConsumer = nullptr;
+			RdKafka::wait_destroyed(consumerCloseTimeout);
+			return false;
+		}
+
 		delete hConsumer;
-		RdKafka::wait_destroyed(10 * 1000);
 		hConsumer = nullptr;
+
+		// Ожидаем завершения всех фоновых операций
+		int waitResult = RdKafka::wait_destroyed(consumerCloseTimeout);
+		if (waitResult != 0)
+		{
+			msg_err = "Consumer wait_destroyed timeout: " + std::to_string(waitResult) + " object(s) still exist";
+			return false;
+		}
 	}
 	return true;
 }
