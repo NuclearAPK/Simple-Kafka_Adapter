@@ -498,6 +498,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"GetConsumerMetrics", L"ПолучитьМетрикиКонсьюмера", this, &SimpleKafka1C::getConsumerMetrics);
 	AddMethod(L"ResetMetrics", L"СброситьМетрики", this, &SimpleKafka1C::resetMetrics);
 
+	// AVRO
 	AddMethod(L"PutAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
 	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
 	AddMethod(L"ProduceAvro", L"ОтправитьСообщениеAVRO", this, &SimpleKafka1C::produceAvro,
@@ -508,6 +509,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"DecodeAvroMessage", L"ДекодироватьСообщениеAVRO", this, &SimpleKafka1C::decodeAvroMessage,
 		{ {1, std::string("")}, {2, true} });
 
+	// Protobuf
 	AddMethod(L"PutProtoSchema", L"СохранитьСхемуProtobuf", this, &SimpleKafka1C::putProtoSchema);
 	AddMethod(L"ConvertToProtobufFormat", L"ПреобразоватьВФорматProtobuf", this, &SimpleKafka1C::convertToProtobufFormat);
 	AddMethod(L"SaveProtobufFile", L"СохранитьФайлProtobuf", this, &SimpleKafka1C::saveProtobufFile);
@@ -4515,11 +4517,244 @@ bool SimpleKafka1C::putAvroSchema(const variant_t& schemaJsonName, const variant
 	return msg_err.empty();
 }
 
+// Вспомогательная функция для рекурсивного заполнения GenericDatum из JSON
+static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value& jsonValue, std::string& errMsg, const std::string& path = "")
+{
+	// Обработка union типов
+	if (datum.isUnion())
+	{
+		if (jsonValue.is_null())
+		{
+			// null - первая ветка union (обычно ["null", "type"])
+			datum.selectBranch(0);
+			return true;
+		}
+		// Не null - выбираем вторую ветку
+		datum.selectBranch(1);
+	}
+
+	switch (datum.type())
+	{
+	case avro::AVRO_STRING:
+		if (!jsonValue.is_string())
+		{
+			errMsg = "Expected string at " + path;
+			return false;
+		}
+		datum.value<std::string>() = std::string(jsonValue.as_string());
+		return true;
+
+	case avro::AVRO_LONG:
+		if (!jsonValue.is_int64())
+		{
+			errMsg = "Expected long at " + path;
+			return false;
+		}
+		datum.value<int64_t>() = jsonValue.as_int64();
+		return true;
+
+	case avro::AVRO_INT:
+		if (!jsonValue.is_int64())
+		{
+			errMsg = "Expected int at " + path;
+			return false;
+		}
+		datum.value<int32_t>() = static_cast<int32_t>(jsonValue.as_int64());
+		return true;
+
+	case avro::AVRO_FLOAT:
+		if (jsonValue.is_double())
+			datum.value<float>() = static_cast<float>(jsonValue.as_double());
+		else if (jsonValue.is_int64())
+			datum.value<float>() = static_cast<float>(jsonValue.as_int64());
+		else
+		{
+			errMsg = "Expected float at " + path;
+			return false;
+		}
+		return true;
+
+	case avro::AVRO_DOUBLE:
+		if (jsonValue.is_double())
+			datum.value<double>() = jsonValue.as_double();
+		else if (jsonValue.is_int64())
+			datum.value<double>() = static_cast<double>(jsonValue.as_int64());
+		else
+		{
+			errMsg = "Expected double at " + path;
+			return false;
+		}
+		return true;
+
+	case avro::AVRO_BOOL:
+		if (!jsonValue.is_bool())
+		{
+			errMsg = "Expected bool at " + path;
+			return false;
+		}
+		datum.value<bool>() = jsonValue.as_bool();
+		return true;
+
+	case avro::AVRO_NULL:
+		datum.value<avro::null>() = avro::null();
+		return true;
+
+	case avro::AVRO_BYTES:
+	{
+		if (!jsonValue.is_string())
+		{
+			errMsg = "Expected string (bytes) at " + path;
+			return false;
+		}
+		std::string strVal = std::string(jsonValue.as_string());
+		std::vector<uint8_t> bytes(strVal.begin(), strVal.end());
+		datum.value<std::vector<uint8_t>>() = bytes;
+		return true;
+	}
+
+	case avro::AVRO_FIXED:
+	{
+		if (!jsonValue.is_string())
+		{
+			errMsg = "Expected string (fixed) at " + path;
+			return false;
+		}
+		avro::GenericFixed& fixed = datum.value<avro::GenericFixed>();
+		std::string strVal = std::string(jsonValue.as_string());
+		// Проверка на UUID формат
+		if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
+		{
+			std::string hex;
+			for (char c : strVal)
+			{
+				if (c != '-') hex += c;
+			}
+			std::vector<uint8_t>& bytes = fixed.value();
+			bytes.resize(16);
+			for (size_t j = 0; j < 16; j++)
+			{
+				std::string byteStr = hex.substr(j * 2, 2);
+				bytes[j] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
+			}
+		}
+		else
+		{
+			std::vector<uint8_t>& bytes = fixed.value();
+			bytes.assign(strVal.begin(), strVal.end());
+		}
+		return true;
+	}
+
+	case avro::AVRO_RECORD:
+	{
+		if (!jsonValue.is_object())
+		{
+			errMsg = "Expected object at " + path;
+			return false;
+		}
+		const boost::json::object& obj = jsonValue.as_object();
+		avro::GenericRecord& record = datum.value<avro::GenericRecord>();
+		size_t fieldCount = record.fieldCount();
+		const avro::NodePtr& schema = record.schema();
+
+		for (size_t i = 0; i < fieldCount; ++i)
+		{
+			std::string fieldName = schema->nameAt(i);
+			auto it = obj.find(fieldName);
+			if (it == obj.end())
+			{
+				// Поле отсутствует - проверяем, есть ли default или это union с null
+				avro::GenericDatum& fieldDatum = record.fieldAt(i);
+				if (fieldDatum.isUnion())
+				{
+					// Union с null - устанавливаем null
+					fieldDatum.selectBranch(0);
+				}
+				// Иначе оставляем значение по умолчанию
+				continue;
+			}
+			avro::GenericDatum& fieldDatum = record.fieldAt(i);
+			std::string fieldPath = path.empty() ? fieldName : path + "." + fieldName;
+			if (!fillAvroFromJson(fieldDatum, it->value(), errMsg, fieldPath))
+			{
+				return false;
+			}
+		}
+		return true;
+	}
+
+	case avro::AVRO_ENUM:
+	{
+		if (!jsonValue.is_string())
+		{
+			errMsg = "Expected string (enum symbol) at " + path;
+			return false;
+		}
+		avro::GenericEnum& enumVal = datum.value<avro::GenericEnum>();
+		std::string symbol = std::string(jsonValue.as_string());
+		enumVal.set(symbol);
+		return true;
+	}
+
+	case avro::AVRO_ARRAY:
+	{
+		if (!jsonValue.is_array())
+		{
+			errMsg = "Expected array at " + path;
+			return false;
+		}
+		const boost::json::array& arr = jsonValue.as_array();
+		avro::GenericArray& avroArray = datum.value<avro::GenericArray>();
+		const avro::NodePtr& schema = avroArray.schema();
+		avroArray.value().clear();
+
+		for (size_t i = 0; i < arr.size(); ++i)
+		{
+			avro::GenericDatum elemDatum(schema->leafAt(0));
+			std::string elemPath = path + "[" + std::to_string(i) + "]";
+			if (!fillAvroFromJson(elemDatum, arr[i], errMsg, elemPath))
+			{
+				return false;
+			}
+			avroArray.value().push_back(elemDatum);
+		}
+		return true;
+	}
+
+	case avro::AVRO_MAP:
+	{
+		if (!jsonValue.is_object())
+		{
+			errMsg = "Expected object (map) at " + path;
+			return false;
+		}
+		const boost::json::object& obj = jsonValue.as_object();
+		avro::GenericMap& avroMap = datum.value<avro::GenericMap>();
+		const avro::NodePtr& schema = avroMap.schema();
+		avroMap.value().clear();
+
+		for (const auto& kv : obj)
+		{
+			avro::GenericDatum valueDatum(schema->leafAt(1));
+			std::string elemPath = path + "[\"" + std::string(kv.key()) + "\"]";
+			if (!fillAvroFromJson(valueDatum, kv.value(), errMsg, elemPath))
+			{
+				return false;
+			}
+			avroMap.value().push_back(std::make_pair(std::string(kv.key()), valueDatum));
+		}
+		return true;
+	}
+
+	default:
+		errMsg = "Unsupported Avro type at " + path;
+		return false;
+	}
+}
+
 bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_t& schemaJsonName)
 {
 	avroFile.clear();
-	std::string key;
-	std::string type;
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
 	avro::ValidSchema schema;
 
@@ -4536,227 +4771,115 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 	avro::GenericDatum datum(schema);
 	if (datum.type() != avro::AVRO_RECORD)
 	{
-		msg_err = u8"Некорректная схема";
+		msg_err = u8"Некорректная схема - корневой тип должен быть record";
 		return false;
 	}
 
-	// Разбираем исходный json
-	// Данные приходят в формате {"id": ["id_1", "id_1", "id_1", ...], "rmis_id": ["rmis_id_1", "rmis_id_2", "rmis_id_3", ...], ... }
-	// Для корректной записи в Avro требуется данные преобразовать в формат: [{"id: "id_1", "rmis_id": "rmis_id_1", ...}, {"id: "id_2", "rmis_id": "rmis_id_2", ...}, {"id: "id_3", "rmis_id": "rmis_id_3", ...}, ...]
-
+	// Разбираем исходный JSON
 	boost::json::monotonic_resource mr;
-	boost::json::value jsonInput_t;
+	boost::json::value jsonInput;
 	try
 	{
-		jsonInput_t = boost::json::parse(std::get<std::string>(msgJson), &mr);
+		jsonInput = boost::json::parse(std::get<std::string>(msgJson), &mr);
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err = "Error parsing scheme - ";
+		msg_err = "Error parsing JSON - ";
 		msg_err += ex.what();
 		return false;
 	}
-	const boost::json::object jsonInput = jsonInput_t.as_object();
 
-	MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);		// объект будет удален через unique_ptr при закрытии DataFileWriter
+	MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);
 	std::unique_ptr<avro::OutputStream> os(memOutStr);
-   	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
+	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
 
 	try
 	{
-		// Получаем количество элементов в поле (в каждом поле должен быть массив с одинаковым количеством элементов)
-		const auto first_array = jsonInput.cbegin();
-		const size_t numElements = first_array->value().as_array().size();
-		std::string err;
-		for (size_t i = 0; i < numElements; i++)
+		// Определяем формат входных данных:
+		// 1. Объект {...} - одна запись (новый стандартный формат)
+		// 2. Массив [{...}, {...}] - несколько записей (новый стандартный формат)
+		// 3. "Столбцовый" формат {"field1": [v1, v2], "field2": [v1, v2]} - для совместимости
+
+		if (jsonInput.is_object())
 		{
-			// построчное преобразование
-			boost::json::object jsonRecord;
-			for (auto it = jsonInput.cbegin(); it != jsonInput.cend(); ++it)
-			{
-				const std::string& field_name = it->key_c_str();
-				const boost::json::value& field_data = it->value();
-				jsonRecord[field_name] = field_data.as_array().at(i);
-			}
+			const boost::json::object& obj = jsonInput.as_object();
 
-			avro::GenericRecord& record = datum.value<avro::GenericRecord>();
-			for (auto field = jsonRecord.cbegin(); field != jsonRecord.cend(); ++field)
+			// Проверяем формат: если первое значение - массив, это "столбцовый" формат
+			bool isColumnarFormat = false;
+			if (!obj.empty())
 			{
-				avro::GenericDatum& fieldDatum = record.field(field->key_c_str());
-				type = toString(fieldDatum.type());
-				key = field->key_c_str();
-
-				// Если это объединение типов, например, type: ["null", "long"], то тогда по умолчанию устанавливаем второй тип, а затем проверяем значения
-				// Тип устанавливается при помощи функции selectBranch()
-				if (fieldDatum.isUnion())
+				const auto& firstValue = obj.cbegin()->value();
+				if (firstValue.is_array())
 				{
-					fieldDatum.selectBranch(1);
-					switch (fieldDatum.type())
+					// Дополнительная проверка: в стандартном формате array тоже может быть значением поля
+					// Проверяем, совпадают ли размеры всех массивов (признак столбцового формата)
+					size_t firstSize = firstValue.as_array().size();
+					bool allSameSize = true;
+					for (const auto& kv : obj)
 					{
-					case avro::AVRO_STRING:
-						// Поддержка UUID (логический тип над string)
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-							fieldDatum.value<std::string>() = field->value().as_string();
-						break;
-					case avro::AVRO_LONG:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-							fieldDatum.value<int64_t>() = field->value().as_int64();
-						break;
-					case avro::AVRO_INT:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-							fieldDatum.value<int32_t>() = (int32_t)field->value().as_int64();
-						break;
-					case avro::AVRO_FLOAT:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-						fieldDatum.value<float>() = (float)field->value().as_double();
-						break;
-					case avro::AVRO_DOUBLE:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-							fieldDatum.value<double>() = field->value().as_double();
-						break;
-					case avro::AVRO_BOOL:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-							fieldDatum.value<bool>() = field->value().as_bool();
-						break;
-					case avro::AVRO_NULL:
-						fieldDatum.value<avro::null>() = avro::null();
-						break;
-					case avro::AVRO_UNION:
-						break;
-					case avro::AVRO_FIXED:
-						// Поддержка FIXED (может использоваться для UUID как 16 байт)
-						if (field->value().is_null())
+						if (!kv.value().is_array() || kv.value().as_array().size() != firstSize)
 						{
-							fieldDatum.selectBranch(0);
+							allSameSize = false;
+							break;
 						}
-						else
-						{
-							avro::GenericFixed& fixed = fieldDatum.value<avro::GenericFixed>();
-							std::string strVal = std::string(field->value().as_string());
-							// Если это UUID в строковом формате, конвертируем в байты
-							if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
-							{
-								// UUID формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-								std::string hex;
-								for (char c : strVal)
-								{
-									if (c != '-') hex += c;
-								}
-								std::vector<uint8_t>& bytes = fixed.value();
-								bytes.resize(16);
-								for (size_t i = 0; i < 16; i++)
-								{
-									std::string byteStr = hex.substr(i * 2, 2);
-									bytes[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
-								}
-							}
-							else
-							{
-								// Копируем как есть
-								std::vector<uint8_t>& bytes = fixed.value();
-								bytes.assign(strVal.begin(), strVal.end());
-							}
-						}
-						break;
-					case avro::AVRO_BYTES:
-						if (field->value().is_null())
-							fieldDatum.selectBranch(0);
-						else
-						{
-							std::string strVal = std::string(field->value().as_string());
-							std::vector<uint8_t> bytes(strVal.begin(), strVal.end());
-							fieldDatum.value<std::vector<uint8_t>>() = bytes;
-						}
-						break;
-					default:
-						msg_err += u8"Unsupported type '" + type + u8"' on '" + key + u8"'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION, AVRO_FIXED, AVRO_BYTES. ";
-						break;
 					}
-				}
-				else
-				{
-					switch (fieldDatum.type())
-					{
-					case avro::AVRO_STRING:
-						// Поддержка UUID (логический тип над string)
-						fieldDatum.value<std::string>() = field->value().as_string();
-						break;
-					case avro::AVRO_LONG:
-						fieldDatum.value<int64_t>() = field->value().as_int64();
-						break;
-					case avro::AVRO_INT:
-						fieldDatum.value<int32_t>() = (int32_t)field->value().as_int64();
-						break;
-					case avro::AVRO_FLOAT:
-						fieldDatum.value<float>() = (float)field->value().as_double();
-						break;
-					case avro::AVRO_DOUBLE:
-						fieldDatum.value<double>() = field->value().as_double();
-						break;
-					case avro::AVRO_BOOL:
-						fieldDatum.value<bool>() = field->value().as_bool();
-						break;
-					case avro::AVRO_NULL:
-						fieldDatum.value<avro::null>() = avro::null();
-						break;
-					case avro::AVRO_UNION:
-						break;
-					case avro::AVRO_FIXED:
-						{
-							// Поддержка FIXED (может использоваться для UUID как 16 байт)
-							avro::GenericFixed& fixed = fieldDatum.value<avro::GenericFixed>();
-							std::string strVal = std::string(field->value().as_string());
-							// Если это UUID в строковом формате, конвертируем в байты
-							if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
-							{
-								// UUID формат: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-								std::string hex;
-								for (char c : strVal)
-								{
-									if (c != '-') hex += c;
-								}
-								std::vector<uint8_t>& bytes = fixed.value();
-								bytes.resize(16);
-								for (size_t i = 0; i < 16; i++)
-								{
-									std::string byteStr = hex.substr(i * 2, 2);
-									bytes[i] = static_cast<uint8_t>(std::stoul(byteStr, nullptr, 16));
-								}
-							}
-							else
-							{
-								// Копируем как есть
-								std::vector<uint8_t>& bytes = fixed.value();
-								bytes.assign(strVal.begin(), strVal.end());
-							}
-						}
-						break;
-					case avro::AVRO_BYTES:
-						{
-							std::string strVal = std::string(field->value().as_string());
-							std::vector<uint8_t> bytes(strVal.begin(), strVal.end());
-							fieldDatum.value<std::vector<uint8_t>>() = bytes;
-						}
-						break;
-					default:
-						msg_err += "Unsupported type '" + type + "' on '" + key + "'. Supported: AVRO_STRING, AVRO_LONG, AVRO_INT, AVRO_FLOAT, AVRO_DOUBLE, AVRO_BOOL, AVRO_NULL, AVRO_UNION, AVRO_FIXED, AVRO_BYTES. ";
-						break;
-					}
+					// Если все поля - массивы одинаковой длины, считаем это столбцовым форматом
+					// (кроме случая когда длина = 1, тогда это может быть и стандартный формат)
+					isColumnarFormat = allSameSize && firstSize > 1;
 				}
 			}
-			writer.write(datum);
+
+			if (isColumnarFormat)
+			{
+				// Старый "столбцовый" формат для совместимости
+				const auto first_array = obj.cbegin();
+				const size_t numElements = first_array->value().as_array().size();
+
+				for (size_t i = 0; i < numElements; i++)
+				{
+					boost::json::object jsonRecord;
+					for (const auto& kv : obj)
+					{
+						jsonRecord[kv.key()] = kv.value().as_array().at(i);
+					}
+
+					avro::GenericDatum recordDatum(schema);
+					if (!fillAvroFromJson(recordDatum, boost::json::value(jsonRecord), msg_err))
+					{
+						return false;
+					}
+					writer.write(recordDatum);
+				}
+			}
+			else
+			{
+				// Стандартный формат: одна запись как объект
+				if (!fillAvroFromJson(datum, jsonInput, msg_err))
+				{
+					return false;
+				}
+				writer.write(datum);
+			}
+		}
+		else if (jsonInput.is_array())
+		{
+			// Стандартный формат: массив записей
+			const boost::json::array& arr = jsonInput.as_array();
+			for (size_t i = 0; i < arr.size(); ++i)
+			{
+				avro::GenericDatum recordDatum(schema);
+				std::string recordPath = "[" + std::to_string(i) + "]";
+				if (!fillAvroFromJson(recordDatum, arr[i], msg_err, recordPath))
+				{
+					return false;
+				}
+				writer.write(recordDatum);
+			}
+		}
+		else
+		{
+			msg_err = u8"JSON должен быть объектом или массивом объектов";
+			return false;
 		}
 
 		writer.flush();
@@ -4764,7 +4887,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err += "Error while proceesing key '" + key + "' with type '" + type + "' - " + ex.what();
+		msg_err += "Error converting to Avro: ";
+		msg_err += ex.what();
 	}
 	writer.close();
 
@@ -4849,6 +4973,49 @@ static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum
 			return boost::json::string(str);
 		}
 	}
+	case avro::AVRO_RECORD:
+	{
+		// Рекурсивная обработка вложенных record
+		boost::json::object obj;
+		const avro::GenericRecord& record = datum.value<avro::GenericRecord>();
+		const avro::NodePtr& schema = record.schema();
+		size_t fieldCount = record.fieldCount();
+		for (size_t i = 0; i < fieldCount; ++i)
+		{
+			std::string fieldName = schema->nameAt(i);
+			const avro::GenericDatum& fieldDatum = record.fieldAt(i);
+			obj[fieldName] = convertAvroDatumToJson(fieldDatum);
+		}
+		return obj;
+	}
+	case avro::AVRO_ENUM:
+	{
+		// Enum возвращается как строка-символ
+		const avro::GenericEnum& enumVal = datum.value<avro::GenericEnum>();
+		return boost::json::string(enumVal.symbol());
+	}
+	case avro::AVRO_ARRAY:
+	{
+		// Массив элементов
+		boost::json::array arr;
+		const avro::GenericArray& avroArray = datum.value<avro::GenericArray>();
+		for (const auto& elem : avroArray.value())
+		{
+			arr.push_back(convertAvroDatumToJson(elem));
+		}
+		return arr;
+	}
+	case avro::AVRO_MAP:
+	{
+		// Map как JSON объект
+		boost::json::object obj;
+		const avro::GenericMap& avroMap = datum.value<avro::GenericMap>();
+		for (const auto& pair : avroMap.value())
+		{
+			obj[pair.first] = convertAvroDatumToJson(pair.second);
+		}
+		return obj;
+	}
 	default:
 		return nullptr;
 	}
@@ -4912,8 +5079,7 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 
 		if (returnAsJson)
 		{
-			// Конвертируем в JSON
-			boost::json::object resultJson;
+			// Конвертируем в JSON (стандартный формат - массив объектов или один объект)
 			std::vector<avro::GenericDatum> records;
 
 			// Читаем все записи
@@ -4928,33 +5094,23 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 				return std::string("{}");
 			}
 
-			// Преобразуем в формат {"field1": [val1, val2, ...], "field2": [val1, val2, ...]}
-			const avro::GenericRecord& firstRecord = records[0].value<avro::GenericRecord>();
-			size_t fieldCount = firstRecord.fieldCount();
-
-			// Получаем корень схемы для извлечения имён полей
-			const avro::NodePtr& schemaNode = schema.root();
-
-			for (size_t fieldIdx = 0; fieldIdx < fieldCount; ++fieldIdx)
+			// Если одна запись - возвращаем объект, если несколько - массив
+			if (records.size() == 1)
 			{
-				// Получаем имя поля из схемы
-				std::string fieldName = schemaNode->nameAt(fieldIdx);
-				boost::json::array fieldValues;
-
+				// Одна запись - возвращаем как объект
+				boost::json::value result = convertAvroDatumToJson(records[0]);
+				return boost::json::serialize(result);
+			}
+			else
+			{
+				// Несколько записей - возвращаем как массив
+				boost::json::array resultArray;
 				for (const auto& record : records)
 				{
-					const avro::GenericRecord& gr = record.value<avro::GenericRecord>();
-					const avro::GenericDatum& fieldDatum = gr.fieldAt(fieldIdx);
-
-					// Конвертируем значение в JSON
-					boost::json::value jsonValue = convertAvroDatumToJson(fieldDatum);
-					fieldValues.push_back(jsonValue);
+					resultArray.push_back(convertAvroDatumToJson(record));
 				}
-
-				resultJson[fieldName] = fieldValues;
+				return boost::json::serialize(resultArray);
 			}
-
-			return boost::json::serialize(resultJson);
 		}
 		else
 		{
