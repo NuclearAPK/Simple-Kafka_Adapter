@@ -220,6 +220,7 @@ private:
 	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
 	bool saveAvroFile(const variant_t &fileName);
 	variant_t decodeAvroMessage(const variant_t &avroData, const variant_t &schemaJsonName, const variant_t &asJson);
+	variant_t getAvroSchema(const variant_t &avroData);
 
 	// converting a message to protobuf format
 	bool putProtoSchema(const variant_t &schemaName, const variant_t &protoSchema);

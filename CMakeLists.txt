@@ -11,7 +11,7 @@ else()
 endif ()
 
 # Force static linking (before project())
-set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
+#set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
 
 project(SimpleKafka1C)
 
@@ -68,11 +68,26 @@ set(protobuf_MSVC_STATIC_RUNTIME ON)
 set(Protobuf_USE_STATIC_LIBS ON)
 
 find_package(RdKafka CONFIG REQUIRED)
-find_package(unofficial-avro-cpp CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(ZLIB REQUIRED)
+# Workaround for avro-cpp vcpkg bug: config tries to create alias for non-existent shared target
+# Create a dummy target that will be replaced by the real one if it exists
+if(NOT TARGET avro-cpp::avrocpp)
+    add_library(avro-cpp::avrocpp INTERFACE IMPORTED)
+endif()
+find_package(avro-cpp CONFIG REQUIRED)
 find_package(Boost REQUIRED COMPONENTS json container)
+# Protobuf: we use runtime parsing (no code generation needed)
+# Set protoc path to bypass the check - actual protoc is not used
+if(WIN32)
+    set(Protobuf_PROTOC_EXECUTABLE "C:/Windows/System32/cmd.exe" CACHE FILEPATH "" FORCE)
+else()
+    set(Protobuf_PROTOC_EXECUTABLE "/bin/true" CACHE FILEPATH "" FORCE)
+endif()
 find_package(Protobuf CONFIG REQUIRED)
-find_package(absl CONFIG REQUIRED)
-find_package(utf8_range CONFIG REQUIRED)
+# Note: absl and utf8_range are already linked through protobuf
+# find_package(absl CONFIG REQUIRED)
+# find_package(utf8_range CONFIG REQUIRED)
 find_package(CURL REQUIRED)
 
 # Print debug info
@@ -88,42 +103,23 @@ if (MSVC)
     string(REPLACE "/DPROTOBUF_USE_DLLS" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
 endif()
 
-target_link_libraries(${TARGET} PRIVATE unofficial::avro-cpp::avrocpp)
+# Link avro-cpp and its dependencies (prefer static for static builds)
+if(TARGET avro-cpp::avrocpp_s)
+    target_link_libraries(${TARGET} PRIVATE avro-cpp::avrocpp_s)
+elseif(TARGET avro-cpp::avrocpp_static)
+    target_link_libraries(${TARGET} PRIVATE avro-cpp::avrocpp_static)
+elseif(TARGET avro-cpp::avrocpp)
+    target_link_libraries(${TARGET} PRIVATE avro-cpp::avrocpp)
+else()
+    message(FATAL_ERROR "Could not find avro-cpp target")
+endif()
+target_link_libraries(${TARGET} PRIVATE fmt::fmt ZLIB::ZLIB)
 target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
 target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
 target_link_libraries(${TARGET} PRIVATE CURL::libcurl)
 
-# Link protobuf and all its dependencies statically
-target_link_libraries(${TARGET} PRIVATE
-    protobuf::libprotobuf
-    protobuf::libprotobuf-lite)
-target_link_libraries(${TARGET} PRIVATE utf8_range::utf8_validity utf8_range::utf8_range)
-target_link_libraries(${TARGET} PRIVATE
-    absl::strings
-    absl::string_view
-    absl::str_format
-    absl::cord
-    absl::status
-    absl::statusor
-    absl::log_internal_message
-    absl::log_internal_check_op
-    absl::synchronization
-    absl::stacktrace
-    absl::symbolize
-    absl::debugging_internal
-    absl::demangle_internal
-    absl::malloc_internal
-    absl::time
-    absl::civil_time
-    absl::time_zone
-    absl::bad_optional_access
-    absl::bad_variant_access
-    absl::base
-    absl::throw_delegate
-    absl::raw_logging_internal
-    absl::log_severity
-    absl::spinlock_wait
-)
+# Link protobuf (abseil and utf8_range are bundled with protobuf in vcpkg static build)
+target_link_libraries(${TARGET} PRIVATE protobuf::libprotobuf)
 
 target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
 

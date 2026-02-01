@@ -9,12 +9,14 @@
 #include <process.h>
 #endif
 #include <avro/Encoder.hh>
+#include <avro/Decoder.hh>
 #include <avro/Specific.hh>
 #include <avro/Compiler.hh>
 #include <avro/Types.hh>
 #include <avro/Generic.hh>
 #include <avro/DataFile.hh>
 #include <avro/Writer.hh>
+#include <avro/GenericDatum.hh>
 
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/message.h>
@@ -27,6 +29,8 @@
 #include <chrono>
 #include <set>
 #include <atomic>
+#include <sstream>
+#include <iomanip>
 
 #include "md5.h"
 #include "SimpleKafka1C.h"
@@ -508,6 +512,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"SaveAvroFile", L"СохранитьФайлAVRO", this, &SimpleKafka1C::saveAvroFile);
 	AddMethod(L"DecodeAvroMessage", L"ДекодироватьСообщениеAVRO", this, &SimpleKafka1C::decodeAvroMessage,
 		{ {1, std::string("")}, {2, true} });
+	AddMethod(L"GetAvroSchema", L"ПолучитьСхемуAVRO", this, &SimpleKafka1C::getAvroSchema);
 
 	// Protobuf
 	AddMethod(L"PutProtoSchema", L"СохранитьСхемуProtobuf", this, &SimpleKafka1C::putProtoSchema);
@@ -4917,108 +4922,163 @@ bool SimpleKafka1C::saveAvroFile(const variant_t& fileName)
 	return msg_err.empty();
 }
 
-static boost::json::value convertAvroDatumToJson(const avro::GenericDatum& datum)
+// Escape JSON string
+static std::string escapeJsonString(const std::string& input)
 {
-	if (datum.isUnion())
+	std::ostringstream oss;
+	for (char c : input)
 	{
-		const avro::GenericDatum& actualDatum = datum.value<avro::GenericUnion>().datum();
-		if (actualDatum.type() == avro::AVRO_NULL)
+		switch (c)
 		{
-			return nullptr;
+		case '"':  oss << "\\\""; break;
+		case '\\': oss << "\\\\"; break;
+		case '\b': oss << "\\b"; break;
+		case '\f': oss << "\\f"; break;
+		case '\n': oss << "\\n"; break;
+		case '\r': oss << "\\r"; break;
+		case '\t': oss << "\\t"; break;
+		default:
+			if (static_cast<unsigned char>(c) < 0x20)
+			{
+				oss << "\\u" << std::hex << std::setfill('0') << std::setw(4) << static_cast<int>(c);
+			}
+			else
+			{
+				oss << c;
+			}
+			break;
 		}
-		return convertAvroDatumToJson(actualDatum);
 	}
+	return oss.str();
+}
+
+// Convert GenericDatum to JSON string
+static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
+{
+	std::ostringstream oss;
 
 	switch (datum.type())
 	{
-	case avro::AVRO_STRING:
-		return boost::json::string(datum.value<std::string>());
-	case avro::AVRO_LONG:
-		return datum.value<int64_t>();
-	case avro::AVRO_INT:
-		return static_cast<int64_t>(datum.value<int32_t>());
-	case avro::AVRO_FLOAT:
-		return static_cast<double>(datum.value<float>());
-	case avro::AVRO_DOUBLE:
-		return datum.value<double>();
-	case avro::AVRO_BOOL:
-		return datum.value<bool>();
 	case avro::AVRO_NULL:
-		return nullptr;
+		oss << "null";
+		break;
+
+	case avro::AVRO_BOOL:
+		oss << (datum.value<bool>() ? "true" : "false");
+		break;
+
+	case avro::AVRO_INT:
+		oss << datum.value<int32_t>();
+		break;
+
+	case avro::AVRO_LONG:
+		oss << datum.value<int64_t>();
+		break;
+
+	case avro::AVRO_FLOAT:
+		oss << std::setprecision(9) << datum.value<float>();
+		break;
+
+	case avro::AVRO_DOUBLE:
+		oss << std::setprecision(17) << datum.value<double>();
+		break;
+
+	case avro::AVRO_STRING:
+		oss << "\"" << escapeJsonString(datum.value<std::string>()) << "\"";
+		break;
+
 	case avro::AVRO_BYTES:
 	{
-		const std::vector<uint8_t>& bytes = datum.value<std::vector<uint8_t>>();
-		std::string str(bytes.begin(), bytes.end());
-		return boost::json::string(str);
+		const auto& bytes = datum.value<std::vector<uint8_t>>();
+		oss << "\"";
+		for (uint8_t byte : bytes)
+		{
+			oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(byte);
+		}
+		oss << "\"";
+		break;
 	}
+
 	case avro::AVRO_FIXED:
 	{
-		const avro::GenericFixed& fixed = datum.value<avro::GenericFixed>();
-		const std::vector<uint8_t>& bytes = fixed.value();
-		// Если это 16 байт, считаем что UUID
-		if (bytes.size() == 16)
+		const auto& fixed = datum.value<avro::GenericFixed>();
+		const auto& bytes = fixed.value();
+		oss << "\"";
+		for (uint8_t byte : bytes)
 		{
-			char uuidStr[37];
-			snprintf(uuidStr, sizeof(uuidStr),
-				"%02x%02x%02x%02x-%02x%02x-%02x%02x-%02x%02x-%02x%02x%02x%02x%02x%02x",
-				bytes[0], bytes[1], bytes[2], bytes[3],
-				bytes[4], bytes[5], bytes[6], bytes[7],
-				bytes[8], bytes[9], bytes[10], bytes[11],
-				bytes[12], bytes[13], bytes[14], bytes[15]);
-			return boost::json::string(uuidStr);
+			oss << std::hex << std::setfill('0') << std::setw(2) << static_cast<int>(byte);
 		}
-		else
-		{
-			std::string str(bytes.begin(), bytes.end());
-			return boost::json::string(str);
-		}
+		oss << "\"";
+		break;
 	}
+
 	case avro::AVRO_RECORD:
 	{
-		// Рекурсивная обработка вложенных record
-		boost::json::object obj;
-		const avro::GenericRecord& record = datum.value<avro::GenericRecord>();
-		const avro::NodePtr& schema = record.schema();
-		size_t fieldCount = record.fieldCount();
-		for (size_t i = 0; i < fieldCount; ++i)
+		const auto& record = datum.value<avro::GenericRecord>();
+		oss << "{";
+		bool first = true;
+		for (size_t i = 0; i < record.fieldCount(); ++i)
 		{
-			std::string fieldName = schema->nameAt(i);
-			const avro::GenericDatum& fieldDatum = record.fieldAt(i);
-			obj[fieldName] = convertAvroDatumToJson(fieldDatum);
+			if (!first) oss << ",";
+			first = false;
+			oss << "\"" << escapeJsonString(record.schema()->nameAt(i)) << "\":";
+			oss << convertAvroDatumToJsonString(record.fieldAt(i));
 		}
-		return obj;
+		oss << "}";
+		break;
 	}
+
 	case avro::AVRO_ENUM:
 	{
-		// Enum возвращается как строка-символ
-		const avro::GenericEnum& enumVal = datum.value<avro::GenericEnum>();
-		return boost::json::string(enumVal.symbol());
+		const auto& enumVal = datum.value<avro::GenericEnum>();
+		oss << "\"" << escapeJsonString(enumVal.symbol()) << "\"";
+		break;
 	}
+
 	case avro::AVRO_ARRAY:
 	{
-		// Массив элементов
-		boost::json::array arr;
-		const avro::GenericArray& avroArray = datum.value<avro::GenericArray>();
-		for (const auto& elem : avroArray.value())
+		const auto& array = datum.value<avro::GenericArray>();
+		oss << "[";
+		bool first = true;
+		for (const auto& item : array.value())
 		{
-			arr.push_back(convertAvroDatumToJson(elem));
+			if (!first) oss << ",";
+			first = false;
+			oss << convertAvroDatumToJsonString(item);
 		}
-		return arr;
+		oss << "]";
+		break;
 	}
+
 	case avro::AVRO_MAP:
 	{
-		// Map как JSON объект
-		boost::json::object obj;
-		const avro::GenericMap& avroMap = datum.value<avro::GenericMap>();
-		for (const auto& pair : avroMap.value())
+		const auto& map = datum.value<avro::GenericMap>();
+		oss << "{";
+		bool first = true;
+		for (const auto& kv : map.value())
 		{
-			obj[pair.first] = convertAvroDatumToJson(pair.second);
+			if (!first) oss << ",";
+			first = false;
+			oss << "\"" << escapeJsonString(kv.first) << "\":";
+			oss << convertAvroDatumToJsonString(kv.second);
 		}
-		return obj;
+		oss << "}";
+		break;
 	}
+
+	case avro::AVRO_UNION:
+	{
+		const auto& unionDatum = datum.value<avro::GenericUnion>().datum();
+		oss << convertAvroDatumToJsonString(unionDatum);
+		break;
+	}
+
 	default:
-		return nullptr;
+		oss << "null";
+		break;
 	}
+
+	return oss.str();
 }
 
 variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const variant_t& schemaJsonName, const variant_t& asJson)
@@ -5037,7 +5097,6 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 		else if (std::holds_alternative<std::string>(avroData))
 		{
 			const std::string& str = std::get<std::string>(avroData);
-			// Используем messageData для временного буфера
 			messageData.assign(str.begin(), str.end());
 			dataPtr = &messageData;
 			dataSize = messageData.size();
@@ -5054,9 +5113,22 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 			return std::string("");
 		}
 
+		// Безопасное получение параметров
+		bool returnAsJson = true;
+		if (std::holds_alternative<bool>(asJson))
+		{
+			returnAsJson = std::get<bool>(asJson);
+		}
+
+		std::string schemaName;
+		if (std::holds_alternative<std::string>(schemaJsonName))
+		{
+			schemaName = std::get<std::string>(schemaJsonName);
+		}
+
 		// Создаём поток для чтения из памяти
-		std::unique_ptr<avro::InputStream> in = std::unique_ptr<avro::InputStream>(
-			new MemoryInputStream(reinterpret_cast<const uint8_t*>(dataPtr->data()), dataSize));
+		std::unique_ptr<avro::InputStream> in = avro::memoryInputStream(
+			reinterpret_cast<const uint8_t*>(dataPtr->data()), dataSize);
 
 		// Создаём DataFileReader
 		avro::DataFileReader<avro::GenericDatum> reader(std::move(in));
@@ -5064,8 +5136,7 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 		// Получаем схему из файла
 		avro::ValidSchema schema = reader.dataSchema();
 
-		// Проверяем, нужно ли использовать схему из карты
-		std::string schemaName = std::get<std::string>(schemaJsonName);
+		// Используем схему из карты, если указана
 		if (!schemaName.empty())
 		{
 			auto it = schemesMap.find(schemaName);
@@ -5075,52 +5146,147 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 			}
 		}
 
-		bool returnAsJson = std::get<bool>(asJson);
-
-		if (returnAsJson)
+		// Читаем все записи
+		std::vector<avro::GenericDatum> records;
+		avro::GenericDatum datum(schema);
+		while (reader.read(datum))
 		{
-			// Конвертируем в JSON (стандартный формат - массив объектов или один объект)
-			std::vector<avro::GenericDatum> records;
+			records.push_back(datum);
+			datum = avro::GenericDatum(schema);
+		}
 
-			// Читаем все записи
-			avro::GenericDatum datum(schema);
-			while (reader.read(datum))
-			{
-				records.push_back(datum);
-			}
-
-			if (records.empty())
+		if (records.empty())
+		{
+			if (returnAsJson)
 			{
 				return std::string("{}");
 			}
+			else
+			{
+				return std::vector<char>();
+			}
+		}
 
-			// Если одна запись - возвращаем объект, если несколько - массив
+		if (returnAsJson)
+		{
+			// Конвертируем в JSON
 			if (records.size() == 1)
 			{
-				// Одна запись - возвращаем как объект
-				boost::json::value result = convertAvroDatumToJson(records[0]);
-				return boost::json::serialize(result);
+				return convertAvroDatumToJsonString(records[0]);
 			}
 			else
 			{
-				// Несколько записей - возвращаем как массив
-				boost::json::array resultArray;
+				std::ostringstream oss;
+				oss << "[";
+				bool first = true;
 				for (const auto& record : records)
 				{
-					resultArray.push_back(convertAvroDatumToJson(record));
+					if (!first) oss << ",";
+					first = false;
+					oss << convertAvroDatumToJsonString(record);
 				}
-				return boost::json::serialize(resultArray);
+				oss << "]";
+				return oss.str();
 			}
 		}
 		else
 		{
-			// Возвращаем бинарные данные как есть
-			return *dataPtr;
+			// Возвращаем raw Avro данные (без OCF контейнера)
+			std::unique_ptr<avro::OutputStream> out = avro::memoryOutputStream();
+			avro::EncoderPtr encoder = avro::binaryEncoder();
+			encoder->init(*out);
+
+			for (const auto& record : records)
+			{
+				avro::encode(*encoder, record);
+			}
+			encoder->flush();
+
+			// Копируем данные из output stream
+			std::unique_ptr<avro::InputStream> inStream = avro::memoryInputStream(*out);
+			const uint8_t* data;
+			size_t len;
+			std::vector<char> result;
+			while (inStream->next(&data, &len))
+			{
+				result.insert(result.end(), data, data + len);
+			}
+			return result;
 		}
 	}
-	catch (std::exception const& ex)
+	catch (const avro::Exception& ex)
+	{
+		msg_err = "AVRO error: ";
+		msg_err += ex.what();
+		return std::string("");
+	}
+	catch (const std::exception& ex)
 	{
 		msg_err = "Error decoding AVRO: ";
+		msg_err += ex.what();
+		return std::string("");
+	}
+	catch (...)
+	{
+		msg_err = "Unknown error decoding AVRO";
+		return std::string("");
+	}
+}
+
+variant_t SimpleKafka1C::getAvroSchema(const variant_t& avroData)
+{
+	try
+	{
+		// Получаем бинарные данные
+		const std::vector<char>* dataPtr = nullptr;
+		size_t dataSize = 0;
+
+		if (std::holds_alternative<std::vector<char>>(avroData))
+		{
+			dataPtr = &std::get<std::vector<char>>(avroData);
+			dataSize = dataPtr->size();
+		}
+		else if (std::holds_alternative<std::string>(avroData))
+		{
+			const std::string& str = std::get<std::string>(avroData);
+			messageData.assign(str.begin(), str.end());
+			dataPtr = &messageData;
+			dataSize = messageData.size();
+		}
+		else
+		{
+			msg_err = u8"Неверный тип данных для avroData. Ожидается строка или двоичные данные";
+			return std::string("");
+		}
+
+		if (dataSize == 0)
+		{
+			msg_err = u8"AVRO данные пусты";
+			return std::string("");
+		}
+
+		// Создаём поток для чтения
+		std::unique_ptr<avro::InputStream> in = avro::memoryInputStream(
+			reinterpret_cast<const uint8_t*>(dataPtr->data()), dataSize);
+
+		// Создаём DataFileReader
+		avro::DataFileReader<avro::GenericDatum> reader(std::move(in));
+
+		// Получаем схему и возвращаем как JSON строку
+		avro::ValidSchema schema = reader.dataSchema();
+		std::ostringstream oss;
+		schema.toJson(oss);
+		return oss.str();
+	}
+	catch (const avro::Exception& ex)
+	{
+		msg_err = "AVRO error: ";
+		msg_err += ex.what();
+		return std::string("");
+	}
+	catch (const std::exception& ex)
+	{
+		msg_err = "Error getting AVRO schema: ";
 		msg_err += ex.what();
 		return std::string("");
 	}
