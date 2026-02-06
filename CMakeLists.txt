@@ -32,7 +32,17 @@ list(APPEND SOURCE_FILES
         src/Component.cpp
         src/Component.h
         src/SimpleKafka1C.cpp
-        src/SimpleKafka1C.h)
+        src/SimpleKafka1C.h
+        src/utils.cpp
+        src/utils.h
+        src/producer_methods.cpp
+        src/consumer_methods.cpp
+        src/admin_topics.cpp
+        src/admin_metadata.cpp
+        src/admin_groups.cpp
+        src/avro_methods.cpp
+        src/schema_registry_methods.cpp
+        src/protobuf_methods.cpp)
 
 add_library(${TARGET} SHARED ${SOURCE_FILES})
 
@@ -120,6 +130,11 @@ target_link_libraries(${TARGET} PRIVATE CURL::libcurl)
 
 # Link protobuf (abseil and utf8_range are bundled with protobuf in vcpkg static build)
 target_link_libraries(${TARGET} PRIVATE protobuf::libprotobuf)
+
+# Exclude dynamic abseil library to avoid conflicts with static protobuf
+if(MSVC)
+    target_link_options(${TARGET} PRIVATE "/NODEFAULTLIB:abseil_dll.lib")
+endif()
 
 target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
 

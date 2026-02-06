@@ -5,6 +5,71 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.2] - 2026-02-06
+
+### Изменено
+
+#### Рефакторинг архитектуры Admin API
+Файл `admin_methods.cpp` (2385 строк) разделён на три логических модуля для улучшения читаемости и сопровождаемости:
+
+- **`admin_topics.cpp`** (~600 строк) - управление топиками:
+  - `AdminClientScope` - RAII класс для Admin API
+  - `getListOfTopics`, `createTopic`, `deleteTopic`
+  - `deleteRecords`, `getTopicConfig`, `setTopicConfig`
+
+- **`admin_metadata.cpp`** (~450 строк) - метаинформация о кластере:
+  - `getClusterInfo`, `getBrokerInfo`, `getTopicMetadata`
+  - `getPartitionWatermarks`, `pingBroker`
+  - `getPartitionMessageCount`, `getBuiltinFeatures`
+
+- **`admin_groups.cpp`** (~700 строк) - управление consumer groups:
+  - `getConsumerLag`, `getTopicConsumerGroups`
+  - `getConsumerCurrentGroupOffset`, `getConsumerGroupOffsets`
+  - `deleteConsumerGroup`, `resetConsumerGroupOffsets`
+  - `seekToBeginning`, `seekToEnd`, `seekToTimestamp`
+  - `assign`, `getAssignment`, `unassign`
+
+### Добавлено
+
+#### Валидация входных данных
+Добавлены функции валидации в `utils.h/cpp` для раннего обнаружения ошибок:
+
+- `isValidUrl(url)` - проверка URL для Schema Registry (http/https схема, корректный формат)
+- `isValidJson(json, errorMsg)` - проверка корректности JSON с диагностикой ошибки
+- `isValidTopicName(topicName, errorMsg)` - проверка имени топика по правилам Kafka:
+  - Максимум 249 символов
+  - Допустимые символы: a-z, A-Z, 0-9, '.', '_', '-'
+  - Запрещены имена "." и ".."
+- `isValidBrokerAddress(address, errorMsg)` - проверка адреса брокера (host:port)
+- `isValidBrokerList(brokerList, errorMsg)` - проверка списка брокеров (разделитель запятая)
+- `isValidPartition(partition, errorMsg)` - проверка номера партиции (>= -1)
+- `isValidReplicationFactor(factor, errorMsg)` - проверка фактора репликации (1-32767)
+- `isValidConsumerGroupId(groupId, errorMsg)` - проверка ID группы консьюмеров
+
+**Валидация интегрирована в методы:**
+- `initProducer`, `initConsumer` - проверка адресов брокеров
+- `createTopic` - проверка брокеров, имени топика, партиций, репликации
+- `deleteTopic`, `deleteRecords`, `setTopicConfig` - проверка брокеров, имени топика, JSON
+- `getConsumerLag`, `deleteConsumerGroup` - проверка брокеров, группы консьюмеров
+- `produceBatch`, `assign` - проверка JSON
+- Schema Registry API (`registerSchema`, `getSchemaById`, и др.) - проверка URL
+
+### Исправлено
+
+#### Утечки памяти
+- Добавлено использование `std::unique_ptr` для `RdKafka::Producer` и `RdKafka::Topic` в admin-методах
+- Добавлено использование `std::unique_ptr` для `RdKafka::TopicPartition` в методах seek
+- Добавлена очистка `cl_rebalance_cb.offsets` в деструкторе `SimpleKafka1C`
+- Расширено использование RAII через `AdminClientScope` во всех admin-операциях
+
+### Техническая информация
+- Удалён монолитный файл `admin_methods.cpp`
+- CMakeLists.txt обновлён с новыми исходными файлами
+- Добавлено ~250 строк кода валидации с использованием `std::regex`
+- Улучшена диагностика ошибок с информативными сообщениями на русском языке
+
+---
+
 ## [1.8.1] - 2026-01-28
 
 ### Добавлено

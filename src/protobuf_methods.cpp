@@ -1,43 +1,185 @@
-// Protobuf methods implementation - to be appended to SimpleKafka1C.cpp
+// Protobuf serialization/deserialization methods for SimpleKafka1C
+
+#include <boost/json.hpp>
+
+#include <google/protobuf/descriptor.h>
+#include <google/protobuf/message.h>
+#include <google/protobuf/dynamic_message.h>
+#include <google/protobuf/compiler/parser.h>
+#include <google/protobuf/io/tokenizer.h>
+
+#include <fstream>
+#include <thread>
+#include <chrono>
+
+#include "SimpleKafka1C.h"
+#include "utils.h"
+
+// Undefine Windows API macros that conflict with protobuf
+#ifdef _WINDOWS
+#undef GetMessage
+#endif
+
+//================================== Protobuf helpers ===================================
+
+// Helper to convert JSON value to protobuf field
+static bool SetProtobufFieldFromJson(google::protobuf::Message* message,
+	const google::protobuf::FieldDescriptor* field,
+	const boost::json::value& json_value)
+{
+	const google::protobuf::Reflection* reflection = message->GetReflection();
+
+	try {
+		switch (field->type()) {
+		case google::protobuf::FieldDescriptor::TYPE_STRING:
+			if (json_value.is_string())
+				reflection->SetString(message, field, std::string(json_value.as_string()));
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_INT32:
+		case google::protobuf::FieldDescriptor::TYPE_SINT32:
+		case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+			if (json_value.is_int64())
+				reflection->SetInt32(message, field, static_cast<int32_t>(json_value.as_int64()));
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_INT64:
+		case google::protobuf::FieldDescriptor::TYPE_SINT64:
+		case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+			if (json_value.is_int64())
+				reflection->SetInt64(message, field, json_value.as_int64());
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_UINT32:
+		case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+			if (json_value.is_uint64())
+				reflection->SetUInt32(message, field, static_cast<uint32_t>(json_value.as_uint64()));
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_UINT64:
+		case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+			if (json_value.is_uint64())
+				reflection->SetUInt64(message, field, json_value.as_uint64());
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+			if (json_value.is_double())
+				reflection->SetDouble(message, field, json_value.as_double());
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+			if (json_value.is_double())
+				reflection->SetFloat(message, field, static_cast<float>(json_value.as_double()));
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_BOOL:
+			if (json_value.is_bool())
+				reflection->SetBool(message, field, json_value.as_bool());
+			break;
+		case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+		{
+			if (json_value.is_object()) {
+				google::protobuf::Message* sub_message = reflection->MutableMessage(message, field);
+				const boost::json::object& obj = json_value.as_object();
+				const google::protobuf::Descriptor* sub_descriptor = sub_message->GetDescriptor();
+				for (auto& kv : obj) {
+					const google::protobuf::FieldDescriptor* sub_field =
+						sub_descriptor->FindFieldByName(std::string(kv.key()));
+					if (sub_field) {
+						SetProtobufFieldFromJson(sub_message, sub_field, kv.value());
+					}
+				}
+			}
+			break;
+		}
+		default:
+			return false;
+		}
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+// Helper to convert protobuf field to JSON value
+static boost::json::value GetJsonFromProtobufField(const google::protobuf::Message& message,
+	const google::protobuf::FieldDescriptor* field)
+{
+	const google::protobuf::Reflection* reflection = message.GetReflection();
+
+	switch (field->type()) {
+	case google::protobuf::FieldDescriptor::TYPE_STRING:
+		return boost::json::string(reflection->GetString(message, field));
+	case google::protobuf::FieldDescriptor::TYPE_INT32:
+	case google::protobuf::FieldDescriptor::TYPE_SINT32:
+	case google::protobuf::FieldDescriptor::TYPE_SFIXED32:
+		return reflection->GetInt32(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_INT64:
+	case google::protobuf::FieldDescriptor::TYPE_SINT64:
+	case google::protobuf::FieldDescriptor::TYPE_SFIXED64:
+		return reflection->GetInt64(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_UINT32:
+	case google::protobuf::FieldDescriptor::TYPE_FIXED32:
+		return reflection->GetUInt32(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_UINT64:
+	case google::protobuf::FieldDescriptor::TYPE_FIXED64:
+		return reflection->GetUInt64(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_DOUBLE:
+		return reflection->GetDouble(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_FLOAT:
+		return reflection->GetFloat(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_BOOL:
+		return reflection->GetBool(message, field);
+	case google::protobuf::FieldDescriptor::TYPE_MESSAGE:
+	{
+		const google::protobuf::Message& sub_message = reflection->GetMessage(message, field);
+		const google::protobuf::Descriptor* sub_descriptor = sub_message.GetDescriptor();
+		boost::json::object obj;
+
+		const google::protobuf::Reflection* sub_reflection = sub_message.GetReflection();
+		for (int i = 0; i < sub_descriptor->field_count(); i++) {
+			const google::protobuf::FieldDescriptor* sub_field = sub_descriptor->field(i);
+			if (sub_reflection->HasField(sub_message, sub_field)) {
+				obj[sub_field->name()] = GetJsonFromProtobufField(sub_message, sub_field);
+			}
+		}
+		return obj;
+	}
+	default:
+		return boost::json::value();
+	}
+}
 
 //================================== Protobuf ==========================================
 
-// Helper class for error collection during proto parsing
-class ProtoErrorCollector : public google::protobuf::io::ErrorCollector
+// ProtobufContext class - encapsulates all protobuf-related objects
+class SimpleKafka1C::ProtobufContext
 {
 public:
-	std::string errors;
+	std::map<std::string, const google::protobuf::Descriptor*> descriptors;
+	google::protobuf::DescriptorPool pool;
+	google::protobuf::DynamicMessageFactory factory;
 
-	void RecordError(int line, int column, const std::string& message) override
-	{
-		errors += "Line " + std::to_string(line) + ", Column " + std::to_string(column) + ": " + message + "\n";
-	}
-
-	void RecordWarning(int line, int column, const std::string& message) override
-	{
-		// Ignore warnings for now
-	}
+	ProtobufContext() : factory(&pool) {}
 };
 
 bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t& protoSchema)
 {
 	try
 	{
+		if (!protoContext)
+		{
+			protoContext = std::make_shared<ProtobufContext>();
+		}
+
 		std::string name = std::get<std::string>(schemaName);
 		std::string schema = std::get<std::string>(protoSchema);
 
 		// Check if schema already exists
-		auto it = protoDescriptors.find(name);
-		if (it != protoDescriptors.end())
+		auto it = protoContext->descriptors.find(name);
+		if (it != protoContext->descriptors.end())
 		{
 			// Schema already exists, skip
 			return true;
 		}
 
 		// Parse the .proto schema
-		google::protobuf::io::ArrayInputStream input(schema.data(), schema.size());
-		ProtoErrorCollector errorCollector;
-		google::protobuf::io::Tokenizer tokenizer(&input, &errorCollector);
+		google::protobuf::io::ArrayInputStream input(schema.data(), static_cast<int>(schema.size()));
+		google::protobuf::io::Tokenizer tokenizer(&input, nullptr);
 
 		google::protobuf::compiler::Parser parser;
 		google::protobuf::FileDescriptorProto fileDescProto;
@@ -45,12 +187,12 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 
 		if (!parser.Parse(&tokenizer, &fileDescProto))
 		{
-			msg_err = u8"Ошибка парсинга proto схемы: " + errorCollector.errors;
+			msg_err = u8"Ошибка парсинга proto схемы";
 			return false;
 		}
 
 		// Build descriptor from FileDescriptorProto
-		const google::protobuf::FileDescriptor* fileDesc = protoPool->BuildFile(fileDescProto);
+		const google::protobuf::FileDescriptor* fileDesc = protoContext->pool.BuildFile(fileDescProto);
 		if (!fileDesc)
 		{
 			msg_err = u8"Не удалось построить дескриптор из proto схемы";
@@ -61,8 +203,7 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 		if (fileDesc->message_type_count() > 0)
 		{
 			const google::protobuf::Descriptor* descriptor = fileDesc->message_type(0);
-			protoDescriptors[name] = std::shared_ptr<google::protobuf::Descriptor>(
-				const_cast<google::protobuf::Descriptor*>(descriptor), [](google::protobuf::Descriptor*) {});
+			protoContext->descriptors[name] = descriptor;
 		}
 		else
 		{
@@ -86,21 +227,27 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 
 	try
 	{
+		if (!protoContext)
+		{
+			msg_err = u8"Protobuf контекст не инициализирован";
+			return false;
+		}
+
 		std::string name = std::get<std::string>(schemaName);
 		std::string jsonData = std::get<std::string>(msgJson);
 
 		// Get descriptor
-		auto it = protoDescriptors.find(name);
-		if (it == protoDescriptors.end())
+		auto it = protoContext->descriptors.find(name);
+		if (it == protoContext->descriptors.end())
 		{
 			msg_err = u8"Схема protobuf не найдена: " + name;
 			return false;
 		}
 
-		const google::protobuf::Descriptor* descriptor = it->second.get();
+		const google::protobuf::Descriptor* descriptor = it->second;
 
 		// Create dynamic message
-		const google::protobuf::Message* prototype = protoFactory->GetPrototype(descriptor);
+		const google::protobuf::Message* prototype = protoContext->factory.GetPrototype(descriptor);
 		if (!prototype)
 		{
 			msg_err = u8"Не удалось создать прототип сообщения";
@@ -109,14 +256,29 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 
 		std::unique_ptr<google::protobuf::Message> message(prototype->New());
 
-		// Parse JSON to protobuf
-		google::protobuf::util::JsonParseOptions options;
-		options.ignore_unknown_fields = false;
+		// Parse JSON to protobuf using boost::json
+		try {
+			boost::json::value json_val = boost::json::parse(jsonData);
+			if (!json_val.is_object()) {
+				msg_err = u8"JSON должен быть объектом";
+				return false;
+			}
 
-		auto status = google::protobuf::util::JsonStringToMessage(jsonData, message.get(), options);
-		if (!status.ok())
-		{
-			msg_err = u8"Ошибка преобразования JSON в protobuf: " + std::string(status.message());
+			const boost::json::object& json_obj = json_val.as_object();
+			for (auto& kv : json_obj) {
+				const google::protobuf::FieldDescriptor* field =
+					descriptor->FindFieldByName(std::string(kv.key()));
+				if (field) {
+					if (!SetProtobufFieldFromJson(message.get(), field, kv.value())) {
+						msg_err = u8"Ошибка установки поля: " + std::string(kv.key());
+						return false;
+					}
+				}
+			}
+		}
+		catch (const std::exception& e) {
+			msg_err = u8"Ошибка парсинга JSON: ";
+			msg_err += e.what();
 			return false;
 		}
 
@@ -164,6 +326,12 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 {
 	try
 	{
+		if (!protoContext)
+		{
+			msg_err = u8"Protobuf контекст не инициализирован";
+			return std::string("");
+		}
+
 		std::string name = std::get<std::string>(schemaName);
 
 		// Get binary data
@@ -193,17 +361,17 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		}
 
 		// Get descriptor
-		auto it = protoDescriptors.find(name);
-		if (it == protoDescriptors.end())
+		auto it = protoContext->descriptors.find(name);
+		if (it == protoContext->descriptors.end())
 		{
 			msg_err = u8"Схема protobuf не найдена: " + name;
 			return std::string("");
 		}
 
-		const google::protobuf::Descriptor* descriptor = it->second.get();
+		const google::protobuf::Descriptor* descriptor = it->second;
 
 		// Create dynamic message
-		const google::protobuf::Message* prototype = protoFactory->GetPrototype(descriptor);
+		const google::protobuf::Message* prototype = protoContext->factory.GetPrototype(descriptor);
 		if (!prototype)
 		{
 			msg_err = u8"Не удалось создать прототип сообщения";
@@ -223,20 +391,29 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 
 		if (returnAsJson)
 		{
-			// Convert to JSON
-			std::string jsonOutput;
-			google::protobuf::util::JsonPrintOptions options;
-			options.add_whitespace = false;
-			options.preserve_proto_field_names = true;
+			// Convert to JSON using boost::json
+			try {
+				boost::json::object json_obj;
 
-			auto status = google::protobuf::util::MessageToJsonString(*message, &jsonOutput, options);
-			if (!status.ok())
-			{
-				msg_err = u8"Ошибка преобразования protobuf в JSON: " + std::string(status.message());
+				for (int i = 0; i < descriptor->field_count(); i++)
+				{
+					const google::protobuf::FieldDescriptor* field = descriptor->field(i);
+					const google::protobuf::Reflection* reflection = message->GetReflection();
+
+					if (reflection->HasField(*message, field))
+					{
+						json_obj[field->name()] = GetJsonFromProtobufField(*message, field);
+					}
+				}
+
+				std::string jsonOutput = boost::json::serialize(json_obj);
+				return jsonOutput;
+			}
+			catch (const std::exception& e) {
+				msg_err = u8"Ошибка преобразования protobuf в JSON: ";
+				msg_err += e.what();
 				return std::string("");
 			}
-
-			return jsonOutput;
 		}
 		else
 		{
@@ -334,7 +511,7 @@ int32_t SimpleKafka1C::produceProtobufWithWaitResult(const variant_t& topicName,
 		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
 		if (hProducer->outq_len() > 0)
 		{
-			msg_err = u8"Не доставлено сообщений - " + hProducer->outq_len();
+			msg_err = u8"Не доставлено сообщений - " + std::to_string(hProducer->outq_len());
 
 			std::ofstream eventFile{};
 			openEventFile(producerLogName, eventFile);

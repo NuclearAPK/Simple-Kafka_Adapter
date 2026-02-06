@@ -9,12 +9,19 @@
 #include <curl/curl.h>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include "Component.h"
+
+// RAII wrapper for RdKafka::Conf to prevent memory leaks
+struct RdKafkaConfDeleter {
+	void operator()(RdKafka::Conf* conf) const { delete conf; }
+};
+using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.1";
+	static constexpr char Version[] = u8"1.8.2";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -350,11 +357,7 @@ public:
 		result.reserve(byteCount_);
 		for (auto it = data_.begin(); it != data_.end(); ++it)
 		{
-			#if defined( __linux__ )
-			const size_t n = std::min(c, chunkSize_);
-			#else
-			const size_t n = min(c, chunkSize_);
-			#endif
+			const size_t n = (std::min)(c, chunkSize_);
 			std::copy(*it, *it + n, std::back_inserter(result));
 			c -= n;
 		}
