@@ -126,6 +126,8 @@ private:
 
     static std::u16string toUTF16String(std::string_view src);
 
+    static std::u16string toUTF16String(std::wstring_view src);
+
     void storeVariable(const std::string &src, tVariant &dst);
 
     void storeVariable(const std::string &src, WCHAR_T **dst);

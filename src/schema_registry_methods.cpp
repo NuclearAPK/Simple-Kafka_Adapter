@@ -91,17 +91,17 @@ std::string SimpleKafka1C::registerSchema(const variant_t& registryUrl, const va
 	std::string schemaStr = std::get<std::string>(schema);
 
 	// Валидация URL
-	if (!isValidUrl(url))
-	{
-		msg_err = u8"Некорректный URL Schema Registry: " + url;
-		return "";
-	}
+	//if (!isValidUrl(url))
+	//{
+	//	msg_err = u8"Некорректный URL Schema Registry: " + url;
+	//	return "";
+	//}
 
 	// Валидация JSON схемы
-	if (!isValidJson(schemaStr, msg_err))
-	{
-		return "";
-	}
+	//if (!isValidJson(schemaStr, msg_err))
+	//{
+	//	return "";
+	//}
 
 	// Убираем trailing slash
 	if (!url.empty() && url.back() == '/')
@@ -126,11 +126,11 @@ std::string SimpleKafka1C::getSchemaById(const variant_t& registryUrl, const var
 	int32_t id = std::get<int32_t>(schemaId);
 
 	// Валидация URL
-	if (!isValidUrl(url))
-	{
-		msg_err = u8"Некорректный URL Schema Registry: " + url;
-		return "";
-	}
+	//if (!isValidUrl(url))
+	//{
+	//	msg_err = u8"Некорректный URL Schema Registry: " + url;
+	//	return "";
+	//}
 
 	// Убираем trailing slash
 	if (!url.empty() && url.back() == '/')
@@ -147,11 +147,11 @@ std::string SimpleKafka1C::getLatestSchema(const variant_t& registryUrl, const v
 	std::string subj = std::get<std::string>(subject);
 
 	// Валидация URL
-	if (!isValidUrl(url))
-	{
-		msg_err = u8"Некорректный URL Schema Registry: " + url;
-		return "";
-	}
+	//if (!isValidUrl(url))
+	//{
+	//	msg_err = u8"Некорректный URL Schema Registry: " + url;
+	//	return "";
+	//}
 
 	// Убираем trailing slash
 	if (!url.empty() && url.back() == '/')
@@ -168,11 +168,11 @@ std::string SimpleKafka1C::getSchemaVersions(const variant_t& registryUrl, const
 	std::string subj = std::get<std::string>(subject);
 
 	// Валидация URL
-	if (!isValidUrl(url))
-	{
-		msg_err = u8"Некорректный URL Schema Registry: " + url;
-		return "";
-	}
+	//if (!isValidUrl(url))
+	//{
+	//	msg_err = u8"Некорректный URL Schema Registry: " + url;
+	//	return "";
+	//}
 
 	// Убираем trailing slash
 	if (!url.empty() && url.back() == '/')
@@ -190,11 +190,11 @@ bool SimpleKafka1C::deleteSchema(const variant_t& registryUrl, const variant_t& 
 	std::string ver = std::get<std::string>(version);
 
 	// Валидация URL
-	if (!isValidUrl(url))
-	{
-		msg_err = u8"Некорректный URL Schema Registry: " + url;
-		return false;
-	}
+	//if (!isValidUrl(url))
+	//{
+	//	msg_err = u8"Некорректный URL Schema Registry: " + url;
+	//	return false;
+	//}
 
 	// Убираем trailing slash
 	if (!url.empty() && url.back() == '/')

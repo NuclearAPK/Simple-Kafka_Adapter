@@ -10,7 +10,13 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <mutex>
+#include <string_view>
 #include "Component.h"
+
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+#include <openssl/provider.h>
+#endif
 
 // RAII wrapper for RdKafka::Conf to prevent memory leaks
 struct RdKafkaConfDeleter {
@@ -21,7 +27,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.2";
+	static constexpr char Version[] = u8"1.8.3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -121,8 +127,15 @@ private:
 	std::string getParameters();
 	bool setPartitioner(const variant_t &partitionerType);
 
-	std::string clientID();
-	std::string extensionName() override;
+		std::string clientID();
+		std::string extensionName() override;
+		bool isSslProtocolConfigured() const;
+		std::string getSettingValue(std::string_view key) const;
+		bool hasSettingKey(std::string_view key) const;
+		bool prepareSslRuntime(std::string& error);
+		bool applyKafkaSettings(RdKafka::Conf* conf, std::string& error, bool* statisticsOn = nullptr);
+		bool applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error);
+		std::string enrichSslError(std::string_view baseError) const;
 
 	// producer
 	bool initProducer(const variant_t &brokers);
@@ -224,7 +237,7 @@ private:
 
 	// converting a message to avro format
 	bool putAvroSchema(const variant_t &schemaJsonName, const variant_t &schemaJson);
-	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName);
+	bool convertToAvroFormat(const variant_t &msgJson, const variant_t &schemaJsonName, const variant_t &format, const variant_t &schemaId);
 	bool saveAvroFile(const variant_t &fileName);
 	variant_t decodeAvroMessage(const variant_t &avroData, const variant_t &schemaJsonName, const variant_t &asJson);
 	variant_t getAvroSchema(const variant_t &avroData);
@@ -242,30 +255,32 @@ private:
 		std::string Value;
 	};
 
-	// RAII class для управления Admin API ресурсами
-	class AdminClientScope {
-	public:
-		AdminClientScope(const std::string& brokers,
-		                 const std::vector<KafkaSettings>& settings,
-		                 rd_kafka_type_t type = RD_KAFKA_PRODUCER);
-		~AdminClientScope();
+		// RAII class для управления Admin API ресурсами
+		class AdminClientScope {
+		public:
+			AdminClientScope(SimpleKafka1C* owner,
+			                 const std::string& brokers,
+			                 const std::vector<KafkaSettings>& settings,
+			                 rd_kafka_type_t type = RD_KAFKA_PRODUCER);
+			~AdminClientScope();
 
 		bool isValid() const { return rk != nullptr; }
 		rd_kafka_t* get() const { return rk; }
 		rd_kafka_queue_t* queue() const { return rkqu; }
 		const std::string& error() const { return errstr_msg; }
 
-	private:
-		rd_kafka_t* rk = nullptr;
-		rd_kafka_queue_t* rkqu = nullptr;
-		std::string errstr_msg;
-	};
+		private:
+			SimpleKafka1C* owner = nullptr;
+			rd_kafka_t* rk = nullptr;
+			rd_kafka_queue_t* rkqu = nullptr;
+			std::string errstr_msg;
+		};
 
 	class clEventCb : public RdKafka::EventCb
 	{
 	public:
 		unsigned pid;
-		char *formatLogFiles;
+		std::string formatLogFiles;
 		std::string logDir;
 		std::string consumerLogName;
 		std::string statLogName;
@@ -280,7 +295,7 @@ private:
 	public:
 		unsigned pid;
 		int32_t delivered;
-		char *formatLogFiles;
+		std::string formatLogFiles;
 		std::string logDir;
 		std::string producerLogName;
 		std::string clientid;
@@ -299,9 +314,15 @@ private:
 			std::vector<RdKafka::TopicPartition *> &partitions);
 	};
 
-	std::vector<KafkaSettings> settings;
+		std::vector<KafkaSettings> settings;
 
-	clEventCb cl_event_cb;
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+		std::vector<std::string> loadedSslProviders;
+		std::vector<OSSL_PROVIDER*> loadedSslProviderHandles;
+		mutable std::mutex sslRuntimeMutex;
+#endif
+
+		clEventCb cl_event_cb;
 	clDeliveryReportCb cl_dr_cb;
 	clRebalanceCb cl_rebalance_cb;
 };

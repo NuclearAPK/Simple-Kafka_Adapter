@@ -23,14 +23,10 @@ std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 	// создаем конфигурацию
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), result))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
-		{
-			msg_err = result;
-			return "";
-		}
+		msg_err = result;
+		return "";
 	}
 
 	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
@@ -43,7 +39,7 @@ std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания клиента: " + result;
+		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
 	}
 
@@ -95,14 +91,10 @@ std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant
 	// создаем конфигурацию
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), result))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
-		{
-			msg_err = result;
-			return "";
-		}
+		msg_err = result;
+		return "";
 	}
 
 	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
@@ -115,7 +107,7 @@ std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания клиента: " + result;
+		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
 	}
 
@@ -201,13 +193,9 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), msg_err))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-		{
-			return result;
-		}
+		return result;
 	}
 
 	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
@@ -225,7 +213,7 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания временного продюсера";
+		msg_err = enrichSslError(std::string(u8"Ошибка создания временного продюсера: ") + msg_err);
 		return result;
 	}
 
@@ -351,14 +339,10 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 	// создаем конфигурацию
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), result))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
-		{
-			msg_err = result;
-			return "";
-		}
+		msg_err = result;
+		return "";
 	}
 
 	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
@@ -378,7 +362,7 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания клиента: " + result;
+		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
 	}
 
@@ -414,14 +398,10 @@ bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeou
 	// создаем конфигурацию
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), result))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
-		{
-			msg_err = result;
-			return false;
-		}
+		msg_err = result;
+		return false;
 	}
 
 	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
@@ -434,7 +414,7 @@ bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeou
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка подключения к брокеру: " + result;
+		msg_err = enrichSslError(std::string(u8"Ошибка подключения к брокеру: ") + result);
 		return false;
 	}
 
@@ -468,14 +448,10 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
 	// создаем конфигурацию
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), result))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, result) != RdKafka::Conf::CONF_OK)
-		{
-			msg_err = result;
-			return -1.0;
-		}
+		msg_err = result;
+		return -1.0;
 	}
 
 	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
@@ -495,7 +471,7 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания клиента: " + result;
+		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return -1.0;
 	}
 

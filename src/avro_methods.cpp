@@ -276,7 +276,7 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 	}
 }
 
-bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_t& schemaJsonName)
+bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_t& schemaJsonName, const variant_t& format, const variant_t& schemaId)
 {
 	avroFile.clear();
 	auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
@@ -299,6 +299,27 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 		return false;
 	}
 
+	// Определяем формат вывода: "" / "ocf" / "raw" / "confluent"
+	std::string fmtStr;
+	if (std::holds_alternative<std::string>(format))
+	{
+		fmtStr = std::get<std::string>(format);
+	}
+
+	int32_t sid = 0;
+	if (std::holds_alternative<int32_t>(schemaId))
+	{
+		sid = std::get<int32_t>(schemaId);
+	}
+
+	if (!fmtStr.empty() && fmtStr != "ocf" && fmtStr != "raw" && fmtStr != "confluent")
+	{
+		msg_err = u8"Неизвестный формат: " + fmtStr + u8". Допустимые значения: ocf, raw, confluent";
+		return false;
+	}
+
+	bool useOcf = fmtStr.empty() || fmtStr == "ocf";
+
 	// Разбираем исходный JSON
 	boost::json::monotonic_resource mr;
 	boost::json::value jsonInput;
@@ -313,12 +334,11 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 		return false;
 	}
 
-	MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);
-	std::unique_ptr<avro::OutputStream> os(memOutStr);
-	avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
-
 	try
 	{
+		// Собираем все записи из JSON
+		std::vector<avro::GenericDatum> records;
+
 		// Определяем формат входных данных:
 		// 1. Объект {...} - одна запись (новый стандартный формат)
 		// 2. Массив [{...}, {...}] - несколько записей (новый стандартный формат)
@@ -372,7 +392,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 					{
 						return false;
 					}
-					writer.write(recordDatum);
+					records.push_back(std::move(recordDatum));
 				}
 			}
 			else
@@ -382,7 +402,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 				{
 					return false;
 				}
-				writer.write(datum);
+				records.push_back(std::move(datum));
 			}
 		}
 		else if (jsonInput.is_array())
@@ -397,7 +417,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 				{
 					return false;
 				}
-				writer.write(recordDatum);
+				records.push_back(std::move(recordDatum));
 			}
 		}
 		else
@@ -406,15 +426,61 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 			return false;
 		}
 
-		writer.flush();
-		memOutStr->snapshot(avroFile);
+		if (useOcf)
+		{
+			// Avro Object Container Format (OCF) через DataFileWriter
+			MemoryOutputStream* memOutStr = new MemoryOutputStream(100000);
+			std::unique_ptr<avro::OutputStream> os(memOutStr);
+			avro::DataFileWriter<avro::GenericDatum> writer(std::move(os), schema);
+
+			for (const auto& record : records)
+			{
+				writer.write(record);
+			}
+
+			writer.flush();
+			memOutStr->snapshot(avroFile);
+			writer.close();
+		}
+		else
+		{
+			// Raw Avro binary encoding
+			std::unique_ptr<avro::OutputStream> out = avro::memoryOutputStream();
+			avro::EncoderPtr encoder = avro::binaryEncoder();
+			encoder->init(*out);
+
+			for (const auto& record : records)
+			{
+				avro::GenericWriter::write(*encoder, record, schema);
+			}
+			encoder->flush();
+
+			// Для Confluent Wire Format: magic byte (0x00) + 4 байта schema ID (big-endian)
+			if (fmtStr == "confluent")
+			{
+				avroFile.resize(5);
+				avroFile[0] = 0x00;
+				avroFile[1] = static_cast<uint8_t>((sid >> 24) & 0xFF);
+				avroFile[2] = static_cast<uint8_t>((sid >> 16) & 0xFF);
+				avroFile[3] = static_cast<uint8_t>((sid >> 8) & 0xFF);
+				avroFile[4] = static_cast<uint8_t>(sid & 0xFF);
+			}
+
+			// Копируем raw Avro данные
+			std::unique_ptr<avro::InputStream> inStream = avro::memoryInputStream(*out);
+			const uint8_t* data;
+			size_t len;
+			while (inStream->next(&data, &len))
+			{
+				avroFile.insert(avroFile.end(), data, data + len);
+			}
+		}
 	}
 	catch (std::exception const& ex)
 	{
 		msg_err += "Error converting to Avro: ";
 		msg_err += ex.what();
 	}
-	writer.close();
 
 	return msg_err.empty();
 }

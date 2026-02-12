@@ -30,7 +30,7 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	cl_dr_cb.logDir = std::get<std::string>(*logDirectory);
-	cl_dr_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
+	cl_dr_cb.formatLogFiles = std::get<std::string>(*formatLogFiles);
 	cl_dr_cb.producerLogName = producerLogName;
 	cl_dr_cb.pid = pid;
 	cl_dr_cb.clientid = clientID();
@@ -47,15 +47,11 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Info: initProducer. brokers-" << tBrokers << std::endl;
 
-	for (size_t i = 0; i < settings.size(); i++)
+	cl_event_cb.statisticsOn = false;
+	if (!applyKafkaSettings(conf.get(), msg_err, &cl_event_cb.statisticsOn))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-		{
-			eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
-			return false;
-		}
-
-		if (settings[i].Key == "statistics.interval.ms") cl_event_cb.statisticsOn = true;
+		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		return false;
 	}
 	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
 	{
@@ -69,6 +65,7 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	hProducer = RdKafka::Producer::create(conf.get(), msg_err);
 	if (!hProducer)
 	{
+		msg_err = enrichSslError(msg_err);
 		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return false;
 	}
@@ -499,7 +496,7 @@ bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const va
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	cl_dr_cb.logDir = std::get<std::string>(*logDirectory);
-	cl_dr_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
+	cl_dr_cb.formatLogFiles = std::get<std::string>(*formatLogFiles);
 	cl_dr_cb.producerLogName = producerLogName;
 	cl_dr_cb.pid = pid;
 	cl_dr_cb.clientid = clientID();
@@ -522,15 +519,11 @@ bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const va
 	}
 
 	// Set additional parameters from settings
-	for (size_t i = 0; i < settings.size(); i++)
+	cl_event_cb.statisticsOn = false;
+	if (!applyKafkaSettings(conf.get(), msg_err, &cl_event_cb.statisticsOn))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-		{
-			if (eventFile.is_open()) eventFile << currentDateTime() << " " << msg_err << std::endl;
-			return false;
-		}
-
-		if (settings[i].Key == "statistics.interval.ms") cl_event_cb.statisticsOn = true;
+		if (eventFile.is_open()) eventFile << currentDateTime() << " " << msg_err << std::endl;
+		return false;
 	}
 
 	// Set bootstrap servers
@@ -549,6 +542,7 @@ bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const va
 
 	if (!hProducer)
 	{
+		msg_err = enrichSslError(msg_err);
 		if (eventFile.is_open()) eventFile << currentDateTime() << " Failed to create producer: " << msg_err << std::endl;
 		return false;
 	}

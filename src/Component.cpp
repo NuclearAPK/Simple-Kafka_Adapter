@@ -111,7 +111,7 @@ const WCHAR_T *Component::GetPropName(long num, long lang_alias) {
     }
 
     WCHAR_T *result = nullptr;
-    storeVariable(std::u16string(reinterpret_cast<const char16_t *>(name->c_str())), &result);
+    storeVariable(toUTF16String(*name), &result);
 
     return result;
 }
@@ -195,7 +195,7 @@ const WCHAR_T *Component::GetMethodName(const long num, const long lang_alias) {
     }
 
     WCHAR_T *result = nullptr;
-    storeVariable(std::u16string(reinterpret_cast<const char16_t *>(name->c_str())), &result);
+    storeVariable(toUTF16String(*name), &result);
 
     return result;
 }
@@ -495,5 +495,14 @@ std::u16string Component::toUTF16String(std::string_view src) {
 #else 
     static std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> conv16;
     return conv16.from_bytes(src.data());
+#endif
+}
+
+std::u16string Component::toUTF16String(std::wstring_view src) {
+#if (defined _WINDOWS && _MSC_VER < 1930)
+    return std::u16string(reinterpret_cast<const char16_t *>(src.data()), src.size());
+#else
+    static std::wstring_convert<std::codecvt_utf8<wchar_t>> conv_wide_to_utf8;
+    return toUTF16String(conv_wide_to_utf8.to_bytes(src.data(), src.data() + src.size()));
 #endif
 }

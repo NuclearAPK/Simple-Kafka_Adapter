@@ -15,23 +15,20 @@
 
 //================================== AdminClientScope =========================================
 
-SimpleKafka1C::AdminClientScope::AdminClientScope(const std::string& brokers,
+SimpleKafka1C::AdminClientScope::AdminClientScope(SimpleKafka1C* owner_,
+                                                   const std::string& brokers,
                                                    const std::vector<KafkaSettings>& settings,
                                                    rd_kafka_type_t type)
+	: owner(owner_)
 {
 	char errstr[512];
 
 	rd_kafka_conf_t* conf = rd_kafka_conf_new();
 
-	// Применяем дополнительные настройки
-	for (const auto& setting : settings)
+	if (!owner || !owner->applyKafkaSettings(conf, errstr_msg))
 	{
-		if (rd_kafka_conf_set(conf, setting.Key.c_str(), setting.Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-		{
-			errstr_msg = errstr;
-			rd_kafka_conf_destroy(conf);
-			return;
-		}
+		rd_kafka_conf_destroy(conf);
+		return;
 	}
 
 	// Устанавливаем bootstrap.servers
@@ -46,7 +43,8 @@ SimpleKafka1C::AdminClientScope::AdminClientScope(const std::string& brokers,
 	rk = rd_kafka_new(type, conf, errstr, sizeof(errstr));
 	if (!rk)
 	{
-		errstr_msg = std::string(u8"Ошибка создания клиента: ") + errstr;
+		errstr_msg = owner ? owner->enrichSslError(std::string(u8"Ошибка создания клиента: ") + errstr)
+		                   : (std::string(u8"Ошибка создания клиента: ") + errstr);
 		return;
 	}
 
@@ -79,14 +77,10 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 
 	std::string tBrokers = std::get<std::string>(brokers);
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf.get(), msg_err))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-		{
-			if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
-			return result;
-		}
+		if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
+		return result;
 	}
 
 	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
@@ -98,7 +92,7 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
 	if (!producer)
 	{
-		msg_err = u8"Ошибка создания фейкового продюсера";
+		msg_err = enrichSslError(std::string(u8"Ошибка создания фейкового продюсера: ") + msg_err);
 		return result;
 	}
 
@@ -165,7 +159,7 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	}
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+		AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
@@ -253,7 +247,7 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	}
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
@@ -353,7 +347,7 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 	}
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
@@ -473,7 +467,7 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
@@ -618,7 +612,7 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 	}
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();

@@ -1,119 +1,163 @@
-﻿cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.20)
 
-# Force static triplet for vcpkg (important for Visual Studio builds)
-if (WIN32)
-    set(VCPKG_TARGET_TRIPLET "x64-windows-static" CACHE STRING "")
-    set(CMAKE_PREFIX_PATH "C:/Sources/vcpkg/installed/x64-windows-static")
-else()
-    set(VCPKG_TARGET_TRIPLET "x64-linux-static" CACHE STRING "")
-    set(CMAKE_PREFIX_PATH "/usr/local/lib/pkgconfig/"
-    "/home/shmell/vcpkg/installed/x64-linux-release/")
-endif ()
+project(SimpleKafka1C LANGUAGES CXX)
 
-# Force static linking (before project())
-#set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>" CACHE STRING "")
+# Allow local find modules for dependencies that ship without CMake configs.
+list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
-project(SimpleKafka1C)
+# -----------------------------
+# Options
+# -----------------------------
+option(CASE_INSENSITIVE "Case insensitive method names" OFF)
+option(OUT_PARAMS        "Support output parameters" OFF)
 
 set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+# Static CRT to match vcpkg x64-windows-static triplet (/MT)
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 set(TARGET SimpleKafka1C)
 
-option(CASE_INSENSITIVE "Case insensitive method names" OFF)
-option(STATIC_CRT "Static CRT linkage" ON)
-option(OUT_PARAMS "Support output parameters" OFF)
-
-list(APPEND SOURCE_FILES
-        src/addin.def
-        src/stdafx.h
-        src/dllmain.cpp
-        src/exports.cpp
-        src/md5.cpp
-        src/md5.h
-        src/Component.cpp
-        src/Component.h
-        src/SimpleKafka1C.cpp
-        src/SimpleKafka1C.h
-        src/utils.cpp
-        src/utils.h
-        src/producer_methods.cpp
-        src/consumer_methods.cpp
-        src/admin_topics.cpp
-        src/admin_metadata.cpp
-        src/admin_groups.cpp
-        src/avro_methods.cpp
-        src/schema_registry_methods.cpp
-        src/protobuf_methods.cpp)
+# -----------------------------
+# Sources
+# -----------------------------
+set(SOURCE_FILES
+    src/addin.def
+    src/stdafx.h
+    src/dllmain.cpp
+    src/exports.cpp
+    src/md5.cpp
+    src/md5.h
+    src/Component.cpp
+    src/Component.h
+    src/SimpleKafka1C.cpp
+    src/SimpleKafka1C.h
+    src/utils.cpp
+    src/utils.h
+    src/producer_methods.cpp
+    src/consumer_methods.cpp
+    src/admin_topics.cpp
+    src/admin_metadata.cpp
+    src/admin_groups.cpp
+    src/avro_methods.cpp
+    src/schema_registry_methods.cpp
+    src/protobuf_methods.cpp
+)
 
 add_library(${TARGET} SHARED ${SOURCE_FILES})
 
-if (WIN32)
-    add_definitions(-DUNICODE -DWIN32 -D_USRDLL -D_CRT_SECURE_NO_WARNINGS -D_CRT_SECURE_NO_DEPRECATE -DADDINCPP_EXPORTS)
-    IF(TARGET_PLATFORM_32)
-        add_definitions(-D_USE_32BIT_TIME_T )
-    ENDIF()
-endif()
-IF (UNIX AND NOT APPLE)
-    set_target_properties(SimpleKafka1C PROPERTIES LINK_FLAGS "-Wl,--no-undefined -Xlinker --version-script -Xlinker /home/shmell/projects/Simple-Kafka_Adapter-main/src/version.script") 
-ENDIF()
-
-add_definitions("-DLIBRDKAFKA_STATICLIB")
-add_definitions("-DPROTOBUF_USE_DLLS=0")
-
+# -----------------------------
+# Target compile definitions
+# -----------------------------
 target_compile_definitions(${TARGET} PRIVATE
-        UNICODE
-        _UNICODE
-        PROTOBUF_USE_DLLS=0)
+    UNICODE
+    _UNICODE
+    LIBRDKAFKA_STATICLIB
+    PROTOBUF_USE_DLLS=0
+    LIBPROTOBUF_EXPORTS=
+)
 
 if (CASE_INSENSITIVE)
     target_compile_definitions(${TARGET} PRIVATE CASE_INSENSITIVE)
-endif ()
+endif()
 
 if (OUT_PARAMS)
     target_compile_definitions(${TARGET} PRIVATE OUT_PARAMS)
-endif ()
+endif()
 
-#adding library
+# -----------------------------
+# Include dirs
+# -----------------------------
+target_include_directories(${TARGET} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# -----------------------------
+# Platform-specific bits
+# -----------------------------
+if (WIN32)
+    target_compile_definitions(${TARGET} PRIVATE
+        WIN32
+        _USRDLL
+        _CRT_SECURE_NO_WARNINGS
+        _CRT_SECURE_NO_DEPRECATE
+        ADDINCPP_EXPORTS
+        _WIN32_WINNT=0x0601
+        _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING
+    )
+    if (MSVC)
+        target_compile_options(${TARGET} PRIVATE /utf-8)
+    endif()
+else()
+    target_compile_options(${TARGET} PRIVATE -Wall -Wextra)
+
+    if (UNIX AND NOT APPLE)
+        target_link_options(${TARGET} PRIVATE
+            "LINKER:--no-undefined"
+            "LINKER:--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/version.script"
+        )
+    endif()
+
+    find_package(Threads REQUIRED)
+    target_link_libraries(${TARGET} PRIVATE Threads::Threads)
+endif()
+
+# -----------------------------
+# Dependencies (vcpkg-friendly)
+# -----------------------------
 set(Boost_USE_STATIC_LIBS ON)
-set(protobuf_MSVC_STATIC_RUNTIME ON)
 set(Protobuf_USE_STATIC_LIBS ON)
 
 find_package(RdKafka CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(ZLIB REQUIRED)
-# Workaround for avro-cpp vcpkg bug: config tries to create alias for non-existent shared target
-# Create a dummy target that will be replaced by the real one if it exists
+
+# Workaround for avro-cpp config alias (some ports expect this target name)
 if(NOT TARGET avro-cpp::avrocpp)
     add_library(avro-cpp::avrocpp INTERFACE IMPORTED)
 endif()
 find_package(avro-cpp CONFIG REQUIRED)
+
 find_package(Boost REQUIRED COMPONENTS json container)
-# Protobuf: we use runtime parsing (no code generation needed)
-# Set protoc path to bypass the check - actual protoc is not used
-if(WIN32)
-    set(Protobuf_PROTOC_EXECUTABLE "C:/Windows/System32/cmd.exe" CACHE FILEPATH "" FORCE)
-else()
-    set(Protobuf_PROTOC_EXECUTABLE "/bin/true" CACHE FILEPATH "" FORCE)
+
+# Protobuf: runtime parsing only (no code generation needed).
+# On Linux, protobuf config may reference absl/utf8_range targets explicitly.
+if(UNIX AND NOT APPLE)
+    find_package(absl CONFIG REQUIRED)
+    find_package(utf8_range CONFIG REQUIRED)
+endif()
+# Work around a vcpkg protobuf export issue where protobuf::protoc is used in
+# protobuf-targets-debug.cmake before it is declared, and then declared again.
+if(UNIX AND NOT APPLE)
+    if(NOT TARGET protobuf::protoc)
+        add_executable(protobuf::protoc IMPORTED GLOBAL)
+    endif()
+    function(add_executable)
+        if(ARGC GREATER 0 AND "${ARGV0}" STREQUAL "protobuf::protoc" AND TARGET protobuf::protoc)
+            return()
+        endif()
+        _add_executable(${ARGV})
+    endfunction()
 endif()
 find_package(Protobuf CONFIG REQUIRED)
-# Note: absl and utf8_range are already linked through protobuf
-# find_package(absl CONFIG REQUIRED)
-# find_package(utf8_range CONFIG REQUIRED)
+
 find_package(CURL REQUIRED)
 
-# Print debug info
-message(STATUS "Protobuf_LIBRARIES: ${Protobuf_LIBRARIES}")
-message(STATUS "Protobuf_INCLUDE_DIRS: ${Protobuf_INCLUDE_DIRS}")
-
-# Force protobuf to be statically linked (critical for Visual Studio)
-add_compile_definitions(PROTOBUF_USE_DLLS=0)
-add_compile_definitions(LIBPROTOBUF_EXPORTS=)
-if (MSVC)
-    # Remove any dynamic linking flags that might be set
-    string(REPLACE "PROTOBUF_USE_DLLS=1" "PROTOBUF_USE_DLLS=0" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    string(REPLACE "/DPROTOBUF_USE_DLLS" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
+# OpenSSL integration for Linux TLS diagnostics and provider loading.
+if(UNIX AND NOT APPLE)
+    find_package(OpenSSL QUIET)
+    if(OpenSSL_FOUND)
+        target_include_directories(${TARGET} PRIVATE ${OPENSSL_INCLUDE_DIR})
+        target_compile_definitions(${TARGET} PRIVATE SIMPLEKAFKA_HAS_OPENSSL=1)
+        target_link_libraries(${TARGET} PRIVATE OpenSSL::Crypto)
+    endif()
 endif()
 
-# Link avro-cpp and its dependencies (prefer static for static builds)
+# -----------------------------
+# Link libraries
+# -----------------------------
 if(TARGET avro-cpp::avrocpp_s)
     target_link_libraries(${TARGET} PRIVATE avro-cpp::avrocpp_s)
 elseif(TARGET avro-cpp::avrocpp_static)
@@ -123,52 +167,41 @@ elseif(TARGET avro-cpp::avrocpp)
 else()
     message(FATAL_ERROR "Could not find avro-cpp target")
 endif()
-target_link_libraries(${TARGET} PRIVATE fmt::fmt ZLIB::ZLIB)
+
+target_link_libraries(${TARGET} PRIVATE
+    fmt::fmt
+    ZLIB::ZLIB
+    RdKafka::rdkafka
+    RdKafka::rdkafka++
+    CURL::libcurl
+    protobuf::libprotobuf
+)
+
+# Boost: keep compatibility with existing usage
 target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
-target_link_libraries(${TARGET} PRIVATE RdKafka::rdkafka RdKafka::rdkafka++)
-target_link_libraries(${TARGET} PRIVATE CURL::libcurl)
 
-# Link protobuf (abseil and utf8_range are bundled with protobuf in vcpkg static build)
-target_link_libraries(${TARGET} PRIVATE protobuf::libprotobuf)
+# Windows system libraries required by static OpenSSL / librdkafka
+if(WIN32)
+    target_link_libraries(${TARGET} PRIVATE bcrypt crypt32 ws2_32)
+endif()
 
-# Exclude dynamic abseil library to avoid conflicts with static protobuf
+# Exclude dynamic abseil library to avoid conflicts with static protobuf (MSVC)
 if(MSVC)
     target_link_options(${TARGET} PRIVATE "/NODEFAULTLIB:abseil_dll.lib")
 endif()
 
-target_include_directories(${TARGET} PRIVATE include ${SOURCES}/include)
-
-if (WIN32)
-    add_definitions("-D_WIN32_WINNT=0x0601")
-    add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-
-    if("${PORT}" STREQUAL "snappy")
-        list(APPEND VCPKG_CMAKE_CONFIGURE_OPTIONS -DSNAPPY_HAVE_SSSE3=ON -DSNAPPY_HAVE_BMI2=ON)
-    endif()
-else()
+# -----------------------------
+# Linux SASL2 (if librdkafka is built with SASL support)
+# -----------------------------
+if (UNIX AND NOT APPLE)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(SASL2 REQUIRED libsasl2)
-
-    target_link_libraries(${TARGET} PRIVATE rdkafka ${SASL2_LIBRARIES})
     target_include_directories(${TARGET} PRIVATE ${SASL2_INCLUDE_DIRS})
-    target_link_libraries(${TARGET} PRIVATE pthread)
-endif ()
+    target_link_libraries(${TARGET} PRIVATE ${SASL2_LIBRARIES})
+endif()
 
-if (WIN32 AND NOT MSVC)
-    message(FATAL_ERROR "Must be compiled with MSVC on Windows")
-endif ()
-
-if (WIN32)
-    if (STATIC_CRT)
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
-        string(REPLACE "/MD" "/MT" CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG}")
-    endif ()
-    target_compile_definitions(${TARGET} PRIVATE
-            _WINDOWS
-            _SILENCE_CXX17_CODECVT_HEADER_DEPRECATION_WARNING)
-    target_compile_options(${TARGET} PRIVATE /utf-8)
-else ()
-    if (CMAKE_COMPILER_IS_GNUCXX)
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -flto -O3 -DNDEBUG -s")
-    endif ()
-endif ()
+# -----------------------------
+# Diagnostics (optional)
+# -----------------------------
+message(STATUS "CMAKE_BUILD_TYPE: ${CMAKE_BUILD_TYPE}")
+message(STATUS "VCPKG_TARGET_TRIPLET: ${VCPKG_TARGET_TRIPLET}")

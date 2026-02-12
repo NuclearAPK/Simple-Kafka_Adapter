@@ -5,6 +5,22 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.3] - 2026-02-11
+
+### Добавлено
+
+#### Выбор формата вывода в `ПреобразоватьВФорматAVRO`
+Метод `ПреобразоватьВФорматAVRO` / `ConvertToAvroFormat` теперь поддерживает три формата вывода через новые необязательные параметры `Формат` и `ИдСхемы`:
+
+- **OCF** (`""` или `"ocf"`) — Avro Object Container Format с заголовком и схемой (поведение по умолчанию, обратная совместимость)
+- **Raw Avro** (`"raw"`) — чистый бинарный Avro без контейнера, подходит для отправки в Kafka при интеграции с внешними системами
+- **Confluent Wire Format** (`"confluent"`) — magic byte + 4 байта schema ID + raw Avro binary, стандартный формат Confluent Platform для работы со Schema Registry
+
+### Исправлено
+- Исправлено поведение компоненты в Ubuntu при подключении к брокеру через SSL
+
+---
+
 ## [1.8.2] - 2026-02-06
 
 ### Изменено
@@ -409,6 +425,8 @@
 
 ---
 
+[1.8.3]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.2...v1.8.3
+[1.8.2]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.0...v1.8.1
 [1.8.0]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.7.1...v1.8.0
 [1.7.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.7.0...v1.7.1

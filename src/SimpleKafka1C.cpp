@@ -1,5 +1,6 @@
 ﻿#include <boost/algorithm/string/split.hpp>          // boost::algorithm::split
 #include <boost/algorithm/string/replace.hpp>
+#include <boost/algorithm/string/classification.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/json.hpp>
 #ifdef _WINDOWS
@@ -10,12 +11,140 @@
 #include <chrono>
 #include <set>
 #include <atomic>
+#include <algorithm>
+#include <cctype>
+#include <fstream>
+#include <sstream>
+#include <cerrno>
+#include <cstring>
 
 #include "md5.h"
 #include "SimpleKafka1C.h"
 #include "utils.h"
 
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+#include <openssl/err.h>
+#include <openssl/pem.h>
+#include <openssl/provider.h>
+#include <openssl/ssl.h>
+#include <openssl/x509.h>
+#endif
+
 // Protobuf helpers moved to protobuf_methods.cpp
+
+namespace {
+std::string trimCopy(const std::string& value)
+{
+	size_t begin = 0;
+	size_t end = value.size();
+	while (begin < end && std::isspace(static_cast<unsigned char>(value[begin])) != 0)
+	{
+		++begin;
+	}
+	while (end > begin && std::isspace(static_cast<unsigned char>(value[end - 1])) != 0)
+	{
+		--end;
+	}
+	return value.substr(begin, end - begin);
+}
+
+std::string toLowerCopy(std::string value)
+{
+	std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+		return static_cast<char>(std::tolower(c));
+	});
+	return value;
+}
+
+bool readTextFile(const std::string& path, std::string& content, std::string& error)
+{
+	std::ifstream input(path, std::ios::in | std::ios::binary);
+	if (!input.is_open())
+	{
+		error = "Cannot open file: " + path + " (" + std::strerror(errno) + ")";
+		return false;
+	}
+
+	std::ostringstream buffer;
+	buffer << input.rdbuf();
+	if (input.bad())
+	{
+		error = "Cannot read file: " + path;
+		return false;
+	}
+
+	content = buffer.str();
+	if (content.empty())
+	{
+		error = "File is empty: " + path;
+		return false;
+	}
+
+	return true;
+}
+
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+std::string collectOpenSslErrors()
+{
+	std::string details;
+	for (unsigned long err = ERR_get_error(); err != 0; err = ERR_get_error())
+	{
+		char text[256] = {0};
+		ERR_error_string_n(err, text, sizeof(text));
+		if (!details.empty())
+		{
+			details += "; ";
+		}
+		details += text;
+	}
+	return details;
+}
+
+bool containsWeakSha1Cert(const std::string& pemPath, std::string& details)
+{
+	if (pemPath.empty())
+	{
+		return false;
+	}
+
+	BIO* bio = BIO_new_file(pemPath.c_str(), "r");
+	if (bio == nullptr)
+	{
+		return false;
+	}
+
+	bool found = false;
+	while (true)
+	{
+		X509* cert = PEM_read_bio_X509(bio, nullptr, nullptr, nullptr);
+		if (cert == nullptr)
+		{
+			break;
+		}
+
+		const int sigNid = X509_get_signature_nid(cert);
+		const char* sigName = OBJ_nid2sn(sigNid);
+		if (sigName != nullptr)
+		{
+			std::string sign = toLowerCopy(sigName);
+			if (sign.find("sha1") != std::string::npos)
+			{
+				found = true;
+				if (details.empty())
+				{
+					details = pemPath + " uses weak signature algorithm: " + sigName;
+				}
+			}
+		}
+		X509_free(cert);
+	}
+
+	BIO_free(bio);
+	ERR_clear_error();
+	return found;
+}
+#endif
+} // namespace
 
 //================================== Events callback ===================================
 
@@ -36,10 +165,10 @@ void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event& event)
 			bufnameST = bufnameST + clientid + "_";
 		}
 
-		eventFile.open(logDir + bufnameCS + std::to_string(pid) + "_" + currentDateTime(formatLogFiles) + ".log", std::ios_base::app);
+			eventFile.open(logDir + bufnameCS + std::to_string(pid) + "_" + currentDateTime(formatLogFiles.c_str()) + ".log", std::ios_base::app);
 		
 		if (statisticsOn) {
-			statFile.open(logDir + bufnameST + std::to_string(pid) + "_" + currentDateTime(formatLogFiles) + ".log", std::ios_base::app);
+				statFile.open(logDir + bufnameST + std::to_string(pid) + "_" + currentDateTime(formatLogFiles.c_str()) + ".log", std::ios_base::app);
 		}		
 	}
 
@@ -92,7 +221,7 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 		{
 			bufname = bufname + clientid + "_";
 		}
-		eventFile.open(logDir + bufname + std::to_string(pid) + "_" + currentDateTime(formatLogFiles) + ".log", std::ios_base::app);
+			eventFile.open(logDir + bufname + std::to_string(pid) + "_" + currentDateTime(formatLogFiles.c_str()) + ".log", std::ios_base::app);
 	}
 
 	if (eventFile.is_open())
@@ -115,13 +244,21 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 
 		eventFile << currentDateTime();
 
-		if (message.key()->length())
+		if (message.key() != nullptr && message.key()->length())
 		{
 			eventFile << " Key:" << *(message.key()) << ", ";
 		}
+		else if (message.payload() != nullptr && message.len() > 0)
+		{
+			MD5 payloadHash;
+			payloadHash.update(static_cast<const char*>(message.payload()),
+			                   static_cast<MD5::size_type>(message.len()));
+			payloadHash.finalize();
+			eventFile << " PayloadMD5:" << payloadHash.hexdigest() << ", ";
+		}
 		else
 		{
-			eventFile << " Hash:" << md5(static_cast<char*>(message.payload())) << ", ";
+			eventFile << " PayloadMD5:<empty>, ";
 		}
 
 		auto result = message.errstr();
@@ -297,7 +434,8 @@ SimpleKafka1C::SimpleKafka1C()
 
 	// AVRO
 	AddMethod(L"PutAvroSchema", L"СохранитьСхемуAVRO", this, &SimpleKafka1C::putAvroSchema);
-	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat);
+	AddMethod(L"ConvertToAvroFormat", L"ПреобразоватьВФорматAVRO", this, &SimpleKafka1C::convertToAvroFormat,
+		{ {2, std::string("")}, {3, int32_t(0)} });
 	AddMethod(L"ProduceAvro", L"ОтправитьСообщениеAVRO", this, &SimpleKafka1C::produceAvro,
 		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
 	AddMethod(L"ProduceAvroWithWaitResult", L"ОтправитьСообщениеAVROСОжиданиемРезультата", this, &SimpleKafka1C::produceAvroWithWaitResult,
@@ -347,6 +485,14 @@ SimpleKafka1C::~SimpleKafka1C()
 		delete offset;
 	}
 	cl_rebalance_cb.offsets.clear();
+
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+	for (OSSL_PROVIDER* provider : loadedSslProviderHandles)
+	{
+		(void)provider;
+	}
+	loadedSslProviderHandles.clear();
+#endif
 
 	// Очистка CURL handle
 	if (curlHandle)
@@ -424,6 +570,331 @@ std::string SimpleKafka1C::clientID()
 	return result;
 }
 
+std::string SimpleKafka1C::getSettingValue(std::string_view key) const
+{
+	for (auto it = settings.rbegin(); it != settings.rend(); ++it)
+	{
+		if (it->Key == key)
+		{
+			return it->Value;
+		}
+	}
+	return "";
+}
+
+bool SimpleKafka1C::hasSettingKey(std::string_view key) const
+{
+	for (auto it = settings.rbegin(); it != settings.rend(); ++it)
+	{
+		if (it->Key == key)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool SimpleKafka1C::isSslProtocolConfigured() const
+{
+	const std::string securityProtocol = toLowerCopy(trimCopy(getSettingValue("security.protocol")));
+	return securityProtocol == "ssl" || securityProtocol == "sasl_ssl";
+}
+
+std::string SimpleKafka1C::enrichSslError(std::string_view baseError) const
+{
+	std::string error(baseError);
+#ifdef SIMPLEKAFKA_HAS_OPENSSL
+	std::string sslDetails = collectOpenSslErrors();
+	if (!sslDetails.empty())
+	{
+		if (!error.empty())
+		{
+			error += " | ";
+		}
+		error += "OpenSSL: ";
+		error += sslDetails;
+	}
+#endif
+	return error;
+}
+
+bool SimpleKafka1C::prepareSslRuntime(std::string& error)
+{
+#if defined(_WIN32)
+	(void)error;
+	return true;
+#endif
+
+	if (!isSslProtocolConfigured())
+	{
+		return true;
+	}
+
+#ifndef SIMPLEKAFKA_HAS_OPENSSL
+	error = "SSL requested, but component was built without OpenSSL runtime integration";
+	return false;
+#else
+	std::lock_guard<std::mutex> lock(sslRuntimeMutex);
+	ERR_clear_error();
+
+	const std::string verification = toLowerCopy(trimCopy(getSettingValue("enable.ssl.certificate.verification")));
+	const bool verificationDisabled = (verification == "false" || verification == "0");
+	const std::string ciphers = toLowerCopy(getSettingValue("ssl.cipher.suites"));
+	const bool explicitSeclevelOverride =
+	    (ciphers.find("@seclevel=0") != std::string::npos || ciphers.find("@seclevel=1") != std::string::npos);
+
+	// Guard against known OpenSSL3/SECLEVEL crashes with legacy SHA1 chains.
+	if (!verificationDisabled && !explicitSeclevelOverride)
+	{
+		std::string weakDetails;
+		const std::string caLocation = trimCopy(getSettingValue("ssl.ca.location"));
+		const std::string certLocation = trimCopy(getSettingValue("ssl.certificate.location"));
+		bool hasWeakSha1 = false;
+		hasWeakSha1 = containsWeakSha1Cert(caLocation, weakDetails) || hasWeakSha1;
+		hasWeakSha1 = containsWeakSha1Cert(certLocation, weakDetails) || hasWeakSha1;
+		if (hasWeakSha1)
+		{
+			error =
+			    "TLS init blocked: weak SHA1 certificate detected (" + weakDetails +
+			    "). On OpenSSL 3 with SECLEVEL=2 this may fail or crash. "
+			    "Use stronger certificates, or explicitly lower SECLEVEL in ssl.cipher.suites, "
+			    "or disable certificate verification.";
+			return false;
+		}
+	}
+
+	const std::string providers = trimCopy(getSettingValue("ssl.providers"));
+	if (!providers.empty())
+	{
+		std::vector<std::string> parsedProviders;
+		boost::algorithm::split(parsedProviders, providers, boost::is_any_of(","));
+		for (std::string providerName : parsedProviders)
+		{
+			providerName = trimCopy(providerName);
+			if (providerName.empty())
+			{
+				continue;
+			}
+			if (std::find(loadedSslProviders.begin(), loadedSslProviders.end(), providerName) != loadedSslProviders.end())
+			{
+				continue;
+			}
+			OSSL_PROVIDER* provider = OSSL_PROVIDER_load(nullptr, providerName.c_str());
+			if (provider == nullptr)
+			{
+				error = "OpenSSL provider load failed: " + providerName;
+				error = enrichSslError(error);
+				return false;
+			}
+			loadedSslProviders.push_back(providerName);
+			loadedSslProviderHandles.push_back(provider);
+		}
+	}
+
+	std::string sigalgs = trimCopy(getSettingValue("ssl.sigalgs.list"));
+	if (!sigalgs.empty())
+	{
+		SSL_CTX* sslCtx = SSL_CTX_new(TLS_client_method());
+		if (sslCtx == nullptr)
+		{
+			error = enrichSslError("SSL_CTX_new() failed during ssl.sigalgs.list validation");
+			return false;
+		}
+
+		const int setRes = SSL_CTX_set1_sigalgs_list(sslCtx, sigalgs.c_str());
+		SSL_CTX_free(sslCtx);
+		if (setRes != 1)
+		{
+			error = "Invalid ssl.sigalgs.list value: " + sigalgs;
+			error = enrichSslError(error);
+			return false;
+		}
+	}
+
+	return true;
+#endif
+}
+
+bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, bool* statisticsOn)
+{
+	if (!prepareSslRuntime(error))
+	{
+		return false;
+	}
+
+#if defined(__linux__) && !defined(_WIN32)
+	const bool linuxSsl = isSslProtocolConfigured();
+#endif
+
+	for (const auto& setting : settings)
+	{
+#if defined(_WIN32)
+		// Linux-only tuning knobs: do not apply on Windows.
+		if (setting.Key == "ssl.providers" || setting.Key == "ssl.sigalgs" || setting.Key == "ssl.sigalgs.list")
+		{
+			continue;
+		}
+#endif
+#if defined(__linux__) && !defined(_WIN32)
+		// On Linux feed PEM contents via ssl.*.pem to avoid file-based SSL_CTX_use_certificate_chain_file path.
+		if (linuxSsl && (setting.Key == "ssl.ca.location" || setting.Key == "ssl.certificate.location" || setting.Key == "ssl.key.location"))
+		{
+			continue;
+		}
+#endif
+
+		if (conf->set(setting.Key, setting.Value, error) != RdKafka::Conf::CONF_OK)
+		{
+			error = enrichSslError(error);
+			return false;
+		}
+		if (statisticsOn != nullptr && setting.Key == "statistics.interval.ms")
+		{
+			*statisticsOn = true;
+		}
+	}
+
+#if defined(__linux__) && !defined(_WIN32)
+	if (isSslProtocolConfigured() && getSettingValue("ssl.providers").empty())
+	{
+		if (conf->set("ssl.providers", "default,legacy", error) != RdKafka::Conf::CONF_OK)
+		{
+			error = enrichSslError(error);
+			return false;
+		}
+	}
+#endif
+
+#if defined(__linux__) && !defined(_WIN32)
+	if (linuxSsl)
+	{
+		auto setPemFromLocation = [&](const std::string& locationKey, const std::string& pemKey) -> bool {
+			if (hasSettingKey(pemKey))
+			{
+				return true;
+			}
+
+			const std::string location = trimCopy(getSettingValue(locationKey));
+			if (location.empty())
+			{
+				return true;
+			}
+
+			std::string pem;
+			if (!readTextFile(location, pem, error))
+			{
+				error = enrichSslError(error);
+				return false;
+			}
+
+			if (conf->set(pemKey, pem, error) != RdKafka::Conf::CONF_OK)
+			{
+				error = enrichSslError(error);
+				return false;
+			}
+			return true;
+		};
+
+		if (!setPemFromLocation("ssl.ca.location", "ssl.ca.pem") ||
+		    !setPemFromLocation("ssl.certificate.location", "ssl.certificate.pem") ||
+		    !setPemFromLocation("ssl.key.location", "ssl.key.pem"))
+		{
+			return false;
+		}
+	}
+#endif
+
+	return true;
+}
+
+bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error)
+{
+	if (!prepareSslRuntime(error))
+	{
+		return false;
+	}
+
+	char errstr[512] = {0};
+#if defined(__linux__) && !defined(_WIN32)
+	const bool linuxSsl = isSslProtocolConfigured();
+#endif
+	for (const auto& setting : settings)
+	{
+#if defined(_WIN32)
+		// Linux-only tuning knobs: do not apply on Windows.
+		if (setting.Key == "ssl.providers" || setting.Key == "ssl.sigalgs" || setting.Key == "ssl.sigalgs.list")
+		{
+			continue;
+		}
+#endif
+#if defined(__linux__) && !defined(_WIN32)
+		// On Linux feed PEM contents via ssl.*.pem to avoid file-based SSL_CTX_use_certificate_chain_file path.
+		if (linuxSsl && (setting.Key == "ssl.ca.location" || setting.Key == "ssl.certificate.location" || setting.Key == "ssl.key.location"))
+		{
+			continue;
+		}
+#endif
+
+		if (rd_kafka_conf_set(conf, setting.Key.c_str(), setting.Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			error = enrichSslError(errstr);
+			return false;
+		}
+	}
+
+#if defined(__linux__) && !defined(_WIN32)
+	if (isSslProtocolConfigured() && getSettingValue("ssl.providers").empty())
+	{
+		if (rd_kafka_conf_set(conf, "ssl.providers", "default,legacy", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+		{
+			error = enrichSslError(errstr);
+			return false;
+		}
+	}
+#endif
+
+#if defined(__linux__) && !defined(_WIN32)
+	if (linuxSsl)
+	{
+		auto setPemFromLocation = [&](const std::string& locationKey, const std::string& pemKey) -> bool {
+			if (hasSettingKey(pemKey))
+			{
+				return true;
+			}
+
+			const std::string location = trimCopy(getSettingValue(locationKey));
+			if (location.empty())
+			{
+				return true;
+			}
+
+			std::string pem;
+			if (!readTextFile(location, pem, error))
+			{
+				error = enrichSslError(error);
+				return false;
+			}
+
+			if (rd_kafka_conf_set(conf, pemKey.c_str(), pem.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+			{
+				error = enrichSslError(errstr);
+				return false;
+			}
+			return true;
+		};
+
+		if (!setPemFromLocation("ssl.ca.location", "ssl.ca.pem") ||
+		    !setPemFromLocation("ssl.certificate.location", "ssl.certificate.pem") ||
+		    !setPemFromLocation("ssl.key.location", "ssl.key.pem"))
+		{
+			return false;
+		}
+	}
+#endif
+
+	return true;
+}
+
 //================================== Utilites ==========================================
 
 bool SimpleKafka1C::sleep(const variant_t& delay)
@@ -456,7 +927,7 @@ void SimpleKafka1C::openEventFile(const std::string& logName, std::ofstream& eve
 		{
 			bufname = bufname + cl_event_cb.clientid + "_";
 		}
-		eventFile.open(cl_event_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_event_cb.formatLogFiles) + ".log", std::ios_base::app);
+			eventFile.open(cl_event_cb.logDir + bufname + std::to_string(pid) + "_" + currentDateTime(cl_event_cb.formatLogFiles.c_str()) + ".log", std::ios_base::app);
 	}
 }
 

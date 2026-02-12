@@ -31,7 +31,7 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	cl_event_cb.logDir = std::get<std::string>(*logDirectory);
-	cl_event_cb.formatLogFiles = &*std::get<std::string>(*formatLogFiles).begin();
+	cl_event_cb.formatLogFiles = std::get<std::string>(*formatLogFiles);
 	cl_event_cb.consumerLogName = consumerLogName;
 	cl_event_cb.statLogName = statLogName;
 	cl_event_cb.pid = pid;
@@ -41,15 +41,11 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Simple Kafka version: " << Version << " (librdkafka version: " << RdKafka::version_str() << ")" << std::endl;
 
 	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	cl_event_cb.statisticsOn = false;
+	if (!applyKafkaSettings(conf.get(), msg_err, &cl_event_cb.statisticsOn))
 	{
-		if (conf->set(settings[i].Key, settings[i].Value, msg_err) != RdKafka::Conf::CONF_OK)
-		{
-			if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
-			return false;
-		}
-
-		if (settings[i].Key == "statistics.interval.ms") cl_event_cb.statisticsOn = true;
+		if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
+		return false;
 	}
 	// обязательный параметр
 	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
@@ -71,6 +67,7 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	hConsumer = RdKafka::KafkaConsumer::create(conf.get(), msg_err);
 	if (!hConsumer)
 	{
+		msg_err = enrichSslError(msg_err);
 		if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
 		return false;
 	}

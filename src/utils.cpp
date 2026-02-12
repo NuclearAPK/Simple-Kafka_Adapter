@@ -26,7 +26,7 @@ std::string currentDateTime()
 	localtime_s(&current, &time);
 #else
 	auto time = std::chrono::system_clock::to_time_t(now);
-	current = *std::gmtime(&time);
+	gmtime_r(&time, &current);
 #endif
 
 	auto epoch = now.time_since_epoch();
@@ -47,7 +47,7 @@ std::string currentDateTime(const char* format)
 	localtime_s(&current, &time);
 #else
 	auto time = std::chrono::system_clock::to_time_t(now);
-	current = *std::gmtime(&time);
+	gmtime_r(&time, &current);
 #endif
 
 	std::ostringstream oss{};
@@ -72,17 +72,18 @@ bool isValidUrl(const std::string& url)
 	}
 
 	// Check for valid URL scheme (http:// or https://)
-	static const std::regex urlPattern(
-		R"(^(https?):\/\/)"                    // scheme
-		R"(([a-zA-Z0-9\-._~%]+)"               // host
-		R"(|(\[[:0-9a-fA-F]+\]))"              // IPv6
-		R"(|((\d{1,3}\.){3}\d{1,3}))"          // IPv4
-		R"())"
-		R"((:(\d{1,5}))?)"                     // port
-		R"((\/[a-zA-Z0-9\-._~%!$&'()*+,;=:@\/]*)?" // path
-		R"((\?[a-zA-Z0-9\-._~%!$&'()*+,;=:@\/?]*)?" // query
-		R"((#[a-zA-Z0-9\-._~%!$&'()*+,;=:@\/?]*)?$)" // fragment
-	);
+	static const std::regex urlPattern(R"(
+		^(https?):
+		//
+		(
+		  ([a-zA-Z0-9]([a-zA-Z0-9\-._~]*[a-zA-Z0-9])?)  
+		  |(\[[0-9a-fA-F:]+\])                          
+		  |((([1-9]?\d|1\d\d|2[0-4]\d|25[0-5])\.){3}    
+			 ([1-9]?\d|1\d\d|2[0-4]\d|25[0-5]))
+		)
+		(:(\d{1,5}))?                                    
+		(/[^\s]*)?                                       
+		$)", std::regex::extended | std::regex::icase);
 
 	return std::regex_match(url, urlPattern);
 }

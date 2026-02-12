@@ -18,7 +18,6 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 {
 	std::string result;
 	std::stringstream s{};
-	char errstr[512];
 
 	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
@@ -42,17 +41,13 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	// создаем конфигурацию
 	rd_kafka_conf_t* conf = rd_kafka_conf_new();
 
-	// дополнительные параметры
-	for (size_t i = 0; i < settings.size(); i++)
+	if (!applyKafkaSettings(conf, msg_err))
 	{
-		if (rd_kafka_conf_set(conf, settings[i].Key.c_str(), settings[i].Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-		{
-			msg_err = errstr;
-			rd_kafka_conf_destroy(conf);
-			return result;
-		}
+		rd_kafka_conf_destroy(conf);
+		return result;
 	}
 
+	char errstr[512];
 	if (rd_kafka_conf_set(conf, "bootstrap.servers", tBrokers.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
 	{
 		msg_err = errstr;
@@ -71,7 +66,7 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
 	if (!rk)
 	{
-		msg_err = u8"Ошибка создания клиента: " + std::string(errstr);
+		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + errstr);
 		return result;
 	}
 
@@ -210,7 +205,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
@@ -542,7 +537,7 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 	}
 
 	// Используем AdminClientScope для RAII управления ресурсами
-	AdminClientScope admin(tBrokers, settings, RD_KAFKA_PRODUCER);
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
 	if (!admin.isValid())
 	{
 		msg_err = admin.error();
