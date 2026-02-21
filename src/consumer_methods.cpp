@@ -84,7 +84,7 @@ bool SimpleKafka1C::subscribe(const variant_t& topic)
 	openEventFile(consumerLogName, eventFile);
 	if (hConsumer == nullptr)
 	{
-		msg_err = u8"Консьюмер не инициализирован";
+		msg_err = "Consumer not initialized";
 		return false;
 	}
 
@@ -165,7 +165,7 @@ std::string SimpleKafka1C::consume()
 {
 	if (hConsumer == nullptr)
 	{
-		msg_err = u8"Консьюмер не инициализирован";
+		msg_err = "Consumer not initialized";
 		return EMPTYSTR;
 	}
 
@@ -241,7 +241,7 @@ bool SimpleKafka1C::getMessage()
 {
 	if (hConsumer == nullptr)
 	{
-		msg_err = u8"Консьюмер не инициализирован";
+		msg_err = "Consumer not initialized";
 		return false;
 	}
 
@@ -313,7 +313,7 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 {
 	if (hConsumer == nullptr)
 	{
-		msg_err = u8"Консьюмер не инициализирован";
+		msg_err = "Consumer not initialized";
 		return "";
 	}
 
@@ -473,6 +473,29 @@ int32_t SimpleKafka1C::getMessageBrokerID()
 double SimpleKafka1C::getMessageTimestamp()
 {
 	return static_cast<double>(this->timestamp) / 1000.0;
+}
+
+std::string SimpleKafka1C::getMessageTimestampISO()
+{
+	auto seconds = std::chrono::seconds(this->timestamp / 1000);
+	auto millis = std::chrono::milliseconds(this->timestamp % 1000);
+	std::chrono::system_clock::time_point tp(seconds);
+
+	std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+	std::tm utc_tm;
+#ifdef _WIN32
+	gmtime_s(&utc_tm, &tt);
+#else
+	gmtime_r(&tt, &utc_tm);
+#endif
+
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+		utc_tm.tm_year + 1900, utc_tm.tm_mon + 1, utc_tm.tm_mday,
+		utc_tm.tm_hour, utc_tm.tm_min, utc_tm.tm_sec,
+		static_cast<int>(millis.count()));
+
+	return std::string(buf);
 }
 
 int32_t SimpleKafka1C::getMessagePartition()

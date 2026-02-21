@@ -1,7 +1,7 @@
 #ifndef STDAFX_H
 #define STDAFX_H
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -15,6 +15,6 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 
-#endif //_WINDOWS
+#endif //_WIN32
 
 #endif //STDAFX_H

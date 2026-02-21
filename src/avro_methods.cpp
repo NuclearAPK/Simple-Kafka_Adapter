@@ -288,14 +288,14 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 	}
 	else
 	{
-		msg_err = u8"Имя схемы не известно - " + std::get<std::string>(schemaJsonName);
+		msg_err = "Unknown schema name: " + std::get<std::string>(schemaJsonName);
 		return false;
 	}
 
 	avro::GenericDatum datum(schema);
 	if (datum.type() != avro::AVRO_RECORD)
 	{
-		msg_err = u8"Некорректная схема - корневой тип должен быть record";
+		msg_err = "Invalid schema: root type must be record";
 		return false;
 	}
 
@@ -314,7 +314,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 
 	if (!fmtStr.empty() && fmtStr != "ocf" && fmtStr != "raw" && fmtStr != "confluent")
 	{
-		msg_err = u8"Неизвестный формат: " + fmtStr + u8". Допустимые значения: ocf, raw, confluent";
+		msg_err = "Unknown format: " + fmtStr + ". Valid values: ocf, raw, confluent";
 		return false;
 	}
 
@@ -422,7 +422,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 		}
 		else
 		{
-			msg_err = u8"JSON должен быть объектом или массивом объектов";
+			msg_err = "JSON must be an object or an array of objects";
 			return false;
 		}
 
@@ -489,7 +489,7 @@ bool SimpleKafka1C::saveAvroFile(const variant_t& fileName)
 {
 	if (avroFile.empty())
 	{
-		msg_err = u8"AVRO файл пустой";
+		msg_err = "AVRO data is empty";
 		return false;
 	}
 
@@ -688,13 +688,13 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 		}
 		else
 		{
-			msg_err = u8"Неверный тип данных для avroData. Ожидается строка или двоичные данные";
+			msg_err = "Invalid data type for avroData. Expected string or binary data";
 			return std::string("");
 		}
 
 		if (dataSize == 0)
 		{
-			msg_err = u8"AVRO данные пусты";
+			msg_err = "AVRO data is empty";
 			return std::string("");
 		}
 
@@ -840,13 +840,13 @@ variant_t SimpleKafka1C::getAvroSchema(const variant_t& avroData)
 		}
 		else
 		{
-			msg_err = u8"Неверный тип данных для avroData. Ожидается строка или двоичные данные";
+			msg_err = "Invalid data type for avroData. Expected string or binary data";
 			return std::string("");
 		}
 
 		if (dataSize == 0)
 		{
-			msg_err = u8"AVRO данные пусты";
+			msg_err = "AVRO data is empty";
 			return std::string("");
 		}
 

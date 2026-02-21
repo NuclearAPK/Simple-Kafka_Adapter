@@ -14,6 +14,54 @@
 #include <chrono>
 #include <fstream>
 
+RdKafka::Headers* SimpleKafka1C::parseKafkaHeaders(const std::string& headerString)
+{
+	if (headerString.empty())
+		return nullptr;
+
+	std::vector<std::string> splitResult;
+	boost::algorithm::split(splitResult, headerString, boost::is_any_of(";"));
+	RdKafka::Headers* hdrs = RdKafka::Headers::create();
+	for (std::string& s : splitResult)
+	{
+		std::vector<std::string> hKeyValue;
+		boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
+		if (hKeyValue.size() == 2)
+			hdrs->add(hKeyValue[0], hKeyValue[1]);
+	}
+	return hdrs;
+}
+
+RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorCode()> produceFn,
+                                                    std::ofstream& eventFile)
+{
+	RdKafka::ErrorCode resp;
+	int retries = 0;
+
+	while (true)
+	{
+		resp = produceFn();
+
+		if (resp == RdKafka::ERR__QUEUE_FULL)
+		{
+			if (++retries > MAX_QUEUE_FULL_RETRIES)
+			{
+				if (eventFile.is_open())
+					eventFile << currentDateTime() << " Error: Max queue full retries exceeded (" << MAX_QUEUE_FULL_RETRIES << ")" << std::endl;
+				break;
+			}
+			hProducer->poll(1000);
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Warning: Queue full, retrying (" << retries << "/" << MAX_QUEUE_FULL_RETRIES << ")..." << std::endl;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+			continue;
+		}
+		break;
+	}
+
+	return resp;
+}
+
 //================================== Producer ==========================================
 
 bool SimpleKafka1C::initProducer(const variant_t& brokers)
@@ -50,12 +98,12 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	cl_event_cb.statisticsOn = false;
 	if (!applyKafkaSettings(conf.get(), msg_err, &cl_event_cb.statisticsOn))
 	{
-		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return false;
 	}
 	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
 	{
-		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return false;
 	}
 
@@ -66,7 +114,7 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	if (!hProducer)
 	{
 		msg_err = enrichSslError(msg_err);
-		eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		if (eventFile.is_open()) eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return false;
 	}
 
@@ -78,7 +126,7 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 	cl_dr_cb.delivered = RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
 	if (hProducer == nullptr)
 	{
-		msg_err = u8"Продюсер не инициализирован";
+		msg_err = "Producer not initialized";
 		return -1;
 	}
 
@@ -89,28 +137,12 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 	openEventFile(producerLogName, eventFile);
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Info: produce. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 
-	RdKafka::Headers* hdrs = nullptr;
-	if (std::get<std::string>(heads).size() > 0)
-	{
-		std::vector<std::string> splitResult;
-		boost::algorithm::split(splitResult, std::get<std::string>(heads), boost::is_any_of(";"));
-		hdrs = RdKafka::Headers::create();
-		for (std::string& s : splitResult)
-		{
-			std::vector<std::string> hKeyValue;
-			boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
-			if (hKeyValue.size() == 2)
-				hdrs->add(hKeyValue[0], hKeyValue[1]);
-		}
-	}
+	RdKafka::Headers* hdrs = parseKafkaHeaders(std::get<std::string>(heads));
 
-	RdKafka::ErrorCode resp;
-
-	while (true)
-	{
+	RdKafka::ErrorCode resp = produceWithRetry([&]() -> RdKafka::ErrorCode {
 		if (std::holds_alternative<std::string>(msg))
 		{
-			resp = hProducer->produce(
+			return hProducer->produce(
 				tTopicName,
 				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
 				RdKafka::Producer::RK_MSG_COPY,
@@ -124,7 +156,7 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 		{
 			const auto& d = std::get<std::vector<char>>(msg);
 
-			resp = hProducer->produce(
+			return hProducer->produce(
 				tTopicName,
 				currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
 				RdKafka::Producer::RK_MSG_COPY,
@@ -134,19 +166,7 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 				hdrs,
 				nullptr);
 		}
-
-		if (resp == RdKafka::ERR__QUEUE_FULL)
-		{
-			hProducer->poll(1000 /*block for max 1000ms*/);
-			if (eventFile.is_open())
-			{
-				eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			continue;
-		}
-		break;
-	}
+	}, eventFile);
 
 	if (resp != RdKafka::ERR_NO_ERROR)
 	{
@@ -186,28 +206,33 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 	return cl_dr_cb.delivered;
 }
 
-int32_t SimpleKafka1C::produceWithWaitResult(const variant_t& msg, const variant_t& topicName, const variant_t& partition, const variant_t& key, const variant_t& heads)
+int32_t SimpleKafka1C::produceAndWaitResult(std::function<int32_t()> produceFn, const std::string& methodLogName)
 {
-	if (produce(msg, topicName, partition, key, heads) != -1)
+	if (produceFn() != -1)
 	{
 		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
 		if (hProducer->outq_len() > 0)
 		{
-			msg_err = u8"Не доставлено сообщений - " + std::to_string(hProducer->outq_len());
+			msg_err = "Messages not delivered: " + std::to_string(hProducer->outq_len());
 
 			std::ofstream eventFile{};
 			openEventFile(producerLogName, eventFile);
-			if (eventFile.is_open()) eventFile << currentDateTime() << " Info: produceWithWaitResult: " << msg_err << std::endl;
+			if (eventFile.is_open()) eventFile << currentDateTime() << " Info: " << methodLogName << ": " << msg_err << std::endl;
 
 			return RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
 		}
 		else if (cl_dr_cb.delivered != RdKafka::Message::MSG_STATUS_PERSISTED)
 		{
-			msg_err = u8"Не доставлено. Подробности см в логе";
+			msg_err = "Not delivered. See log for details";
 		}
 		return cl_dr_cb.delivered;
 	}
 	return -1;
+}
+
+int32_t SimpleKafka1C::produceWithWaitResult(const variant_t& msg, const variant_t& topicName, const variant_t& partition, const variant_t& key, const variant_t& heads)
+{
+	return produceAndWaitResult([&]() { return produce(msg, topicName, partition, key, heads); }, "produceWithWaitResult");
 }
 
 int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& partition, const variant_t& key, const variant_t& heads)
@@ -215,12 +240,12 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 	cl_dr_cb.delivered = RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
 	if (hProducer == nullptr)
 	{
-		msg_err = u8"Продюсер не инициализирован";
+		msg_err = "Producer not initialized";
 		return -1;
 	}
 	if (avroFile.empty())
 	{
-		msg_err = u8"AVRO файл пустой";
+		msg_err = "AVRO data is empty";
 		return -1;
 	}
 
@@ -234,11 +259,10 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 		eventFile << currentDateTime() << " Info: produceAvro. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " avroFile.size()- " << avroFile.size() << std::endl;
 	}
 
-	RdKafka::ErrorCode resp;
+	RdKafka::Headers* hdrs = parseKafkaHeaders(std::get<std::string>(heads));
 
-	while (true)
-	{
-		resp = hProducer->produce(
+	RdKafka::ErrorCode resp = produceWithRetry([&]() -> RdKafka::ErrorCode {
+		return hProducer->produce(
 			tTopicName,
 			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
 			RdKafka::Producer::RK_MSG_COPY,
@@ -246,25 +270,17 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 			avroFile.size(),
 			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
 			0,
-			nullptr,
+			hdrs,
 			nullptr);
-
-		if (resp == RdKafka::ERR__QUEUE_FULL)
-		{
-			hProducer->poll(1000 /*block for max 1000ms*/);
-			if (eventFile.is_open())
-			{
-				eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			continue;
-		}
-		break;
-	}
+	}, eventFile);
 
 	if (resp != RdKafka::ERR_NO_ERROR)
 	{
 		msg_err = RdKafka::err2str(resp);
+		if (hdrs != nullptr)
+		{
+			delete hdrs;
+		}
 		cl_dr_cb.delivered = -1;
 	}
 
@@ -285,33 +301,14 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 
 int32_t SimpleKafka1C::produceAvroWithWaitResult(const variant_t& topicName, const variant_t& partition, const variant_t& key, const variant_t& heads)
 {
-	if (produceAvro(topicName, partition, key, heads) != -1)
-	{
-		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
-		if (hProducer->outq_len() > 0)
-		{
-			msg_err = u8"Не доставлено сообщений - " + std::to_string(hProducer->outq_len());
-
-			std::ofstream eventFile{};
-			openEventFile(producerLogName, eventFile);
-			if (eventFile.is_open()) eventFile << currentDateTime() << " Info: produceAvroWithWaitResult: " << msg_err << std::endl;
-
-			return RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
-		}
-		else if (cl_dr_cb.delivered != RdKafka::Message::MSG_STATUS_PERSISTED)
-		{
-			msg_err = u8"Не доставлено. Подробности см в логе";
-		}
-		return cl_dr_cb.delivered;
-	}
-    return -1;
+	return produceAndWaitResult([&]() { return produceAvro(topicName, partition, key, heads); }, "produceAvroWithWaitResult");
 }
 
 int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant_t& topicName)
 {
 	if (hProducer == nullptr)
 	{
-		msg_err = u8"Продюсер не инициализирован";
+		msg_err = "Producer not initialized";
 		return -1;
 	}
 
@@ -339,7 +336,7 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 		boost::json::value jv = boost::json::parse(jsonStr);
 		if (!jv.is_array())
 		{
-			msg_err = u8"JSON должен содержать массив сообщений";
+			msg_err = "JSON must contain an array of messages";
 			if (eventFile.is_open())
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 			return -1;
@@ -389,27 +386,11 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 				headers = boost::json::value_to<std::string>(msg.at("headers"));
 
 			// Подготовка headers
-			RdKafka::Headers* hdrs = nullptr;
-			if (!headers.empty())
-			{
-				std::vector<std::string> splitResult;
-				boost::algorithm::split(splitResult, headers, boost::is_any_of(";"));
-				hdrs = RdKafka::Headers::create();
-				for (std::string& s : splitResult)
-				{
-					std::vector<std::string> hKeyValue;
-					boost::algorithm::split(hKeyValue, s, boost::is_any_of(","));
-					if (hKeyValue.size() == 2)
-						hdrs->add(hKeyValue[0], hKeyValue[1]);
-				}
-			}
+			RdKafka::Headers* hdrs = parseKafkaHeaders(headers);
 
 			// Отправка сообщения с retry логикой
-			RdKafka::ErrorCode resp;
-
-			while (true)
-			{
-				resp = hProducer->produce(
+			RdKafka::ErrorCode resp = produceWithRetry([&]() -> RdKafka::ErrorCode {
+				return hProducer->produce(
 					tTopicName,
 					partition == -1 ? RdKafka::Topic::PARTITION_UA : partition,
 					RdKafka::Producer::RK_MSG_COPY,
@@ -418,17 +399,7 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 					0,
 					hdrs,
 					nullptr);
-
-				if (resp == RdKafka::ERR__QUEUE_FULL)
-				{
-					hProducer->poll(1000);
-					if (eventFile.is_open())
-						eventFile << currentDateTime() << " Warning: Queue full, retrying..." << std::endl;
-					std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-					continue;
-				}
-				break;
-			}
+			}, eventFile);
 
 			if (resp != RdKafka::ERR_NO_ERROR)
 			{
@@ -453,7 +424,7 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 	}
 	catch (const std::exception& e)
 	{
-		msg_err = std::string(u8"Ошибка при обработке JSON: ") + e.what();
+		msg_err = std::string("JSON processing error: ") + e.what();
 		if (eventFile.is_open())
 			eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return -1;

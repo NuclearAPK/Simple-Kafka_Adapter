@@ -16,7 +16,7 @@
 #include "utils.h"
 
 // Undefine Windows API macros that conflict with protobuf
-#ifdef _WINDOWS
+#ifdef _WIN32
 #undef GetMessage
 #endif
 
@@ -187,7 +187,7 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 
 		if (!parser.Parse(&tokenizer, &fileDescProto))
 		{
-			msg_err = u8"Ошибка парсинга proto схемы";
+			msg_err = "Proto schema parsing error";
 			return false;
 		}
 
@@ -195,7 +195,7 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 		const google::protobuf::FileDescriptor* fileDesc = protoContext->pool.BuildFile(fileDescProto);
 		if (!fileDesc)
 		{
-			msg_err = u8"Не удалось построить дескриптор из proto схемы";
+			msg_err = "Failed to build descriptor from proto schema";
 			return false;
 		}
 
@@ -207,7 +207,7 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 		}
 		else
 		{
-			msg_err = u8"Proto схема не содержит определений сообщений";
+			msg_err = "Proto schema contains no message definitions";
 			return false;
 		}
 	}
@@ -229,7 +229,7 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 	{
 		if (!protoContext)
 		{
-			msg_err = u8"Protobuf контекст не инициализирован";
+			msg_err = "Protobuf context not initialized";
 			return false;
 		}
 
@@ -240,7 +240,7 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 		auto it = protoContext->descriptors.find(name);
 		if (it == protoContext->descriptors.end())
 		{
-			msg_err = u8"Схема protobuf не найдена: " + name;
+			msg_err = "Protobuf schema not found: " + name;
 			return false;
 		}
 
@@ -250,7 +250,7 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 		const google::protobuf::Message* prototype = protoContext->factory.GetPrototype(descriptor);
 		if (!prototype)
 		{
-			msg_err = u8"Не удалось создать прототип сообщения";
+			msg_err = "Failed to create message prototype";
 			return false;
 		}
 
@@ -260,7 +260,7 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 		try {
 			boost::json::value json_val = boost::json::parse(jsonData);
 			if (!json_val.is_object()) {
-				msg_err = u8"JSON должен быть объектом";
+				msg_err = "JSON must be an object";
 				return false;
 			}
 
@@ -270,14 +270,14 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 					descriptor->FindFieldByName(std::string(kv.key()));
 				if (field) {
 					if (!SetProtobufFieldFromJson(message.get(), field, kv.value())) {
-						msg_err = u8"Ошибка установки поля: " + std::string(kv.key());
+						msg_err = "Field assignment error: " + std::string(kv.key());
 						return false;
 					}
 				}
 			}
 		}
 		catch (const std::exception& e) {
-			msg_err = u8"Ошибка парсинга JSON: ";
+			msg_err = "JSON parsing error: ";
 			msg_err += e.what();
 			return false;
 		}
@@ -285,7 +285,7 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 		// Serialize to binary
 		if (!message->SerializeToString(&protobufData))
 		{
-			msg_err = u8"Ошибка сериализации protobuf сообщения";
+			msg_err = "Protobuf message serialization error";
 			return false;
 		}
 	}
@@ -303,7 +303,7 @@ bool SimpleKafka1C::saveProtobufFile(const variant_t& fileName)
 {
 	if (protobufData.empty())
 	{
-		msg_err = u8"Protobuf данные пусты";
+		msg_err = "Protobuf data is empty";
 		return false;
 	}
 
@@ -328,7 +328,7 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 	{
 		if (!protoContext)
 		{
-			msg_err = u8"Protobuf контекст не инициализирован";
+			msg_err = "Protobuf context not initialized";
 			return std::string("");
 		}
 
@@ -350,13 +350,13 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		}
 		else
 		{
-			msg_err = u8"Неверный тип данных для protobufData";
+			msg_err = "Invalid data type for protobufData";
 			return std::string("");
 		}
 
 		if (dataPtr->empty())
 		{
-			msg_err = u8"Protobuf данные пусты";
+			msg_err = "Protobuf data is empty";
 			return std::string("");
 		}
 
@@ -364,7 +364,7 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		auto it = protoContext->descriptors.find(name);
 		if (it == protoContext->descriptors.end())
 		{
-			msg_err = u8"Схема protobuf не найдена: " + name;
+			msg_err = "Protobuf schema not found: " + name;
 			return std::string("");
 		}
 
@@ -374,7 +374,7 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		const google::protobuf::Message* prototype = protoContext->factory.GetPrototype(descriptor);
 		if (!prototype)
 		{
-			msg_err = u8"Не удалось создать прототип сообщения";
+			msg_err = "Failed to create message prototype";
 			return std::string("");
 		}
 
@@ -383,7 +383,7 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		// Parse binary data
 		if (!message->ParseFromString(*dataPtr))
 		{
-			msg_err = u8"Ошибка десериализации protobuf сообщения";
+			msg_err = "Protobuf message deserialization error";
 			return std::string("");
 		}
 
@@ -410,7 +410,7 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 				return jsonOutput;
 			}
 			catch (const std::exception& e) {
-				msg_err = u8"Ошибка преобразования protobuf в JSON: ";
+				msg_err = "Protobuf to JSON conversion error: ";
 				msg_err += e.what();
 				return std::string("");
 			}
@@ -434,12 +434,12 @@ int32_t SimpleKafka1C::produceProtobuf(const variant_t& topicName, const variant
 	cl_dr_cb.delivered = RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
 	if (hProducer == nullptr)
 	{
-		msg_err = u8"Продюсер не инициализирован";
+		msg_err = "Producer not initialized";
 		return -1;
 	}
 	if (protobufData.empty())
 	{
-		msg_err = u8"Protobuf данные пусты";
+		msg_err = "Protobuf data is empty";
 		return -1;
 	}
 
@@ -453,33 +453,30 @@ int32_t SimpleKafka1C::produceProtobuf(const variant_t& topicName, const variant
 		eventFile << currentDateTime() << " Info: produceProtobuf. TopicName-" << tTopicName << " currentPartition-" << currentPartition << " protobufData.size()- " << protobufData.size() << std::endl;
 	}
 
-retry:
-	RdKafka::ErrorCode resp = hProducer->produce(
-		tTopicName,
-		currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
-		RdKafka::Producer::RK_MSG_COPY,
-		const_cast<char*>(protobufData.data()),
-		protobufData.size(),
-		std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
-		0,
-		nullptr,
-		nullptr);
+	RdKafka::Headers* hdrs = parseKafkaHeaders(std::get<std::string>(heads));
+
+	RdKafka::ErrorCode resp = produceWithRetry([&]() -> RdKafka::ErrorCode {
+		return hProducer->produce(
+			tTopicName,
+			currentPartition == -1 ? RdKafka::Topic::PARTITION_UA : currentPartition,
+			RdKafka::Producer::RK_MSG_COPY,
+			const_cast<char*>(protobufData.data()),
+			protobufData.size(),
+			std::get<std::string>(key).c_str(), std::get<std::string>(key).size(),
+			0,
+			hdrs,
+			nullptr);
+	}, eventFile);
 
 	if (resp != RdKafka::ERR_NO_ERROR)
 	{
-		if (resp == RdKafka::ERR__QUEUE_FULL)
-		{
-			hProducer->poll(1000 /*block for max 1000ms*/);
-			if (eventFile.is_open())
-			{
-				eventFile << currentDateTime() << " Error: " << "Достигнуто максимальное количество ожидающих сообщений: queue.buffering.max.message" << std::endl;
-			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-			goto retry;
-		}
 		if (resp == RdKafka::ERR_MSG_SIZE_TOO_LARGE)
 		{
-			msg_err = u8"Размер сообщения превышает лимит message.max.bytes (по умолчанию 1 MB). Используйте УстановитьПараметр для увеличения лимита.";
+			msg_err = "Message size exceeds message.max.bytes limit (default 1 MB). Use SetParameter to increase the limit.";
+			if (hdrs != nullptr)
+			{
+				delete hdrs;
+			}
 			if (eventFile.is_open())
 			{
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
@@ -487,6 +484,10 @@ retry:
 			return cl_dr_cb.delivered;
 		}
 		msg_err = RdKafka::err2str(resp);
+		if (hdrs != nullptr)
+		{
+			delete hdrs;
+		}
 	}
 
 	hProducer->poll(0 /*non-blocking*/);
@@ -506,24 +507,5 @@ retry:
 
 int32_t SimpleKafka1C::produceProtobufWithWaitResult(const variant_t& topicName, const variant_t& partition, const variant_t& key, const variant_t& heads)
 {
-	if (produceProtobuf(topicName, partition, key, heads) != -1)
-	{
-		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
-		if (hProducer->outq_len() > 0)
-		{
-			msg_err = u8"Не доставлено сообщений - " + std::to_string(hProducer->outq_len());
-
-			std::ofstream eventFile{};
-			openEventFile(producerLogName, eventFile);
-			if (eventFile.is_open()) eventFile << currentDateTime() << " Info: produceProtobufWithWaitResult: " << msg_err << std::endl;
-
-			return RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
-		}
-		else if (cl_dr_cb.delivered != RdKafka::Message::MSG_STATUS_PERSISTED)
-		{
-			msg_err = u8"Не доставлено. Подробности см в логе";
-		}
-		return cl_dr_cb.delivered;
-	}
-	return -1;
+	return produceAndWaitResult([&]() { return produceProtobuf(topicName, partition, key, heads); }, "produceProtobufWithWaitResult");
 }

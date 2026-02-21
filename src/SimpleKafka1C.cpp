@@ -3,7 +3,7 @@
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/json.hpp>
-#ifdef _WINDOWS
+#ifdef _WIN32
 #include <process.h>
 #endif
 
@@ -175,33 +175,39 @@ void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event& event)
 	switch (event.type())
 	{
 	case RdKafka::Event::EVENT_ERROR:
-		if (event.fatal())
+		if (eventFile.is_open())
 		{
-			eventFile << currentDateTime() << "FATAL ";
+			if (event.fatal())
+			{
+				eventFile << currentDateTime() << "FATAL ";
+			}
+			eventFile << "ERROR (" << RdKafka::err2str(event.err())
+				<< "): " << event.str() << std::endl;
 		}
-		eventFile << "ERROR (" << RdKafka::err2str(event.err())
-			<< "): " << event.str() << std::endl;
 		break;
 
 	case RdKafka::Event::EVENT_STATS:
-		if (statisticsOn) statFile << currentDateTime() << "\"STATS\": " << event.str() << std::endl;
+		if (statisticsOn && statFile.is_open()) statFile << currentDateTime() << "\"STATS\": " << event.str() << std::endl;
 		break;
 
 	case RdKafka::Event::EVENT_LOG:
-		eventFile << currentDateTime() << " LOG-" << event.severity() << "-"
-			<< event.fac() << ": " << event.str() << std::endl;
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " LOG-" << event.severity() << "-"
+				<< event.fac() << ": " << event.str() << std::endl;
 		break;
 
 	case RdKafka::Event::EVENT_THROTTLE:
-		eventFile << currentDateTime() << "THROTTLED: " << event.throttle_time() << "ms by "
-			<< event.broker_name() << " id " << (int)event.broker_id()
-			<< std::endl;
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << "THROTTLED: " << event.throttle_time() << "ms by "
+				<< event.broker_name() << " id " << (int)event.broker_id()
+				<< std::endl;
 		break;
 
 	default:
-		eventFile << currentDateTime() << "EVENT: " << event.type() << " ("
-			<< RdKafka::err2str(event.err()) << "): " << event.str()
-			<< std::endl;
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << "EVENT: " << event.type() << " ("
+				<< RdKafka::err2str(event.err()) << "): " << event.str()
+				<< std::endl;
 		break;
 	}
 }
@@ -379,6 +385,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"GetMessageTopic", L"ПолучитьТопикСообщения", this, &SimpleKafka1C::getMessageTopicName);
 	AddMethod(L"GetMessageBrokerID", L"ПолучитьИдентификаторБрокераСообщения", this, &SimpleKafka1C::getMessageBrokerID);
 	AddMethod(L"GetMessageTimestamp", L"ПолучитьВременнуюМеткуСообщения", this, &SimpleKafka1C::getMessageTimestamp);
+	AddMethod(L"GetMessageTimestampISO", L"ПолучитьВременнуюМеткуСообщенияISO", this, &SimpleKafka1C::getMessageTimestampISO);
 	AddMethod(L"GetMessagePartition", L"ПолучитьРазделСообщения", this, &SimpleKafka1C::getMessagePartition);
 	AddMethod(L"GetMessageOffset", L"ПолучитьСмещениеСообщения", this, &SimpleKafka1C::getMessageOffset);
 	// - modern methods
@@ -465,7 +472,7 @@ SimpleKafka1C::SimpleKafka1C()
 
 	waitMessageTimeout = 500;
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 	pid = _getpid();
 #else
 	pid = getpid();
@@ -543,8 +550,8 @@ bool SimpleKafka1C::setPartitioner(const variant_t& partitionerType)
 
 	if (validPartitioners.find(type) == validPartitioners.end())
 	{
-		msg_err = u8"Неизвестный тип партиционера: " + type +
-			u8". Допустимые значения: consistent, consistent_random, murmur2, murmur2_random, fnv1a, fnv1a_random, random";
+		msg_err = "Unknown partitioner type: " + type +
+			". Valid values: consistent, consistent_random, murmur2, murmur2_random, fnv1a, fnv1a_random, random";
 		return false;
 	}
 
@@ -715,7 +722,7 @@ bool SimpleKafka1C::prepareSslRuntime(std::string& error)
 #endif
 }
 
-bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, bool* statisticsOn)
+bool SimpleKafka1C::prepareFilteredSettings(FilteredSettings& out, std::string& error)
 {
 	if (!prepareSslRuntime(error))
 	{
@@ -724,6 +731,8 @@ bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, 
 
 #if defined(__linux__) && !defined(_WIN32)
 	const bool linuxSsl = isSslProtocolConfigured();
+#else
+	const bool linuxSsl = false;
 #endif
 
 	for (const auto& setting : settings)
@@ -735,40 +744,29 @@ bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, 
 			continue;
 		}
 #endif
-#if defined(__linux__) && !defined(_WIN32)
 		// On Linux feed PEM contents via ssl.*.pem to avoid file-based SSL_CTX_use_certificate_chain_file path.
 		if (linuxSsl && (setting.Key == "ssl.ca.location" || setting.Key == "ssl.certificate.location" || setting.Key == "ssl.key.location"))
 		{
 			continue;
 		}
-#endif
 
-		if (conf->set(setting.Key, setting.Value, error) != RdKafka::Conf::CONF_OK)
+		out.params.push_back({setting.Key, setting.Value});
+
+		if (setting.Key == "statistics.interval.ms")
 		{
-			error = enrichSslError(error);
-			return false;
-		}
-		if (statisticsOn != nullptr && setting.Key == "statistics.interval.ms")
-		{
-			*statisticsOn = true;
+			out.hasStatisticsInterval = true;
 		}
 	}
 
 #if defined(__linux__) && !defined(_WIN32)
 	if (isSslProtocolConfigured() && getSettingValue("ssl.providers").empty())
 	{
-		if (conf->set("ssl.providers", "default,legacy", error) != RdKafka::Conf::CONF_OK)
-		{
-			error = enrichSslError(error);
-			return false;
-		}
+		out.needDefaultSslProviders = true;
 	}
-#endif
 
-#if defined(__linux__) && !defined(_WIN32)
 	if (linuxSsl)
 	{
-		auto setPemFromLocation = [&](const std::string& locationKey, const std::string& pemKey) -> bool {
+		auto loadPemFromLocation = [&](const std::string& locationKey, const std::string& pemKey) -> bool {
 			if (hasSettingKey(pemKey))
 			{
 				return true;
@@ -787,17 +785,13 @@ bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, 
 				return false;
 			}
 
-			if (conf->set(pemKey, pem, error) != RdKafka::Conf::CONF_OK)
-			{
-				error = enrichSslError(error);
-				return false;
-			}
+			out.pemOverrides.push_back({pemKey, pem});
 			return true;
 		};
 
-		if (!setPemFromLocation("ssl.ca.location", "ssl.ca.pem") ||
-		    !setPemFromLocation("ssl.certificate.location", "ssl.certificate.pem") ||
-		    !setPemFromLocation("ssl.key.location", "ssl.key.pem"))
+		if (!loadPemFromLocation("ssl.ca.location", "ssl.ca.pem") ||
+		    !loadPemFromLocation("ssl.certificate.location", "ssl.certificate.pem") ||
+		    !loadPemFromLocation("ssl.key.location", "ssl.key.pem"))
 		{
 			return false;
 		}
@@ -807,43 +801,69 @@ bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, 
 	return true;
 }
 
+bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, bool* statisticsOn)
+{
+	FilteredSettings fs;
+	if (!prepareFilteredSettings(fs, error))
+	{
+		return false;
+	}
+
+	for (const auto& p : fs.params)
+	{
+		if (conf->set(p.key, p.value, error) != RdKafka::Conf::CONF_OK)
+		{
+			error = enrichSslError(error);
+			return false;
+		}
+	}
+
+	if (statisticsOn != nullptr && fs.hasStatisticsInterval)
+	{
+		*statisticsOn = true;
+	}
+
+	if (fs.needDefaultSslProviders)
+	{
+		if (conf->set("ssl.providers", "default,legacy", error) != RdKafka::Conf::CONF_OK)
+		{
+			error = enrichSslError(error);
+			return false;
+		}
+	}
+
+	for (const auto& pem : fs.pemOverrides)
+	{
+		if (conf->set(pem.key, pem.value, error) != RdKafka::Conf::CONF_OK)
+		{
+			error = enrichSslError(error);
+			return false;
+		}
+	}
+
+	return true;
+}
+
 bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error)
 {
-	if (!prepareSslRuntime(error))
+	FilteredSettings fs;
+	if (!prepareFilteredSettings(fs, error))
 	{
 		return false;
 	}
 
 	char errstr[512] = {0};
-#if defined(__linux__) && !defined(_WIN32)
-	const bool linuxSsl = isSslProtocolConfigured();
-#endif
-	for (const auto& setting : settings)
-	{
-#if defined(_WIN32)
-		// Linux-only tuning knobs: do not apply on Windows.
-		if (setting.Key == "ssl.providers" || setting.Key == "ssl.sigalgs" || setting.Key == "ssl.sigalgs.list")
-		{
-			continue;
-		}
-#endif
-#if defined(__linux__) && !defined(_WIN32)
-		// On Linux feed PEM contents via ssl.*.pem to avoid file-based SSL_CTX_use_certificate_chain_file path.
-		if (linuxSsl && (setting.Key == "ssl.ca.location" || setting.Key == "ssl.certificate.location" || setting.Key == "ssl.key.location"))
-		{
-			continue;
-		}
-#endif
 
-		if (rd_kafka_conf_set(conf, setting.Key.c_str(), setting.Value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
+	for (const auto& p : fs.params)
+	{
+		if (rd_kafka_conf_set(conf, p.key.c_str(), p.value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
 		{
 			error = enrichSslError(errstr);
 			return false;
 		}
 	}
 
-#if defined(__linux__) && !defined(_WIN32)
-	if (isSslProtocolConfigured() && getSettingValue("ssl.providers").empty())
+	if (fs.needDefaultSslProviders)
 	{
 		if (rd_kafka_conf_set(conf, "ssl.providers", "default,legacy", errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
 		{
@@ -851,46 +871,15 @@ bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error
 			return false;
 		}
 	}
-#endif
 
-#if defined(__linux__) && !defined(_WIN32)
-	if (linuxSsl)
+	for (const auto& pem : fs.pemOverrides)
 	{
-		auto setPemFromLocation = [&](const std::string& locationKey, const std::string& pemKey) -> bool {
-			if (hasSettingKey(pemKey))
-			{
-				return true;
-			}
-
-			const std::string location = trimCopy(getSettingValue(locationKey));
-			if (location.empty())
-			{
-				return true;
-			}
-
-			std::string pem;
-			if (!readTextFile(location, pem, error))
-			{
-				error = enrichSslError(error);
-				return false;
-			}
-
-			if (rd_kafka_conf_set(conf, pemKey.c_str(), pem.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
-			{
-				error = enrichSslError(errstr);
-				return false;
-			}
-			return true;
-		};
-
-		if (!setPemFromLocation("ssl.ca.location", "ssl.ca.pem") ||
-		    !setPemFromLocation("ssl.certificate.location", "ssl.certificate.pem") ||
-		    !setPemFromLocation("ssl.key.location", "ssl.key.pem"))
+		if (rd_kafka_conf_set(conf, pem.key.c_str(), pem.value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
 		{
+			error = enrichSslError(errstr);
 			return false;
 		}
 	}
-#endif
 
 	return true;
 }

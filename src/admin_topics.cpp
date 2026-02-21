@@ -43,8 +43,9 @@ SimpleKafka1C::AdminClientScope::AdminClientScope(SimpleKafka1C* owner_,
 	rk = rd_kafka_new(type, conf, errstr, sizeof(errstr));
 	if (!rk)
 	{
-		errstr_msg = owner ? owner->enrichSslError(std::string(u8"Ошибка создания клиента: ") + errstr)
-		                   : (std::string(u8"Ошибка создания клиента: ") + errstr);
+		errstr_msg = owner ? owner->enrichSslError(std::string("Client creation error: ") + errstr)
+		                   : (std::string("Client creation error: ") + errstr);
+		rd_kafka_conf_destroy(conf);
 		return;
 	}
 
@@ -92,7 +93,7 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
 	if (!producer)
 	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания фейкового продюсера: ") + msg_err);
+		msg_err = enrichSslError(std::string("Client creation error: ") + msg_err);
 		return result;
 	}
 
@@ -170,7 +171,7 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	rd_kafka_NewTopic_t* newt = rd_kafka_NewTopic_new(tTopicName.c_str(), partition_cnt, rep_factor, errstr, sizeof(errstr));
 	if (!newt)
 	{
-		msg_err = u8"Ошибка создания описания топика: " + std::string(errstr);
+		msg_err = "Topic description creation error: " + std::string(errstr);
 		return false;
 	}
 
@@ -218,7 +219,7 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	}
 	else
 	{
-		msg_err = u8"Таймаут ожидания ответа";
+		msg_err = "Response timeout";
 	}
 
 	// очистка ресурсов
@@ -301,7 +302,7 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	}
 	else
 	{
-		msg_err = u8"Таймаут ожидания ответа";
+		msg_err = "Response timeout";
 	}
 
 	// очистка ресурсов
@@ -342,7 +343,7 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 		boost::property_tree::read_json(ss, pt);
 	}
 	catch (const std::exception& e) {
-		msg_err = u8"Ошибка парсинга JSON: " + std::string(e.what());
+		msg_err = "JSON parsing error: " + std::string(e.what());
 		return false;
 	}
 
@@ -367,14 +368,14 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 		}
 	}
 	catch (const std::exception& e) {
-		msg_err = u8"Ошибка чтения данных партиций: " + std::string(e.what());
+		msg_err = "Partition data reading error: " + std::string(e.what());
 		rd_kafka_topic_partition_list_destroy(partitions);
 		return false;
 	}
 
 	if (partitions->cnt == 0)
 	{
-		msg_err = u8"Не указаны партиции для удаления записей";
+		msg_err = "No partitions specified for record deletion";
 		rd_kafka_topic_partition_list_destroy(partitions);
 		return false;
 	}
@@ -419,8 +420,8 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 						if (part->err != RD_KAFKA_RESP_ERR_NO_ERROR)
 						{
 							all_ok = false;
-							error_details << u8"Партиция " << part->partition
-								<< u8": " << rd_kafka_err2str(part->err) << "; ";
+							error_details << "Partition " << part->partition
+								<< ": " << rd_kafka_err2str(part->err) << "; ";
 						}
 					}
 
@@ -435,7 +436,7 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 				}
 				else
 				{
-					msg_err = u8"Пустой результат удаления записей";
+					msg_err = "Empty record deletion result";
 				}
 			}
 		}
@@ -443,7 +444,7 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 	}
 	else
 	{
-		msg_err = u8"Таймаут ожидания ответа";
+		msg_err = "Response timeout";
 	}
 
 	// очистка ресурсов
@@ -578,7 +579,7 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 	}
 	else
 	{
-		msg_err = u8"Таймаут ожидания ответа";
+		msg_err = "Response timeout";
 	}
 
 	// очистка ресурсов
@@ -661,7 +662,7 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err = u8"Ошибка парсинга JSON: " + std::string(ex.what());
+		msg_err = "JSON parsing error: " + std::string(ex.what());
 		rd_kafka_ConfigResource_destroy(config_resource);
 		return false;
 	}
@@ -710,7 +711,7 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 	}
 	else
 	{
-		msg_err = u8"Таймаут ожидания ответа";
+		msg_err = "Response timeout";
 	}
 
 	// очистка ресурсов

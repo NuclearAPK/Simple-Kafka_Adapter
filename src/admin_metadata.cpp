@@ -11,37 +11,44 @@
 
 #include <sstream>
 
+//================================== Helper ==========================================
+
+std::unique_ptr<RdKafka::Producer> SimpleKafka1C::createMetadataClient(const std::string& brokers)
+{
+	std::string errstr;
+	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
+
+	if (!applyKafkaSettings(conf.get(), errstr))
+	{
+		msg_err = errstr;
+		return nullptr;
+	}
+
+	if (conf->set("bootstrap.servers", brokers, errstr) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = errstr;
+		return nullptr;
+	}
+
+	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), errstr));
+	if (!producer)
+	{
+		msg_err = enrichSslError(std::string("Client creation error: ") + errstr);
+		return nullptr;
+	}
+
+	return producer;
+}
+
 //================================== Cluster and Broker Information ==========================================
 
 std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 {
-	std::string result;
 	std::stringstream s{};
 
-	std::string tBrokers = std::get<std::string>(brokers);
-
-	// создаем конфигурацию
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
-
-	if (!applyKafkaSettings(conf.get(), result))
-	{
-		msg_err = result;
-		return "";
-	}
-
-	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return "";
-	}
-
-	// создаем продюсера для получения метаданных
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
+	auto producer = createMetadataClient(std::get<std::string>(brokers));
 	if (!producer)
-	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
-	}
 
 	// получаем метаданные кластера
 	RdKafka::Metadata* metadata = nullptr;
@@ -82,34 +89,12 @@ std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 
 std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant_t& brokerId)
 {
-	std::string result;
 	std::stringstream s{};
-
-	std::string tBrokers = std::get<std::string>(brokers);
 	int32_t tBrokerId = std::get<int32_t>(brokerId);
 
-	// создаем конфигурацию
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
-
-	if (!applyKafkaSettings(conf.get(), result))
-	{
-		msg_err = result;
-		return "";
-	}
-
-	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return "";
-	}
-
-	// создаем продюсера для получения метаданных
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
+	auto producer = createMetadataClient(std::get<std::string>(brokers));
 	if (!producer)
-	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
-	}
 
 	// получаем метаданные кластера
 	RdKafka::Metadata* metadata = nullptr;
@@ -173,7 +158,7 @@ std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant
 
 	if (!found)
 	{
-		msg_err = u8"Брокер с ID " + std::to_string(tBrokerId) + u8" не найден";
+		msg_err = "Broker with ID " + std::to_string(tBrokerId) + " not found";
 		return "";
 	}
 
@@ -213,7 +198,7 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
 	if (!producer)
 	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания временного продюсера: ") + msg_err);
+		msg_err = enrichSslError(std::string("Client creation error: ") + msg_err);
 		return result;
 	}
 
@@ -221,7 +206,7 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	std::unique_ptr<RdKafka::Topic> topicHandle(RdKafka::Topic::create(producer.get(), tTopicName, nullptr, msg_err));
 	if (!topicHandle)
 	{
-		msg_err = u8"Ошибка создания дескриптора топика: " + msg_err;
+		msg_err = "Topic handle creation error: " + msg_err;
 		return result;
 	}
 
@@ -329,42 +314,14 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
                                                    const variant_t& topicName,
                                                    const variant_t& partition)
 {
-	std::string result;
 	std::stringstream s{};
 
-	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tPartition = std::get<int32_t>(partition);
 
-	// создаем конфигурацию
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
-
-	if (!applyKafkaSettings(conf.get(), result))
-	{
-		msg_err = result;
-		return "";
-	}
-
-	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return "";
-	}
-
-	// запрещаем автосоздание топиков
-	if (conf->set("allow.auto.create.topics", "false", result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return "";
-	}
-
-	// создаем продюсера для получения watermarks
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
+	auto producer = createMetadataClient(std::get<std::string>(brokers));
 	if (!producer)
-	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return "";
-	}
 
 	// получаем watermarks для партиции
 	int64_t low = 0;
@@ -391,32 +348,11 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 
 bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeout)
 {
-	std::string result;
-	std::string tBrokers = std::get<std::string>(brokers);
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
-	// создаем конфигурацию
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
-
-	if (!applyKafkaSettings(conf.get(), result))
-	{
-		msg_err = result;
-		return false;
-	}
-
-	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return false;
-	}
-
-	// создаем продюсера для проверки подключения
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
+	auto producer = createMetadataClient(std::get<std::string>(brokers));
 	if (!producer)
-	{
-		msg_err = enrichSslError(std::string(u8"Ошибка подключения к брокеру: ") + result);
 		return false;
-	}
 
 	// Пытаемся получить метаданные - это проверит доступность брокера
 	RdKafka::Metadata* metadata = nullptr;
@@ -424,7 +360,7 @@ bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeou
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = u8"Брокер недоступен: " + std::string(RdKafka::err2str(err));
+		msg_err = "Broker unavailable: " + std::string(RdKafka::err2str(err));
 		if (metadata)
 			delete metadata;
 		return false;
@@ -440,40 +376,12 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
                                                  const variant_t& topicName,
                                                  const variant_t& partition)
 {
-	std::string result;
-	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tPartition = std::get<int32_t>(partition);
 
-	// создаем конфигурацию
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
-
-	if (!applyKafkaSettings(conf.get(), result))
-	{
-		msg_err = result;
-		return -1.0;
-	}
-
-	if (conf->set("bootstrap.servers", tBrokers, result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return -1.0;
-	}
-
-	// запрещаем автосоздание топиков
-	if (conf->set("allow.auto.create.topics", "false", result) != RdKafka::Conf::CONF_OK)
-	{
-		msg_err = result;
-		return -1.0;
-	}
-
-	// создаем продюсера для получения watermarks
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), result));
+	auto producer = createMetadataClient(std::get<std::string>(brokers));
 	if (!producer)
-	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + result);
 		return -1.0;
-	}
 
 	// получаем watermarks для партиции
 	int64_t low = 0;

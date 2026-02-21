@@ -26,7 +26,7 @@
 
 #define BASE_ERRNO     7
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 #pragma warning (disable : 4267)
 #endif
 
@@ -468,7 +468,7 @@ std::wstring Component::toUpper(std::wstring str) {
 }
 
 std::string Component::toUTF8String(std::basic_string_view<WCHAR_T> src) {
-#if (defined _WINDOWS && _MSC_VER < 1930)
+#if (defined _WIN32 && _MSC_VER < 1930)
     static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> cvt_utf8_utf16;
     return cvt_utf8_utf16.to_bytes(src.data(), src.data() + src.size());
 #else 
@@ -478,7 +478,7 @@ std::string Component::toUTF8String(std::basic_string_view<WCHAR_T> src) {
 }
 
 std::wstring Component::toWstring(std::basic_string_view<WCHAR_T> src) {
-#if (defined _WINDOWS && _MSC_VER < 1930)
+#if (defined _WIN32 && _MSC_VER < 1930)
     return std::wstring(src);
 #else
     static std::wstring_convert<std::codecvt_utf16<wchar_t, 0x10ffff, std::little_endian>> conv;
@@ -488,7 +488,7 @@ std::wstring Component::toWstring(std::basic_string_view<WCHAR_T> src) {
 }
 
 std::u16string Component::toUTF16String(std::string_view src) {
-#if (defined _WINDOWS && _MSC_VER < 1930)
+#if (defined _WIN32 && _MSC_VER < 1930)
     static std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> cvt_utf8_utf16;
     std::wstring tmp = cvt_utf8_utf16.from_bytes(src.data(), src.data() + src.size());
     return std::u16string(reinterpret_cast<const char16_t *>(tmp.data()), tmp.size());
@@ -499,7 +499,7 @@ std::u16string Component::toUTF16String(std::string_view src) {
 }
 
 std::u16string Component::toUTF16String(std::wstring_view src) {
-#if (defined _WINDOWS && _MSC_VER < 1930)
+#if (defined _WIN32 && _MSC_VER < 1930)
     return std::u16string(reinterpret_cast<const char16_t *>(src.data()), src.size());
 #else
     static std::wstring_convert<std::codecvt_utf8<wchar_t>> conv_wide_to_utf8;

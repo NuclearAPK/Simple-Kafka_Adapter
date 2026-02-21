@@ -2,7 +2,7 @@
 #ifndef __CON_TYPES_H__
 #define __CON_TYPES_H__
 
-#if defined(_WINDOWS) || defined(WINAPI_FAMILY)
+#if defined(_WIN32) || defined(WINAPI_FAMILY)
 #include <windows.h>
 #endif
 
@@ -57,21 +57,21 @@
 #define ADDIN_E_MSGBOX_FAIL 1009
 
 #ifndef  ADDIN_API
-#ifdef _WINDOWS
+#ifdef _WIN32
 #define ADDIN_API __stdcall
 #else
 //#define ADDIN_API __attribute__ ((__stdcall__))
 #define ADDIN_API
-#endif //_WINDOWS
+#endif //_WIN32
 #endif //ADDIN_API
 
 #include <stdint.h>
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 #define WCHAR_T     char16_t
 #else
 #define WCHAR_T     char16_t
-#endif //_WINDOWS
+#endif //_WIN32
 typedef unsigned short TYPEVAR;
 enum ENUMVAR
 {   

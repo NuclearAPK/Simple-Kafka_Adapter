@@ -21,7 +21,7 @@ std::string currentDateTime()
 	std::chrono::time_point now = std::chrono::high_resolution_clock::now();
 	tm current{};
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 	time_t time = std::time(nullptr);
 	localtime_s(&current, &time);
 #else
@@ -42,7 +42,7 @@ std::string currentDateTime(const char* format)
 	std::chrono::time_point now = std::chrono::high_resolution_clock::now();
 	tm current{};
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 	time_t time = std::time(nullptr);
 	localtime_s(&current, &time);
 #else

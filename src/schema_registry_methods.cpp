@@ -29,7 +29,7 @@ std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string
 
 	if (!curlHandle)
 	{
-		msg_err = u8"Ошибка инициализации CURL";
+		msg_err = "CURL initialization error";
 		return "";
 	}
 
@@ -68,7 +68,7 @@ std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string
 
 	if (res != CURLE_OK)
 	{
-		msg_err = std::string(u8"CURL ошибка: ") + curl_easy_strerror(res);
+		msg_err = std::string("CURL error: ") + curl_easy_strerror(res);
 		return "";
 	}
 
@@ -77,7 +77,7 @@ std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string
 
 	if (httpCode >= 400)
 	{
-		msg_err = u8"HTTP ошибка " + std::to_string(httpCode) + ": " + response;
+		msg_err = "HTTP error " + std::to_string(httpCode) + ": " + response;
 		return "";
 	}
 

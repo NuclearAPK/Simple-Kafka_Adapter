@@ -1,6 +1,6 @@
 #include "stdafx.h"
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 
 BOOL APIENTRY DllMain(HMODULE hModule,
                       DWORD ul_reason_for_call,
@@ -17,4 +17,4 @@ BOOL APIENTRY DllMain(HMODULE hModule,
     return TRUE;
 }
 
-#endif //_WINDOWS
+#endif //_WIN32

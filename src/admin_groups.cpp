@@ -66,7 +66,8 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
 	if (!rk)
 	{
-		msg_err = enrichSslError(std::string(u8"Ошибка создания клиента: ") + errstr);
+		msg_err = enrichSslError(std::string("Client creation error: ") + errstr);
+		rd_kafka_conf_destroy(conf);
 		return result;
 	}
 
@@ -75,7 +76,7 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	rd_kafka_topic_t* rkt = rd_kafka_topic_new(rk, tTopicName.c_str(), nullptr);
 	if (!rkt)
 	{
-		msg_err = u8"Ошибка создания дескриптора топика";
+		msg_err = "Topic handle creation error";
 		rd_kafka_destroy(rk);
 		return result;
 	}
@@ -102,7 +103,7 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 
 	if (!topic_metadata)
 	{
-		msg_err = u8"Топик не найден";
+		msg_err = "Topic not found";
 		rd_kafka_metadata_destroy(metadata);
 		rd_kafka_topic_destroy(rkt);
 		rd_kafka_destroy(rk);
@@ -223,7 +224,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
 	if (!rkev)
 	{
-		msg_err = u8"Таймаут при получении списка групп";
+		msg_err = "Timeout while retrieving group list";
 		rd_kafka_AdminOptions_destroy(list_options);
 		return result;
 	}
@@ -239,7 +240,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	const rd_kafka_ListConsumerGroups_result_t* list_result = rd_kafka_event_ListConsumerGroups_result(rkev);
 	if (!list_result)
 	{
-		msg_err = u8"Не удалось получить результат списка групп";
+		msg_err = "Failed to get group list result";
 		rd_kafka_event_destroy(rkev);
 		rd_kafka_AdminOptions_destroy(list_options);
 		return result;
@@ -287,7 +288,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	rd_kafka_topic_t* rkt = rd_kafka_topic_new(admin.get(), tTopicName.c_str(), nullptr);
 	if (!rkt)
 	{
-		msg_err = u8"Ошибка создания дескриптора топика";
+		msg_err = "Topic handle creation error";
 		return result;
 	}
 
@@ -315,7 +316,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 
 	if (partition_cnt == 0)
 	{
-		msg_err = u8"Топик не найден или не имеет партиций";
+		msg_err = "Topic not found or has no partitions";
 		return result;
 	}
 
@@ -424,7 +425,7 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 {
 	if (hConsumer == nullptr)
 	{
-		msg_err = u8"Консьюмер не инициализирован";
+		msg_err = "Consumer not initialized";
 		return EMPTYSTR;
 	}
 
@@ -442,8 +443,15 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 	boost::property_tree::ptree jsonObj;
 	boost::property_tree::ptree topicsChildren;
 
-	class RdKafka::Metadata* metadata;
-	hConsumer->metadata(true, nullptr, &metadata, 1000);
+	class RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode metaErr = hConsumer->metadata(true, nullptr, &metadata, 1000);
+
+	if (metaErr != RdKafka::ERR_NO_ERROR || metadata == nullptr)
+	{
+		msg_err = "Failed to get metadata: " + RdKafka::err2str(metaErr);
+		if (metadata) delete metadata;
+		return EMPTYSTR;
+	}
 
 	std::vector<RdKafka::TopicPartition*> partitions;
 	RdKafka::Metadata::TopicMetadataIterator it;
@@ -467,23 +475,28 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 
 	RdKafka::ErrorCode err;
 
+	const int maxRetries = 3;
+	int retries = 0;
+
 	if (timeline == 0) {
 		do {
 			err = hConsumer->committed(partitions, tm);
-			tm = tm + 1000;
-		} while (err);
+			retries++;
+		} while (err && retries < maxRetries);
 	}
 	else
 	{
 		do {
 			err = hConsumer->offsetsForTimes(partitions, tm);
-			tm = tm + 1000;
-		} while (err);
+			retries++;
+		} while (err && retries < maxRetries);
 	}
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
 		msg_err = RdKafka::err2str(err);
+		for (auto tp : partitions) delete tp;
+		delete metadata;
 		return EMPTYSTR;
 	}
 
@@ -565,7 +578,7 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 
 	if (!rkev)
 	{
-		msg_err = u8"Таймаут при удалении группы консьюмеров";
+		msg_err = "Timeout while deleting consumer group";
 		return false;
 	}
 
@@ -837,7 +850,7 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 
 		if (!jv.is_array())
 		{
-			msg_err = u8"JSON должен содержать массив топиков и партиций";
+			msg_err = "JSON must contain an array of topics and partitions";
 			return false;
 		}
 
@@ -853,7 +866,7 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 
 			if (!obj.contains("topic") || !obj.contains("partition"))
 			{
-				msg_err = u8"Каждый элемент должен содержать 'topic' и 'partition'";
+				msg_err = "Each element must contain 'topic' and 'partition'";
 				for (auto* tp : partitions)
 					delete tp;
 				return false;
@@ -875,7 +888,7 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 
 		if (partitions.empty())
 		{
-			msg_err = u8"Не найдено валидных топиков и партиций для назначения";
+			msg_err = "No valid topics and partitions found for assignment";
 			return false;
 		}
 

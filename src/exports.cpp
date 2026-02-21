@@ -23,7 +23,7 @@
 
 #include "SimpleKafka1C.h"
 
-#ifdef _WINDOWS
+#ifdef _WIN32
 #pragma warning (disable : 4311 4302)
 #endif
 

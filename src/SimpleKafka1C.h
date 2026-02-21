@@ -9,6 +9,7 @@
 #include <curl/curl.h>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string_view>
@@ -27,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.3";
+	static constexpr char Version[] = u8"1.8.4";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -137,6 +138,30 @@ private:
 		bool applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error);
 		std::string enrichSslError(std::string_view baseError) const;
 
+		// Helper: parse "key1,val1;key2,val2" header string into RdKafka::Headers
+		RdKafka::Headers* parseKafkaHeaders(const std::string& headerString);
+
+		// Helper: retry produce on ERR__QUEUE_FULL with max retries
+		static constexpr int MAX_QUEUE_FULL_RETRIES = 60;
+		RdKafka::ErrorCode produceWithRetry(std::function<RdKafka::ErrorCode()> produceFn,
+		                                     std::ofstream& eventFile);
+
+		// Helper: create a temporary Producer for metadata/admin queries
+		std::unique_ptr<RdKafka::Producer> createMetadataClient(const std::string& brokers);
+
+		// Helper: common logic for produceWithWaitResult / produceAvroWithWaitResult / produceProtobufWithWaitResult
+		int32_t produceAndWaitResult(std::function<int32_t()> produceFn, const std::string& methodLogName);
+
+		// Helper: prepare filtered settings for applyKafkaSettings overloads
+		struct FilteredSettings {
+			struct Param { std::string key; std::string value; };
+			std::vector<Param> params;
+			std::vector<Param> pemOverrides;  // ssl.*.pem read from files
+			bool hasStatisticsInterval = false;
+			bool needDefaultSslProviders = false;
+		};
+		bool prepareFilteredSettings(FilteredSettings& out, std::string& error);
+
 	// producer
 	bool initProducer(const variant_t &brokers);
 	int32_t produce(const variant_t &msg, const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
@@ -167,6 +192,7 @@ private:
 	std::string getMessageTopicName();
 	int32_t getMessageBrokerID();
 	double getMessageTimestamp();
+	std::string getMessageTimestampISO();
 	int32_t getMessagePartition();
 
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
