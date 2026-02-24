@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.4";
+	static constexpr char Version[] = u8"1.8.5";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -184,7 +184,7 @@ private:
 	bool subscribe(const variant_t& topic);
 	std::string consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
-	std::string consumeBatch(const variant_t &maxMessages, const variant_t &maxWaitMs);	// пакетное чтение
+	std::string consumeBatch(const variant_t &maxMessages, const variant_t &maxWaitMs, const variant_t &asBase64);	// пакетное чтение
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
 	std::string getMessageKey();
 	std::string getMessageHeaders();

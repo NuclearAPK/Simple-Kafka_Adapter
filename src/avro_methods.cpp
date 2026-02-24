@@ -4,6 +4,7 @@
 #include <boost/json/monotonic_resource.hpp>
 
 #include <avro/Encoder.hh>
+#include <avro/Decoder.hh>
 #include <avro/Compiler.hh>
 #include <avro/Types.hh>
 #include <avro/DataFile.hh>
@@ -709,6 +710,67 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 		if (std::holds_alternative<std::string>(schemaJsonName))
 		{
 			schemaName = std::get<std::string>(schemaJsonName);
+		}
+
+		// Если схема передана явно, поддерживаем Raw Avro и Confluent Wire Format
+		if (!schemaName.empty())
+		{
+			auto it = schemesMap.find(schemaName);
+			if (it == schemesMap.end())
+			{
+				msg_err = "Schema not found: " + schemaName;
+				return std::string("");
+			}
+
+			size_t payloadOffset = 0;
+			if (static_cast<uint8_t>(dataPtr->at(0)) == 0x00)
+			{
+				if (dataSize < 5)
+				{
+					msg_err = "Invalid Confluent Wire Format payload: header is shorter than 5 bytes";
+					return std::string("");
+				}
+				payloadOffset = 5;
+			}
+
+			if (dataSize <= payloadOffset)
+			{
+				msg_err = "AVRO payload is empty after header processing";
+				return std::string("");
+			}
+
+			avro::ValidSchema schema = it->second;
+			std::unique_ptr<avro::InputStream> in = avro::memoryInputStream(
+				reinterpret_cast<const uint8_t*>(dataPtr->data() + payloadOffset),
+				dataSize - payloadOffset);
+
+			avro::DecoderPtr decoder = avro::binaryDecoder();
+			decoder->init(*in);
+
+			avro::GenericReader reader(schema, decoder);
+			avro::GenericDatum datum(schema);
+			reader.read(datum);
+
+			if (returnAsJson)
+			{
+				return convertAvroDatumToJsonString(datum);
+			}
+
+			std::unique_ptr<avro::OutputStream> out = avro::memoryOutputStream();
+			avro::EncoderPtr encoder = avro::binaryEncoder();
+			encoder->init(*out);
+			avro::GenericWriter::write(*encoder, datum, schema);
+			encoder->flush();
+
+			std::unique_ptr<avro::InputStream> inStream = avro::memoryInputStream(*out);
+			const uint8_t* data;
+			size_t len;
+			std::vector<char> result;
+			while (inStream->next(&data, &len))
+			{
+				result.insert(result.end(), data, data + len);
+			}
+			return result;
 		}
 
 		// Создаём поток для чтения из памяти

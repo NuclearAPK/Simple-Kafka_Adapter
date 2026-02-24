@@ -316,6 +316,12 @@ void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer* consumer
 	}
 	else {
 		consumer->unassign();
+
+		for (auto offset : offsets)
+		{
+			delete offset;
+		}
+		offsets.clear();
 	}
 }
 
@@ -378,7 +384,7 @@ SimpleKafka1C::SimpleKafka1C()
 	// + modern methods
 	AddMethod(L"ReadMessage", L"ПрочитатьСообщение", this, &SimpleKafka1C::getMessage);
 	AddMethod(L"ConsumeBatch", L"ЧитатьПакетСообщений", this, &SimpleKafka1C::consumeBatch,
-		{ {0, 100}, {1, 1000} });
+		{ {0, 100}, {1, 1000}, {2, false} });
 	AddMethod(L"GetMessageData", L"ПолучитьДанныеСообщения", this, &SimpleKafka1C::getMessageData, { {0, false} });
 	AddMethod(L"GetMessageKey", L"ПолучитьКлючСообщения", this, &SimpleKafka1C::getMessageKey);
 	AddMethod(L"GetMessageHeaders", L"ПолучитьЗаголовкиСообщения", this, &SimpleKafka1C::getMessageHeaders);

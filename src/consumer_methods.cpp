@@ -15,6 +15,32 @@
 #include <fstream>
 #include <sstream>
 
+namespace {
+std::string base64Encode(const uint8_t* data, size_t len)
+{
+	static constexpr char table[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	std::string out;
+	out.reserve(((len + 2) / 3) * 4);
+
+	for (size_t i = 0; i < len; i += 3)
+	{
+		const uint32_t octetA = data[i];
+		const uint32_t octetB = (i + 1 < len) ? data[i + 1] : 0;
+		const uint32_t octetC = (i + 2 < len) ? data[i + 2] : 0;
+		const uint32_t triple = (octetA << 16) | (octetB << 8) | octetC;
+
+		out.push_back(table[(triple >> 18) & 0x3F]);
+		out.push_back(table[(triple >> 12) & 0x3F]);
+		out.push_back((i + 1 < len) ? table[(triple >> 6) & 0x3F] : '=');
+		out.push_back((i + 2 < len) ? table[triple & 0x3F] : '=');
+	}
+
+	return out;
+}
+}
+
 //================================== Consumer ==========================================
 
 bool SimpleKafka1C::initConsumer(const variant_t& brokers)
@@ -309,7 +335,7 @@ bool SimpleKafka1C::getMessage()
 	return true;
 }
 
-std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const variant_t& maxWaitMs)
+std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const variant_t& maxWaitMs, const variant_t& asBase64)
 {
 	if (hConsumer == nullptr)
 	{
@@ -322,6 +348,7 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 
 	if (maxMsgCount <= 0) maxMsgCount = 100;
 	if (maxWait <= 0) maxWait = 1000;
+	bool encodeAsBase64 = std::holds_alternative<bool>(asBase64) && std::get<bool>(asBase64);
 
 	boost::json::array messagesArray;
 	auto startTime = std::chrono::steady_clock::now();
@@ -347,8 +374,15 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 			boost::json::object msgObj;
 
 			// Данные сообщения
-			char* payload = static_cast<char*>(msg->payload());
-			msgObj["message"] = std::string(payload, msg->len());
+			const char* payload = static_cast<const char*>(msg->payload());
+			if (encodeAsBase64)
+			{
+				msgObj["message"] = base64Encode(reinterpret_cast<const uint8_t*>(payload), msg->len());
+			}
+			else
+			{
+				msgObj["message"] = std::string(payload, msg->len());
+			}
 
 			// Ключ
 			if (msg->key() && !msg->key()->empty())

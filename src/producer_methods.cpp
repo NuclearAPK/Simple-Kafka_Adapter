@@ -414,8 +414,9 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 				successCount++;
 			}
 
-			hProducer->poll(0);
 		}
+
+		hProducer->poll(0);
 
 		if (eventFile.is_open())
 			eventFile << currentDateTime() << " Info: produceBatch. Successfully sent " << successCount << " of " << totalMessages << " messages" << std::endl;
@@ -614,6 +615,10 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 	{
 		std::string jsonStr = std::get<std::string>(offsetsJson);
 		std::string groupId = std::get<std::string>(consumerGroupId);
+		if (!isValidConsumerGroupId(groupId, msg_err))
+		{
+			return false;
+		}
 
 		// Parse JSON with offsets
 		boost::json::value jv = boost::json::parse(jsonStr);
@@ -641,9 +646,19 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 			offsets.push_back(tp);
 		}
 
-		// Commit offsets synchronously within the transaction context
-		// This approach works with older librdkafka versions
-		RdKafka::ErrorCode err = hConsumer->commitSync(offsets);
+		RdKafka::ConsumerGroupMetadata* groupMetadata = hConsumer->groupMetadata();
+		if (!groupMetadata)
+		{
+			for (auto* tp : offsets)
+			{
+				delete tp;
+			}
+			msg_err = "Failed to get consumer group metadata";
+			return false;
+		}
+
+		RdKafka::Error* error = hProducer->send_offsets_to_transaction(offsets, groupMetadata, 30000);
+		delete groupMetadata;
 
 		// Cleanup
 		for (auto* tp : offsets)
@@ -651,9 +666,10 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 			delete tp;
 		}
 
-		if (err != RdKafka::ERR_NO_ERROR)
+		if (error)
 		{
-			msg_err = RdKafka::err2str(err);
+			msg_err = error->str();
+			delete error;
 			return false;
 		}
 

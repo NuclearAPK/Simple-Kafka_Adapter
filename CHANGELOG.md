@@ -5,6 +5,20 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.5] - 2026-02-24
+
+### Изменено
+- `DecodeAvroMessage` / `ДекодироватьСообщениеAVRO`: при переданном имени схемы добавлена поддержка Confluent Wire Format (`0x00 + schemaId + payload`) и Raw Avro через `avro::binaryDecoder` и чтение по схеме из памяти
+- `ConsumeBatch` / `ЧитатьПакетСообщений`: добавлен необязательный параметр `AsBase64` (по умолчанию `false`) для безопасной передачи бинарных payload в JSON
+
+### Исправлено
+- Устранена ошибка декодирования AVRO (`Invalid data file. Magic does not match`) для сообщений в формате Confluent Wire Format и Raw Avro при явном указании схемы
+- `SendOffsetsToTransaction` / `ОтправитьОфсетыВТранзакцию`: `commitSync` заменён на `send_offsets_to_transaction(...)` для корректной атомарной фиксации офсетов в рамках транзакции
+- `ProduceBatch` / `ОтправитьПакетСообщений`: вызов `hProducer->poll(0)` вынесен за пределы цикла отправки для снижения накладных расходов при больших пакетах
+- `clRebalanceCb::rebalance_cb`: добавлена очистка `offsets` при revoke/error ветках ребалансировки, устранена утечка памяти
+
+---
+
 ## [1.8.4] - 2026-02-20
 
 ### Добавлено
