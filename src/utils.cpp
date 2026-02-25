@@ -16,6 +16,90 @@ char* slice(char* s, size_t from, size_t to)
 	return s;
 }
 
+std::string base64Encode(const uint8_t* data, size_t len)
+{
+	static constexpr char table[] =
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+	std::string out;
+	out.reserve(((len + 2) / 3) * 4);
+
+	for (size_t i = 0; i < len; i += 3)
+	{
+		const uint32_t octetA = data[i];
+		const uint32_t octetB = (i + 1 < len) ? data[i + 1] : 0;
+		const uint32_t octetC = (i + 2 < len) ? data[i + 2] : 0;
+		const uint32_t triple = (octetA << 16) | (octetB << 8) | octetC;
+
+		out.push_back(table[(triple >> 18) & 0x3F]);
+		out.push_back(table[(triple >> 12) & 0x3F]);
+		out.push_back((i + 1 < len) ? table[(triple >> 6) & 0x3F] : '=');
+		out.push_back((i + 2 < len) ? table[triple & 0x3F] : '=');
+	}
+
+	return out;
+}
+
+bool isValidUtf8(const char* data, size_t len)
+{
+	size_t i = 0;
+	while (i < len)
+	{
+		const unsigned char c = static_cast<unsigned char>(data[i]);
+		size_t remaining = 0;
+
+		if ((c & 0x80) == 0x00)
+		{
+			i++;
+			continue;
+		}
+		else if ((c & 0xE0) == 0xC0)
+		{
+			remaining = 1;
+			if (c < 0xC2) return false; // overlong
+		}
+		else if ((c & 0xF0) == 0xE0)
+		{
+			remaining = 2;
+		}
+		else if ((c & 0xF8) == 0xF0)
+		{
+			remaining = 3;
+			if (c > 0xF4) return false; // > U+10FFFF
+		}
+		else
+		{
+			return false;
+		}
+
+		if (i + remaining >= len) return false;
+
+		for (size_t j = 1; j <= remaining; ++j)
+		{
+			const unsigned char cc = static_cast<unsigned char>(data[i + j]);
+			if ((cc & 0xC0) != 0x80) return false;
+		}
+
+		// Extra checks for overlong/surrogates
+		if (remaining == 2)
+		{
+			const unsigned char c1 = static_cast<unsigned char>(data[i + 1]);
+			if (c == 0xE0 && c1 < 0xA0) return false; // overlong
+			if (c == 0xED && c1 >= 0xA0) return false; // surrogate
+		}
+		else if (remaining == 3)
+		{
+			const unsigned char c1 = static_cast<unsigned char>(data[i + 1]);
+			if (c == 0xF0 && c1 < 0x90) return false; // overlong
+			if (c == 0xF4 && c1 >= 0x90) return false; // > U+10FFFF
+		}
+
+		i += remaining + 1;
+	}
+
+	return true;
+}
+
 std::string currentDateTime()
 {
 	std::chrono::time_point now = std::chrono::high_resolution_clock::now();

@@ -14,32 +14,8 @@
 
 #include <fstream>
 #include <sstream>
-
-namespace {
-std::string base64Encode(const uint8_t* data, size_t len)
-{
-	static constexpr char table[] =
-		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-	std::string out;
-	out.reserve(((len + 2) / 3) * 4);
-
-	for (size_t i = 0; i < len; i += 3)
-	{
-		const uint32_t octetA = data[i];
-		const uint32_t octetB = (i + 1 < len) ? data[i + 1] : 0;
-		const uint32_t octetC = (i + 2 < len) ? data[i + 2] : 0;
-		const uint32_t triple = (octetA << 16) | (octetB << 8) | octetC;
-
-		out.push_back(table[(triple >> 18) & 0x3F]);
-		out.push_back(table[(triple >> 12) & 0x3F]);
-		out.push_back((i + 1 < len) ? table[(triple >> 6) & 0x3F] : '=');
-		out.push_back((i + 2 < len) ? table[triple & 0x3F] : '=');
-	}
-
-	return out;
-}
-}
+#include <cmath>
+#include <limits>
 
 //================================== Consumer ==========================================
 
@@ -346,9 +322,7 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 	int32_t maxMsgCount = std::get<int32_t>(maxMessages);
 	int32_t maxWait = std::get<int32_t>(maxWaitMs);
 
-	if (maxMsgCount <= 0) maxMsgCount = 100;
-	if (maxWait <= 0) maxWait = 1000;
-	bool encodeAsBase64 = std::holds_alternative<bool>(asBase64) && std::get<bool>(asBase64);
+	bool encodeAsBase64 = std::get<bool>(asBase64);
 
 	boost::json::array messagesArray;
 	auto startTime = std::chrono::steady_clock::now();
@@ -366,71 +340,124 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 		int32_t remainingWait = static_cast<int32_t>(maxWait - elapsed);
 		if (remainingWait <= 0) remainingWait = 1;
 
-		RdKafka::Message* msg = hConsumer->consume(remainingWait);
+		RdKafka::Message* msg = hConsumer->consume(waitMessageTimeout);
+		if (!msg)
+		{
+			msg_err = "Consumer returned null message";
+			consumerMetrics.errorsCount++;
+			break;
+		}
+
 		RdKafka::ErrorCode resultConsume = msg->err();
 
 		if (resultConsume == RdKafka::ERR_NO_ERROR)
 		{
-			boost::json::object msgObj;
-
-			// Данные сообщения
-			const char* payload = static_cast<const char*>(msg->payload());
-			if (encodeAsBase64)
+			try
 			{
-				msgObj["message"] = base64Encode(reinterpret_cast<const uint8_t*>(payload), msg->len());
-			}
-			else
-			{
-				msgObj["message"] = std::string(payload, msg->len());
-			}
-
-			// Ключ
-			if (msg->key() && !msg->key()->empty())
-			{
-				msgObj["key"] = *msg->key();
-			}
-
-			// Метаданные
-			msgObj["topic"] = msg->topic_name();
-			msgObj["partition"] = msg->partition();
-			msgObj["offset"] = msg->offset();
-			msgObj["broker_id"] = msg->broker_id();
-
-			RdKafka::MessageTimestamp ts = msg->timestamp();
-			msgObj["timestamp"] = ts.timestamp;
-
-			// Заголовки
-			RdKafka::Headers* headers = msg->headers();
-			if (headers)
-			{
-				boost::json::array headersArray;
-				std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
-				for (const auto& hdr : hdrs)
+				boost::json::object msgObj;
+				auto putUtf8OrBase64 = [](boost::json::object& obj,
+					const char* fieldName,
+					const char* data,
+					size_t size,
+					const char* encodingFieldName)
 				{
-					boost::json::object headerObj;
-					headerObj["key"] = hdr.key();
-					headerObj["value"] = std::string(static_cast<const char*>(hdr.value()), hdr.value_size());
-					headersArray.push_back(headerObj);
+					if (!data || size == 0)
+					{
+						obj[fieldName] = "";
+						return;
+					}
+
+					if (isValidUtf8(data, size))
+					{
+						obj[fieldName] = std::string(data, size);
+					}
+					else
+					{
+						obj[fieldName] = base64Encode(reinterpret_cast<const uint8_t*>(data), size);
+						if (encodingFieldName && encodingFieldName[0] != '\0')
+						{
+							obj[encodingFieldName] = "base64";
+						}
+					}
+				};
+
+				// Данные сообщения
+				const void* payloadRaw = msg->payload();
+				const size_t payloadSize = msg->len();
+				if (!payloadRaw || payloadSize == 0)
+				{
+					msgObj["message"] = "";
 				}
-				msgObj["headers"] = headersArray;
+				else if (encodeAsBase64)
+				{
+					msgObj["message"] = base64Encode(static_cast<const uint8_t*>(payloadRaw), payloadSize);
+				}
+				else
+				{
+					putUtf8OrBase64(msgObj, "message", static_cast<const char*>(payloadRaw), payloadSize, "message_encoding");
+				}
+
+				// Ключ
+				if (msg->key() && !msg->key()->empty())
+				{
+					const std::string& keyValue = *msg->key();
+					putUtf8OrBase64(msgObj, "key", keyValue.data(), keyValue.size(), "key_encoding");
+				}
+
+				// Метаданные
+				const std::string topicName = msg->topic_name();
+				putUtf8OrBase64(msgObj, "topic", topicName.data(), topicName.size(), "topic_encoding");
+				msgObj["partition"] = msg->partition();
+				msgObj["offset"] = msg->offset();
+				msgObj["broker_id"] = msg->broker_id();
+
+				RdKafka::MessageTimestamp ts = msg->timestamp();
+				msgObj["timestamp"] = ts.timestamp;
+
+				// Заголовки
+				RdKafka::Headers* headers = msg->headers();
+				if (headers)
+				{
+					boost::json::array headersArray;
+					std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
+					for (const auto& hdr : hdrs)
+					{
+						boost::json::object headerObj;
+						const std::string headerKey = hdr.key();
+						putUtf8OrBase64(headerObj, "key", headerKey.data(), headerKey.size(), "key_encoding");
+						const void* headerValue = hdr.value();
+						const size_t headerSize = hdr.value_size();
+						if (headerValue && headerSize > 0)
+						{
+							putUtf8OrBase64(headerObj, "value", static_cast<const char*>(headerValue), headerSize, "encoding");
+						}
+						else
+						{
+							headerObj["value"] = "";
+						}
+						headersArray.push_back(headerObj);
+					}
+					msgObj["headers"] = headersArray;
+				}
+
+				messagesArray.push_back(msgObj);
+				messagesRead++;
+
+				// Обновляем метрики
+				consumerMetrics.messagesConsumed++;
+				consumerMetrics.bytesConsumed += msg->len();
 			}
-
-			messagesArray.push_back(msgObj);
-			messagesRead++;
-
-			// Обновляем метрики
-			consumerMetrics.messagesConsumed++;
-			consumerMetrics.bytesConsumed += msg->len();
+			catch (const std::exception& e)
+			{
+				msg_err = std::string("Failed to process consumed message: ") + e.what();
+				consumerMetrics.errorsCount++;
+			}
 		}
 		else if (resultConsume == RdKafka::ERR__TIMED_OUT)
 		{
 			consumerMetrics.pollTimeouts++;
-			// При таймауте выходим из цикла, если уже есть сообщения
-			if (messagesRead > 0)
-			{
-				delete msg;
-				break;
-			}
+			// Таймаут poll сам по себе не означает конец батча:
+			// продолжаем до достижения maxWait/maxMessages.
 		}
 		else
 		{
