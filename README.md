@@ -15,6 +15,7 @@
 ## Использование
 
 Версия компоненты 1.1.0 и выше, имеет значительные, не совместимые изменения от более ранних версий. Документация по использованию ранних версий находится [здесь](./docs/OldReleases.md).
+
 Так же доступна книга - ["Apache Kafka и 1С. Первые шаги"](https://github.com/NuclearAPK/Simple-Kafka-Start-Book). В ней описаны самые базовые шаги, которые познакомят вас с брокером Kafka и его интеграции с 1С. 
 
 [Сборка](./docs/building.md) | [Сборка через Visual Studio](./docs/visual_studio_build.md) | [Статическая линковка Protobuf](./docs/protobuf_static_linking.md)
