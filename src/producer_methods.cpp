@@ -66,6 +66,12 @@ RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorC
 
 bool SimpleKafka1C::initProducer(const variant_t& brokers)
 {
+	// Освобождаем предыдущий экземпляр продюсера, если он существует
+	if (hProducer != nullptr)
+	{
+		stopProducer();
+	}
+
 	std::string tBrokers = std::get<std::string>(brokers);
 
 	// Валидация адреса брокеров
@@ -464,6 +470,12 @@ bool SimpleKafka1C::stopProducer()
 
 bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const variant_t& transactionalId)
 {
+	// Освобождаем предыдущий экземпляр продюсера, если он существует
+	if (hProducer != nullptr)
+	{
+		stopProducer();
+	}
+
 	std::ofstream eventFile{};
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
@@ -611,6 +623,8 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 		return false;
 	}
 
+	std::vector<RdKafka::TopicPartition*> offsets;
+
 	try
 	{
 		std::string jsonStr = std::get<std::string>(offsetsJson);
@@ -631,7 +645,6 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 		}
 
 		boost::json::array offsetsArray = obj["offsets"].as_array();
-		std::vector<RdKafka::TopicPartition*> offsets;
 
 		// Build offsets vector
 		for (const auto& item : offsetsArray)
@@ -678,6 +691,10 @@ bool SimpleKafka1C::sendOffsetsToTransaction(const variant_t& offsetsJson, const
 	catch (const std::exception& e)
 	{
 		msg_err = std::string("Exception in sendOffsetsToTransaction: ") + e.what();
+		for (auto* tp : offsets)
+		{
+			delete tp;
+		}
 		return false;
 	}
 }

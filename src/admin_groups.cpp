@@ -454,72 +454,83 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 	}
 
 	std::vector<RdKafka::TopicPartition*> partitions;
-	RdKafka::Metadata::TopicMetadataIterator it;
-	typedef RdKafka::TopicMetadata::PartitionMetadataIterator PartitionIterator;
 
-	for (it = metadata->topics()->begin(); it != metadata->topics()->end(); ++it)
+	try
 	{
-		for (PartitionIterator partIt = (*it)->partitions()->begin(); partIt != (*it)->partitions()->end(); ++partIt)
+		RdKafka::Metadata::TopicMetadataIterator it;
+		typedef RdKafka::TopicMetadata::PartitionMetadataIterator PartitionIterator;
+
+		for (it = metadata->topics()->begin(); it != metadata->topics()->end(); ++it)
 		{
-			if (timeline > 0) {
-				RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create((*it)->topic().c_str(), (*partIt)->id(), timeline);
-				partitions.push_back(tp);
-			}
-			else
+			for (PartitionIterator partIt = (*it)->partitions()->begin(); partIt != (*it)->partitions()->end(); ++partIt)
 			{
-				RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create((*it)->topic().c_str(), (*partIt)->id());
-				partitions.push_back(tp);
+				if (timeline > 0) {
+					RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create((*it)->topic().c_str(), (*partIt)->id(), timeline);
+					partitions.push_back(tp);
+				}
+				else
+				{
+					RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create((*it)->topic().c_str(), (*partIt)->id());
+					partitions.push_back(tp);
+				}
 			}
 		}
+
+		RdKafka::ErrorCode err;
+
+		const int maxRetries = 3;
+		int retries = 0;
+
+		if (timeline == 0) {
+			do {
+				err = hConsumer->committed(partitions, tm);
+				retries++;
+			} while (err && retries < maxRetries);
+		}
+		else
+		{
+			do {
+				err = hConsumer->offsetsForTimes(partitions, tm);
+				retries++;
+			} while (err && retries < maxRetries);
+		}
+
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(err);
+			for (auto tp : partitions) delete tp;
+			delete metadata;
+			return EMPTYSTR;
+		}
+
+		delete metadata;
+
+		for (auto tp : partitions)
+		{
+			boost::property_tree::ptree node;
+			node.put("topic", tp->topic());
+			node.put("partition", tp->partition());
+			node.put("offset", tp->offset());
+
+			topicsChildren.push_back(boost::property_tree::ptree::value_type("", node));
+			delete tp;
+		}
+
+		if (topicsChildren.size())
+		{
+			jsonObj.put_child("metadata", topicsChildren);
+		}
+		boost::property_tree::write_json(s, jsonObj, true);
+
+		return s.str();
 	}
-
-	RdKafka::ErrorCode err;
-
-	const int maxRetries = 3;
-	int retries = 0;
-
-	if (timeline == 0) {
-		do {
-			err = hConsumer->committed(partitions, tm);
-			retries++;
-		} while (err && retries < maxRetries);
-	}
-	else
+	catch (const std::exception& e)
 	{
-		do {
-			err = hConsumer->offsetsForTimes(partitions, tm);
-			retries++;
-		} while (err && retries < maxRetries);
-	}
-
-	if (err != RdKafka::ERR_NO_ERROR)
-	{
-		msg_err = RdKafka::err2str(err);
-		for (auto tp : partitions) delete tp;
+		msg_err = std::string("Exception in getConsumerCurrentGroupOffset: ") + e.what();
+		for (auto* tp : partitions) delete tp;
 		delete metadata;
 		return EMPTYSTR;
 	}
-
-	delete metadata;
-
-	for (auto tp : partitions)
-	{
-		boost::property_tree::ptree node;
-		node.put("topic", tp->topic());
-		node.put("partition", tp->partition());
-		node.put("offset", tp->offset());
-
-		topicsChildren.push_back(boost::property_tree::ptree::value_type("", node));
-		delete tp;
-	}
-
-	if (topicsChildren.size())
-	{
-		jsonObj.put_child("metadata", topicsChildren);
-	}
-	boost::property_tree::write_json(s, jsonObj, true);
-
-	return s.str();
 }
 
 std::string SimpleKafka1C::getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout)
@@ -836,6 +847,8 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 		return false;
 	}
 
+	std::vector<RdKafka::TopicPartition*> partitions;
+
 	try
 	{
 		std::string jsonStr = std::get<std::string>(jsonTopicPartitions);
@@ -855,7 +868,6 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 		}
 
 		boost::json::array topicPartitions = jv.as_array();
-		std::vector<RdKafka::TopicPartition*> partitions;
 
 		for (const auto& item : topicPartitions)
 		{
@@ -910,6 +922,8 @@ bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 	catch (const std::exception& e)
 	{
 		msg_err = std::string("Exception in assign: ") + e.what();
+		for (auto* tp : partitions)
+			delete tp;
 		return false;
 	}
 }
@@ -922,9 +936,10 @@ std::string SimpleKafka1C::getAssignment()
 		return "";
 	}
 
+	std::vector<RdKafka::TopicPartition*> partitions;
+
 	try
 	{
-		std::vector<RdKafka::TopicPartition*> partitions;
 		RdKafka::ErrorCode err = hConsumer->assignment(partitions);
 
 		if (err != RdKafka::ERR_NO_ERROR)
@@ -961,6 +976,8 @@ std::string SimpleKafka1C::getAssignment()
 	catch (const std::exception& e)
 	{
 		msg_err = std::string("Exception in getAssignment: ") + e.what();
+		for (auto* tp : partitions)
+			delete tp;
 		return "";
 	}
 }

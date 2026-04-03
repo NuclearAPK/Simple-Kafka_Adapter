@@ -21,6 +21,12 @@
 
 bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 {
+	// Освобождаем предыдущий экземпляр консьюмера, если он существует
+	if (hConsumer != nullptr)
+	{
+		stopConsumer();
+	}
+
 	std::string tBrokers = std::get<std::string>(brokers);
 
 	// Валидация адреса брокеров

@@ -416,6 +416,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"PingBroker", L"ПроверитьДоступностьБрокера", this, &SimpleKafka1C::pingBroker);
 	AddMethod(L"GetPartitionMessageCount", L"ПолучитьКоличествоСообщенийВПартиции", this, &SimpleKafka1C::getPartitionMessageCount);
 	AddMethod(L"GetBuiltinFeatures", L"ПолучитьВозможностиБиблиотеки", this, &SimpleKafka1C::getBuiltinFeatures);
+	AddMethod(L"GetTopicSize", L"ПолучитьРазмерТопика", this, &SimpleKafka1C::getTopicSize, { {2, 30000} });
 	// - cluster and broker information
 
 	// + consumer group management
