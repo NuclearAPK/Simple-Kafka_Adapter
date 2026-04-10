@@ -203,10 +203,11 @@ std::string SimpleKafka1C::consume()
 			for (size_t i = 0; i < hdrs.size(); i++)
 			{
 				RdKafka::Headers::Header hdr = hdrs[i];
+				const char* headerValue = static_cast<const char*>(hdr.value());
 
 				boost::property_tree::ptree node;
 				node.put("key", hdr.key().c_str());
-				node.put("value", (const char*)hdr.value());
+				node.put("value", headerValue ? headerValue : "");
 
 				headersChildren.push_back(boost::property_tree::ptree::value_type("", node));
 			}
@@ -280,8 +281,9 @@ bool SimpleKafka1C::getMessage()
 			std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
 			for (size_t i = 0; i < hdrs.size(); i++) {
 				RdKafka::Headers::Header hdr = hdrs[i];
+				const char* headerValue = static_cast<const char*>(hdr.value());
 
-				HeadersMessage mh{ hdr.key().c_str(), (const char*)hdr.value() };
+				HeadersMessage mh{ hdr.key().c_str(), headerValue ? headerValue : "" };
 				messageHeaders.push_back(mh);
 			}
 		}
