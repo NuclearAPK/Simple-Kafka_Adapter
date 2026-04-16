@@ -41,6 +41,7 @@ set(SOURCE_FILES
     src/admin_topics.cpp
     src/admin_metadata.cpp
     src/admin_groups.cpp
+    src/admin_acl.cpp
     src/avro_methods.cpp
     src/schema_registry_methods.cpp
     src/protobuf_methods.cpp

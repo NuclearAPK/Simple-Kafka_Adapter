@@ -239,6 +239,17 @@ private:
 	std::string getConsumerGroupList(const variant_t& brokers, const variant_t& timeout);
 	std::string describeConsumerGroup(const variant_t& brokers, const variant_t& groupId, const variant_t& timeout);
 
+	// ACL management
+	bool addAcl(const variant_t& brokers, const variant_t& resourceType, const variant_t& resourceName,
+	            const variant_t& patternType, const variant_t& principal, const variant_t& host,
+	            const variant_t& operation, const variant_t& permissionType, const variant_t& timeout);
+	std::string describeAcls(const variant_t& brokers, const variant_t& resourceType, const variant_t& resourceName,
+	                         const variant_t& patternType, const variant_t& principal, const variant_t& host,
+	                         const variant_t& operation, const variant_t& permissionType, const variant_t& timeout);
+	std::string deleteAcl(const variant_t& brokers, const variant_t& resourceType, const variant_t& resourceName,
+	                      const variant_t& patternType, const variant_t& principal, const variant_t& host,
+	                      const variant_t& operation, const variant_t& permissionType, const variant_t& timeout);
+
 	// advanced consumer position management
 	bool seekToBeginning(const variant_t& topicName, const variant_t& partition);
 	bool seekToEnd(const variant_t& topicName, const variant_t& partition);

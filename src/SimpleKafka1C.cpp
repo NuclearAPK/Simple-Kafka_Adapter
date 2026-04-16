@@ -428,6 +428,12 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"DescribeConsumerGroup", L"ОписатьГруппуКонсьюмеров", this, &SimpleKafka1C::describeConsumerGroup, { {2, 10000} });
 	// - consumer group management
 
+	// + ACL management
+	AddMethod(L"AddAcl", L"ДобавитьACL", this, &SimpleKafka1C::addAcl, { {8, 10000} });
+	AddMethod(L"DescribeAcls", L"ОписатьACL", this, &SimpleKafka1C::describeAcls, { {1, std::string("ANY")}, {2, std::string("")}, {3, std::string("ANY")}, {4, std::string("")}, {5, std::string("")}, {6, std::string("ANY")}, {7, std::string("ANY")}, {8, 10000} });
+	AddMethod(L"DeleteAcl", L"УдалитьACL", this, &SimpleKafka1C::deleteAcl, { {1, std::string("ANY")}, {2, std::string("")}, {3, std::string("ANY")}, {4, std::string("")}, {5, std::string("")}, {6, std::string("ANY")}, {7, std::string("ANY")}, {8, 10000} });
+	// - ACL management
+
 	// + advanced consumer position management
 	AddMethod(L"SeekToBeginning", L"ПерейтиКНачалу", this, &SimpleKafka1C::seekToBeginning);
 	AddMethod(L"SeekToEnd", L"ПерейтиККонцу", this, &SimpleKafka1C::seekToEnd);
