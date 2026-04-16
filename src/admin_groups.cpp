@@ -1184,7 +1184,8 @@ std::string SimpleKafka1C::describeConsumerGroup(const variant_t& brokers, const
 	}
 
 	boost::property_tree::ptree jsonObj;
-	jsonObj.put("group_id", rd_kafka_ConsumerGroupDescription_group_id(grp));
+	const char* gid = rd_kafka_ConsumerGroupDescription_group_id(grp);
+	jsonObj.put("group_id", gid ? gid : "");
 	jsonObj.put("state", rd_kafka_consumer_group_state_name(rd_kafka_ConsumerGroupDescription_state(grp)));
 
 	const char* partition_assignor = rd_kafka_ConsumerGroupDescription_partition_assignor(grp);
