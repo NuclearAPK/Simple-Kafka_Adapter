@@ -572,6 +572,152 @@ int32_t SimpleKafka1C::getMessagePartition()
 	return this->partition;
 }
 
+std::string SimpleKafka1C::readMessageByOffset(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& offset, const variant_t& timeout)
+{
+	std::string result;
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tPartition = std::get<int32_t>(partition);
+	int64_t tOffset = static_cast<int64_t>(std::get<int32_t>(offset));
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	if (!isValidBrokerList(tBrokers, msg_err))
+		return result;
+	if (!isValidTopicName(tTopicName, msg_err))
+		return result;
+	if (!isValidPartition(tPartition, msg_err))
+		return result;
+
+	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
+
+	if (!applyKafkaSettings(conf.get(), msg_err))
+		return result;
+
+	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
+		return result;
+
+	std::string groupId = "__readMessageByOffset_" + clientID() + "_" + std::to_string(pid) + "_" + std::to_string(getTimeStamp());
+	if (conf->set("group.id", groupId, msg_err) != RdKafka::Conf::CONF_OK)
+		return result;
+
+	if (conf->set("enable.auto.commit", "false", msg_err) != RdKafka::Conf::CONF_OK)
+		return result;
+
+	std::unique_ptr<RdKafka::KafkaConsumer> consumer(RdKafka::KafkaConsumer::create(conf.get(), msg_err));
+	if (!consumer)
+	{
+		msg_err = enrichSslError(std::string("Consumer creation error: ") + msg_err);
+		return result;
+	}
+
+	std::vector<RdKafka::TopicPartition*> partitions;
+	partitions.push_back(RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset));
+
+	RdKafka::ErrorCode assignErr = consumer->assign(partitions);
+	if (assignErr != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = "Assign error: " + RdKafka::err2str(assignErr);
+		for (auto* tp : partitions) delete tp;
+		consumer->close();
+		return result;
+	}
+
+	std::unique_ptr<RdKafka::Message> msg(consumer->consume(tTimeout));
+
+	if (!msg)
+	{
+		msg_err = "Consumer returned null message";
+	}
+	else if (msg->err() == RdKafka::ERR_NO_ERROR)
+	{
+		try
+		{
+			boost::json::object msgObj;
+
+			auto putUtf8OrBase64 = [](boost::json::object& obj, const char* fieldName,
+			                          const char* data, size_t size, const char* encodingFieldName)
+			{
+				if (!data || size == 0) { obj[fieldName] = ""; return; }
+				if (isValidUtf8(data, size)) { obj[fieldName] = std::string(data, size); }
+				else
+				{
+					obj[fieldName] = base64Encode(reinterpret_cast<const uint8_t*>(data), size);
+					if (encodingFieldName && encodingFieldName[0] != '\0')
+						obj[encodingFieldName] = "base64";
+				}
+			};
+
+			const void* payloadRaw = msg->payload();
+			const size_t payloadSize = msg->len();
+			if (!payloadRaw || payloadSize == 0)
+				msgObj["message"] = "";
+			else
+				putUtf8OrBase64(msgObj, "message", static_cast<const char*>(payloadRaw), payloadSize, "message_encoding");
+
+			if (msg->key() && !msg->key()->empty())
+			{
+				const std::string& keyValue = *msg->key();
+				putUtf8OrBase64(msgObj, "key", keyValue.data(), keyValue.size(), "key_encoding");
+			}
+			else
+			{
+				msgObj["key"] = "";
+			}
+
+			msgObj["topic"] = msg->topic_name();
+			msgObj["partition"] = msg->partition();
+			msgObj["offset"] = msg->offset();
+			msgObj["broker_id"] = msg->broker_id();
+
+			RdKafka::MessageTimestamp ts = msg->timestamp();
+			msgObj["timestamp"] = ts.timestamp;
+
+			RdKafka::Headers* headers = msg->headers();
+			if (headers)
+			{
+				boost::json::array headersArray;
+				for (const auto& hdr : headers->get_all())
+				{
+					boost::json::object headerObj;
+					const std::string headerKey = hdr.key();
+					putUtf8OrBase64(headerObj, "key", headerKey.data(), headerKey.size(), "key_encoding");
+					const void* headerValue = hdr.value();
+					const size_t headerSize = hdr.value_size();
+					if (headerValue && headerSize > 0)
+						putUtf8OrBase64(headerObj, "value", static_cast<const char*>(headerValue), headerSize, "encoding");
+					else
+						headerObj["value"] = "";
+					headersArray.push_back(headerObj);
+				}
+				msgObj["headers"] = headersArray;
+			}
+
+			result = boost::json::serialize(msgObj);
+		}
+		catch (const std::exception& e)
+		{
+			msg_err = std::string("Failed to process message: ") + e.what();
+		}
+	}
+	else if (msg->err() == RdKafka::ERR__TIMED_OUT)
+	{
+		msg_err = "Timeout waiting for message at offset " + std::to_string(tOffset);
+	}
+	else if (msg->err() == RdKafka::ERR__PARTITION_EOF)
+	{
+		msg_err = "No message at offset " + std::to_string(tOffset) + " (end of partition)";
+	}
+	else
+	{
+		msg_err = "Consume error: " + RdKafka::err2str(msg->err());
+	}
+
+	for (auto* tp : partitions) delete tp;
+	consumer->close();
+	return result;
+}
+
 bool SimpleKafka1C::commitOffset(const variant_t& topicName, const variant_t& offset, const variant_t& partition)
 {
 	std::vector<RdKafka::TopicPartition*> offsets;

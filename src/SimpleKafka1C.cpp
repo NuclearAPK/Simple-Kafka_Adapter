@@ -447,6 +447,8 @@ SimpleKafka1C::SimpleKafka1C()
 
 	AddMethod(L"ProduceBatchWithResult", L"ОтправитьПакетСРезультатом", this, &SimpleKafka1C::produceBatchWithResult, { {2, 20000} });
 
+	AddMethod(L"ReadMessageByOffset", L"ПрочитатьСообщениеПоСмещению", this, &SimpleKafka1C::readMessageByOffset, { {4, 10000} });
+
 	// + advanced consumer position management
 	AddMethod(L"SeekToBeginning", L"ПерейтиКНачалу", this, &SimpleKafka1C::seekToBeginning);
 	AddMethod(L"SeekToEnd", L"ПерейтиККонцу", this, &SimpleKafka1C::seekToEnd);

@@ -207,6 +207,7 @@ private:
 	std::string getMessageTimestampISO();
 	int32_t getMessagePartition();
 
+	std::string readMessageByOffset(const variant_t &brokers, const variant_t &topicName, const variant_t &partition, const variant_t &offset, const variant_t &timeout);
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
 	bool setReadingPositions(const variant_t& jsonTopicPartitions);
