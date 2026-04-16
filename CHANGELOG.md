@@ -5,6 +5,31 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.6] - 2026-04-16
+
+### Добавлено
+
+#### Consumer Group Management
+- `GetConsumerGroupList` / `ПолучитьСписокГруппКонсьюмеров` — получение списка всех consumer groups кластера через `rd_kafka_ListConsumerGroups`. Возвращает JSON с полями `groups_count`, `errors_count`, `groups[]` (каждая группа: `group_id`, `state`)
+- `DescribeConsumerGroup` / `ОписатьГруппуКонсьюмеров` — детальное описание consumer group через `rd_kafka_DescribeConsumerGroups`. Возвращает JSON с полями `group_id`, `state`, `partition_assignor`, `member_count`, `members[]` (каждый участник: `client_id`, `consumer_id`, `host`, `assigned_partitions`)
+
+#### Broker Configuration
+- `GetBrokerConfig` / `ПолучитьНастройкиБрокера` — получение конфигурации брокера через `rd_kafka_DescribeConfigs` с `RD_KAFKA_RESOURCE_BROKER`. При `brokerId = -1` автоматически определяет первого доступного брокера через метаданные кластера. Возвращает JSON с полями `broker_id`, `configs[]` (каждая запись: `name`, `value`, `is_sensitive`, `is_default`, `is_read_only`)
+- `SetBrokerConfig` / `УстановитьНастройкиБрокера` — изменение конфигурации брокера через `rd_kafka_AlterConfigs` с `RD_KAFKA_RESOURCE_BROKER`. Принимает JSON-объект с парами ключ-значение
+
+#### ACL Management
+- `AddAcl` / `ДобавитьACL` — создание одной ACL-записи через `rd_kafka_CreateAcls`. Параметры: `brokers`, `resource_type` (TOPIC/GROUP/BROKER/TRANSACTIONAL_ID), `resource_name`, `pattern_type` (LITERAL/PREFIXED), `principal` (например, `User:alice`), `host` (`*` для любого), `operation` (READ/WRITE/ALL/CREATE/DELETE/ALTER/DESCRIBE/CLUSTER_ACTION/DESCRIBE_CONFIGS/ALTER_CONFIGS/IDEMPOTENT_WRITE), `permission_type` (ALLOW/DENY)
+- `DescribeAcls` / `ОписатьACL` — поиск ACL-записей по фильтру через `rd_kafka_DescribeAcls`. Пустые строки для `resource_name`, `principal`, `host` и значение `ANY` для enum-параметров работают как wildcards. Возвращает JSON с полями `count`, `acls[]`
+- `DeleteAcl` / `УдалитьACL` — удаление ACL-записей по фильтру через `rd_kafka_DeleteAcls`. Принимает те же параметры фильтра, что и `DescribeAcls`. Возвращает JSON с полями `deleted_count`, `deleted_acls[]`
+
+#### Producer
+- `ProduceBatchWithResult` / `ОтправитьПакетСРезультатом` — пакетная отправка сообщений с детальным результатом по каждому сообщению. Принимает JSON-массив сообщений и topic, возвращает JSON с полями `total`, `success_count`, `failed_count`, `results[]` (по каждому сообщению: `index`, `delivered`, `partition`, `offset`, `status`, `key`, `error`). Реализовано через `msg_opaque` с `BatchMessageResult*`, обрабатываемым в существующем `clDeliveryReportCb::dr_cb`
+
+#### Consumer
+- `ReadMessageByOffset` / `ПрочитатьСообщениеПоСмещению` — одноразовое чтение сообщения по точному смещению без влияния на основного consumer. Создаёт временный `KafkaConsumer` с уникальным synthetic `group.id`, выполняет `assign` с указанным offset, читает одно сообщение, закрывается. Возвращает JSON с полями `message`, `key`, `topic`, `partition`, `offset`, `broker_id`, `timestamp`, `headers[]`. Небезопасные для UTF-8 поля кодируются в base64 с `*_encoding` метками
+
+---
+
 ## [1.8.5] - 2026-02-24
 
 ### Добавлено
@@ -452,6 +477,9 @@
 
 ---
 
+[1.8.6]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.5...v1.8.6
+[1.8.5]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.4...v1.8.5
+[1.8.4]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.3...v1.8.4
 [1.8.3]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.2...v1.8.3
 [1.8.2]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.1...v1.8.2
 [1.8.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.0...v1.8.1
