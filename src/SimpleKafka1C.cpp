@@ -219,6 +219,17 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 
 	delivered = message.status();
 
+	// Fill per-message BatchMessageResult if supplied via msg_opaque
+	if (auto* br = static_cast<SimpleKafka1C::BatchMessageResult*>(message.msg_opaque()))
+	{
+		br->status = static_cast<int32_t>(message.status());
+		br->partition = message.partition();
+		br->offset = message.offset();
+		br->delivered = (message.err() == RdKafka::ERR_NO_ERROR);
+		if (message.err() != RdKafka::ERR_NO_ERROR)
+			br->errorMsg = message.errstr();
+	}
+
 	if (!logDir.empty())
 	{
 		std::string bufname = producerLogName;
@@ -433,6 +444,8 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"DescribeAcls", L"ОписатьACL", this, &SimpleKafka1C::describeAcls, { {1, std::string("ANY")}, {2, std::string("")}, {3, std::string("ANY")}, {4, std::string("")}, {5, std::string("")}, {6, std::string("ANY")}, {7, std::string("ANY")}, {8, 10000} });
 	AddMethod(L"DeleteAcl", L"УдалитьACL", this, &SimpleKafka1C::deleteAcl, { {1, std::string("ANY")}, {2, std::string("")}, {3, std::string("ANY")}, {4, std::string("")}, {5, std::string("")}, {6, std::string("ANY")}, {7, std::string("ANY")}, {8, 10000} });
 	// - ACL management
+
+	AddMethod(L"ProduceBatchWithResult", L"ОтправитьПакетСРезультатом", this, &SimpleKafka1C::produceBatchWithResult, { {2, 20000} });
 
 	// + advanced consumer position management
 	AddMethod(L"SeekToBeginning", L"ПерейтиКНачалу", this, &SimpleKafka1C::seekToBeginning);

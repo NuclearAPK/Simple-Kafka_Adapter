@@ -169,7 +169,19 @@ private:
 	int32_t produceAvro(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	int32_t produceAvroWithWaitResult(const variant_t &topicName, const variant_t &partition, const variant_t &key, const variant_t &heads);
 	int32_t produceBatch(const variant_t &messagesJson, const variant_t &topicName);
+	std::string produceBatchWithResult(const variant_t &messagesJson, const variant_t &topicName, const variant_t &flushTimeout);
 	bool stopProducer();
+
+	// Per-message result used by ProduceBatchWithResult; passed via msg_opaque to produce().
+	struct BatchMessageResult {
+		int32_t index = -1;
+		bool delivered = false;
+		int32_t partition = -1;
+		int64_t offset = -1;
+		int32_t status = -1;
+		std::string errorMsg;
+		std::string key;
+	};
 
 	// transactional producer
 	bool initTransactionalProducer(const variant_t &brokers, const variant_t &transactionalId);

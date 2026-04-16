@@ -9,10 +9,14 @@
 #include <boost/algorithm/string/split.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/json.hpp>
+#include <boost/property_tree/json_parser.hpp>
+#include <boost/property_tree/ptree.hpp>
 
 #include <thread>
 #include <chrono>
 #include <fstream>
+#include <memory>
+#include <sstream>
 
 RdKafka::Headers* SimpleKafka1C::parseKafkaHeaders(const std::string& headerString)
 {
@@ -435,6 +439,159 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 		if (eventFile.is_open())
 			eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		return -1;
+	}
+}
+
+std::string SimpleKafka1C::produceBatchWithResult(const variant_t& messagesJson, const variant_t& topicName, const variant_t& flushTimeout)
+{
+	std::string result;
+	std::stringstream s{};
+
+	if (hProducer == nullptr)
+	{
+		msg_err = "Producer not initialized";
+		return result;
+	}
+
+	std::string tTopicName = std::get<std::string>(topicName);
+	std::string jsonStr = std::get<std::string>(messagesJson);
+	int32_t tFlushTimeout = std::get<int32_t>(flushTimeout);
+
+	if (!isValidTopicName(tTopicName, msg_err))
+		return result;
+	if (!isValidJson(jsonStr, msg_err))
+		return result;
+
+	std::ofstream eventFile{};
+	openEventFile(producerLogName, eventFile);
+	if (eventFile.is_open())
+		eventFile << currentDateTime() << " Info: produceBatchWithResult. TopicName-" << tTopicName << std::endl;
+
+	try
+	{
+		boost::json::value jv = boost::json::parse(jsonStr);
+		if (!jv.is_array())
+		{
+			msg_err = "JSON must contain an array of messages";
+			return result;
+		}
+
+		boost::json::array messages = jv.as_array();
+		int32_t totalMessages = static_cast<int32_t>(messages.size());
+
+		std::vector<std::unique_ptr<BatchMessageResult>> results;
+		results.reserve(totalMessages);
+
+		int32_t i = 0;
+		for (const auto& msgObj : messages)
+		{
+			auto br = std::make_unique<BatchMessageResult>();
+			br->index = i;
+
+			if (!msgObj.is_object())
+			{
+				br->errorMsg = "Not an object";
+				results.push_back(std::move(br));
+				i++;
+				continue;
+			}
+
+			const boost::json::object& msg = msgObj.as_object();
+
+			std::string message;
+			std::string key;
+			int32_t partition = -1;
+			std::string headers;
+
+			if (msg.contains("message"))
+				message = boost::json::value_to<std::string>(msg.at("message"));
+			else
+			{
+				br->errorMsg = "Missing 'message' field";
+				results.push_back(std::move(br));
+				i++;
+				continue;
+			}
+
+			if (msg.contains("key"))
+				key = boost::json::value_to<std::string>(msg.at("key"));
+			if (msg.contains("partition"))
+				partition = static_cast<int32_t>(msg.at("partition").as_int64());
+			if (msg.contains("headers"))
+				headers = boost::json::value_to<std::string>(msg.at("headers"));
+
+			br->key = key;
+
+			RdKafka::Headers* hdrs = parseKafkaHeaders(headers);
+
+			BatchMessageResult* rawBr = br.get();
+
+			RdKafka::ErrorCode resp = produceWithRetry([&]() -> RdKafka::ErrorCode {
+				return hProducer->produce(
+					tTopicName,
+					partition == -1 ? RdKafka::Topic::PARTITION_UA : partition,
+					RdKafka::Producer::RK_MSG_COPY,
+					const_cast<char*>(message.c_str()), message.size(),
+					key.c_str(), key.size(),
+					0,
+					hdrs,
+					rawBr);
+			}, eventFile);
+
+			if (resp != RdKafka::ERR_NO_ERROR)
+			{
+				br->errorMsg = RdKafka::err2str(resp);
+				br->delivered = false;
+				if (hdrs != nullptr)
+					delete hdrs;
+			}
+
+			results.push_back(std::move(br));
+			i++;
+		}
+
+		// Wait for all callbacks to fire
+		RdKafka::ErrorCode flushRc = hProducer->flush(tFlushTimeout);
+		if (flushRc != RdKafka::ERR_NO_ERROR && eventFile.is_open())
+			eventFile << currentDateTime() << " Warning: flush returned " << RdKafka::err2str(flushRc) << std::endl;
+
+		// Build JSON response
+		boost::property_tree::ptree jsonObj;
+		boost::property_tree::ptree children;
+		int32_t successCount = 0;
+
+		for (const auto& br : results)
+		{
+			boost::property_tree::ptree node;
+			node.put("index", br->index);
+			node.put("delivered", br->delivered);
+			node.put("partition", br->partition);
+			node.put("offset", br->offset);
+			node.put("status", br->status);
+			node.put("key", br->key);
+			node.put("error", br->errorMsg);
+			children.push_back(boost::property_tree::ptree::value_type("", node));
+			if (br->delivered) successCount++;
+		}
+
+		jsonObj.put("total", totalMessages);
+		jsonObj.put("success_count", successCount);
+		jsonObj.put("failed_count", totalMessages - successCount);
+		jsonObj.put_child("results", children);
+		boost::property_tree::write_json(s, jsonObj, true);
+		result = s.str();
+
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Info: produceBatchWithResult. Delivered " << successCount << " of " << totalMessages << std::endl;
+
+		return result;
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("JSON processing error: ") + e.what();
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
+		return result;
 	}
 }
 
