@@ -1100,8 +1100,148 @@ std::string SimpleKafka1C::getConsumerGroupList(const variant_t& brokers, const 
 	return result;
 }
 
+//================================== Describe Consumer Group ==========================================
+
 std::string SimpleKafka1C::describeConsumerGroup(const variant_t& brokers, const variant_t& groupId, const variant_t& timeout)
 {
-	msg_err = "Not implemented yet";
-	return "";
+	std::string result;
+	std::stringstream s{};
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tGroupId = std::get<std::string>(groupId);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	if (!isValidBrokerList(tBrokers, msg_err))
+		return result;
+	if (!isValidConsumerGroupId(tGroupId, msg_err))
+		return result;
+
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
+	if (!admin.isValid())
+	{
+		msg_err = admin.error();
+		return result;
+	}
+
+	const char* groups[1] = { tGroupId.c_str() };
+
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONSUMERGROUPS);
+	rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	rd_kafka_DescribeConsumerGroups(admin.get(), groups, 1, options, admin.queue());
+
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+
+	if (!rkev)
+	{
+		msg_err = "Timeout while describing consumer group";
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
+
+	if (rd_kafka_event_error(rkev))
+	{
+		msg_err = rd_kafka_event_error_string(rkev);
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
+
+	const rd_kafka_DescribeConsumerGroups_result_t* desc_result =
+		rd_kafka_event_DescribeConsumerGroups_result(rkev);
+
+	if (!desc_result)
+	{
+		msg_err = "Failed to get DescribeConsumerGroups result";
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
+
+	size_t grp_cnt = 0;
+	const rd_kafka_ConsumerGroupDescription_t** grp_descs =
+		rd_kafka_DescribeConsumerGroups_result_groups(desc_result, &grp_cnt);
+
+	if (grp_cnt == 0 || !grp_descs || !grp_descs[0])
+	{
+		msg_err = "Group not found";
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
+
+	const rd_kafka_ConsumerGroupDescription_t* grp = grp_descs[0];
+
+	// check group-level error
+	const rd_kafka_error_t* grp_err = rd_kafka_ConsumerGroupDescription_error(grp);
+	if (grp_err)
+	{
+		msg_err = rd_kafka_error_string(grp_err);
+		rd_kafka_event_destroy(rkev);
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
+
+	boost::property_tree::ptree jsonObj;
+	jsonObj.put("group_id", rd_kafka_ConsumerGroupDescription_group_id(grp));
+	jsonObj.put("state", rd_kafka_consumer_group_state_name(rd_kafka_ConsumerGroupDescription_state(grp)));
+
+	const char* partition_assignor = rd_kafka_ConsumerGroupDescription_partition_assignor(grp);
+	jsonObj.put("partition_assignor", partition_assignor ? partition_assignor : "");
+
+	int member_cnt = static_cast<int>(rd_kafka_ConsumerGroupDescription_member_count(grp));
+	jsonObj.put("member_count", member_cnt);
+
+	boost::property_tree::ptree membersArray;
+
+	for (int i = 0; i < member_cnt; i++)
+	{
+		const rd_kafka_MemberDescription_t* member =
+			rd_kafka_ConsumerGroupDescription_member(grp, i);
+
+		boost::property_tree::ptree memberNode;
+
+		const char* client_id = rd_kafka_MemberDescription_client_id(member);
+		const char* consumer_id = rd_kafka_MemberDescription_consumer_id(member);
+		const char* host = rd_kafka_MemberDescription_host(member);
+
+		memberNode.put("client_id", client_id ? client_id : "");
+		memberNode.put("consumer_id", consumer_id ? consumer_id : "");
+		memberNode.put("host", host ? host : "");
+
+		const rd_kafka_MemberAssignment_t* assignment =
+			rd_kafka_MemberDescription_assignment(member);
+
+		boost::property_tree::ptree partitionsArray;
+
+		if (assignment)
+		{
+			const rd_kafka_topic_partition_list_t* parts =
+				rd_kafka_MemberAssignment_partitions(assignment);
+
+			if (parts)
+			{
+				for (int p = 0; p < parts->cnt; p++)
+				{
+					boost::property_tree::ptree partNode;
+					partNode.put("topic", parts->elems[p].topic);
+					partNode.put("partition", parts->elems[p].partition);
+					partitionsArray.push_back(boost::property_tree::ptree::value_type("", partNode));
+				}
+			}
+		}
+
+		memberNode.put_child("assigned_partitions", partitionsArray);
+		membersArray.push_back(boost::property_tree::ptree::value_type("", memberNode));
+	}
+
+	jsonObj.put_child("members", membersArray);
+
+	rd_kafka_event_destroy(rkev);
+	rd_kafka_AdminOptions_destroy(options);
+
+	boost::property_tree::write_json(s, jsonObj, true);
+	result = s.str();
+	return result;
 }
