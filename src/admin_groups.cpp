@@ -1010,3 +1010,89 @@ bool SimpleKafka1C::unassign()
 		return false;
 	}
 }
+
+//================================== Consumer Group List ==========================================
+
+std::string SimpleKafka1C::getConsumerGroupList(const variant_t& brokers, const variant_t& timeout)
+{
+    std::string result;
+    std::stringstream s{};
+    char errstr[512];
+
+    std::string tBrokers = std::get<std::string>(brokers);
+    int32_t tTimeout = std::get<int32_t>(timeout);
+
+    if (!isValidBrokerList(tBrokers, msg_err))
+        return result;
+
+    AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
+    if (!admin.isValid())
+    {
+        msg_err = admin.error();
+        return result;
+    }
+
+    rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPS);
+    rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+    rd_kafka_ListConsumerGroups(admin.get(), options, admin.queue());
+
+    rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+
+    if (!rkev)
+    {
+        msg_err = "Timeout while listing consumer groups";
+        rd_kafka_AdminOptions_destroy(options);
+        return result;
+    }
+
+    if (rd_kafka_event_error(rkev))
+    {
+        msg_err = rd_kafka_event_error_string(rkev);
+        rd_kafka_event_destroy(rkev);
+        rd_kafka_AdminOptions_destroy(options);
+        return result;
+    }
+
+    const rd_kafka_ListConsumerGroups_result_t* list_result =
+        rd_kafka_event_ListConsumerGroups_result(rkev);
+
+    boost::property_tree::ptree jsonObj;
+    boost::property_tree::ptree groupsArray;
+
+    size_t valid_cnt = 0;
+    const rd_kafka_ConsumerGroupListing_t** listings =
+        rd_kafka_ListConsumerGroups_result_valid(list_result, &valid_cnt);
+
+    for (size_t i = 0; i < valid_cnt; i++)
+    {
+        const char* group_id = rd_kafka_ConsumerGroupListing_group_id(listings[i]);
+        rd_kafka_consumer_group_state_t state = rd_kafka_ConsumerGroupListing_state(listings[i]);
+
+        boost::property_tree::ptree groupNode;
+        groupNode.put("group_id", group_id ? group_id : "");
+        groupNode.put("state", rd_kafka_consumer_group_state_name(state));
+
+        groupsArray.push_back(boost::property_tree::ptree::value_type("", groupNode));
+    }
+
+    // errors are informational; partial results are still valid
+    size_t err_cnt = 0;
+    rd_kafka_ListConsumerGroups_result_errors(list_result, &err_cnt);
+
+    jsonObj.put("groups_count", valid_cnt);
+    jsonObj.put_child("groups", groupsArray);
+
+    rd_kafka_event_destroy(rkev);
+    rd_kafka_AdminOptions_destroy(options);
+
+    boost::property_tree::write_json(s, jsonObj, true);
+    result = s.str();
+    return result;
+}
+
+std::string SimpleKafka1C::describeConsumerGroup(const variant_t& brokers, const variant_t& groupId, const variant_t& timeout)
+{
+    msg_err = "Not implemented yet";
+    return "";
+}

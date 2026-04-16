@@ -234,6 +234,8 @@ private:
 	// consumer group management
 	bool deleteConsumerGroup(const variant_t& brokers, const variant_t& groupId);
 	bool resetConsumerGroupOffsets(const variant_t& brokers, const variant_t& groupId, const variant_t& topicName, const variant_t& resetTo);
+	std::string getConsumerGroupList(const variant_t& brokers, const variant_t& timeout);
+	std::string describeConsumerGroup(const variant_t& brokers, const variant_t& groupId, const variant_t& timeout);
 
 	// advanced consumer position management
 	bool seekToBeginning(const variant_t& topicName, const variant_t& partition);

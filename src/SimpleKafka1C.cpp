@@ -422,6 +422,8 @@ SimpleKafka1C::SimpleKafka1C()
 	// + consumer group management
 	AddMethod(L"DeleteConsumerGroup", L"УдалитьГруппуКонсьюмеров", this, &SimpleKafka1C::deleteConsumerGroup);
 	AddMethod(L"ResetConsumerGroupOffsets", L"СброситьОфсетыГруппыКонсьюмеров", this, &SimpleKafka1C::resetConsumerGroupOffsets);
+	AddMethod(L"GetConsumerGroupList", L"ПолучитьСписокГруппКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupList, { {1, 5000} });
+	AddMethod(L"DescribeConsumerGroup", L"ОписатьГруппуКонсьюмеров", this, &SimpleKafka1C::describeConsumerGroup, { {2, 10000} });
 	// - consumer group management
 
 	// + advanced consumer position management
