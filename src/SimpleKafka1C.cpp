@@ -406,6 +406,8 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"DeleteRecords", L"УдалитьЗаписи", this, &SimpleKafka1C::deleteRecords, { {3, 10000} });
 	AddMethod(L"GetTopicConfig", L"ПолучитьНастройкиТопика", this, &SimpleKafka1C::getTopicConfig, { {2, 5000} });
 	AddMethod(L"SetTopicConfig", L"УстановитьНастройкиТопика", this, &SimpleKafka1C::setTopicConfig, { {3, 10000} });
+	AddMethod(L"GetBrokerConfig", L"ПолучитьНастройкиБрокера", this, &SimpleKafka1C::getBrokerConfig, { {1, -1}, {2, 5000} });
+	AddMethod(L"SetBrokerConfig", L"УстановитьНастройкиБрокера", this, &SimpleKafka1C::setBrokerConfig, { {3, 10000} });
 	AddMethod(L"GetConsumerLag", L"ПолучитьОтставаниеКонсьюмера", this, &SimpleKafka1C::getConsumerLag, { {3, 5000} });
 	AddMethod(L"GetTopicConsumerGroups", L"ПолучитьКонсьюмеровТопика", this, &SimpleKafka1C::getTopicConsumerGroups, { {2, 5000} });
 

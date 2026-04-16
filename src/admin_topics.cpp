@@ -720,3 +720,228 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 
 	return success;
 }
+
+//================================== Broker Config ==========================================
+
+std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const variant_t& brokerId, const variant_t& timeout)
+{
+	std::string result;
+	std::stringstream s{};
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	int32_t tBrokerId = std::get<int32_t>(brokerId);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	if (!isValidBrokerList(tBrokers, msg_err))
+		return result;
+
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
+	if (!admin.isValid())
+	{
+		msg_err = admin.error();
+		return result;
+	}
+
+	// If brokerId == -1, auto-discover the first broker from metadata
+	if (tBrokerId < 0)
+	{
+		const rd_kafka_metadata_t* meta = nullptr;
+		rd_kafka_resp_err_t merr = rd_kafka_metadata(admin.get(), 1, nullptr, &meta, tTimeout);
+		if (merr != RD_KAFKA_RESP_ERR_NO_ERROR || !meta || meta->broker_cnt == 0)
+		{
+			msg_err = "Cannot discover broker id: ";
+			msg_err += (merr != RD_KAFKA_RESP_ERR_NO_ERROR) ? rd_kafka_err2str(merr) : "no brokers";
+			if (meta) rd_kafka_metadata_destroy(meta);
+			return result;
+		}
+		tBrokerId = meta->brokers[0].id;
+		rd_kafka_metadata_destroy(meta);
+	}
+
+	std::string brokerIdStr = std::to_string(tBrokerId);
+
+	rd_kafka_ConfigResource_t* config_resource =
+		rd_kafka_ConfigResource_new(RD_KAFKA_RESOURCE_BROKER, brokerIdStr.c_str());
+
+	rd_kafka_AdminOptions_t* options =
+		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
+	rd_kafka_DescribeConfigs(admin.get(), config_arr, 1, options, admin.queue());
+
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_DescribeConfigs_result_t* res = rd_kafka_event_DescribeConfigs_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_ConfigResource_t** resources =
+					rd_kafka_DescribeConfigs_result_resources(res, &res_cnt);
+
+				if (res_cnt > 0)
+				{
+					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+					{
+						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
+					}
+					else
+					{
+						boost::property_tree::ptree jsonObj;
+						boost::property_tree::ptree configChildren;
+
+						jsonObj.put("broker_id", tBrokerId);
+
+						size_t config_cnt;
+						const rd_kafka_ConfigEntry_t** entries =
+							rd_kafka_ConfigResource_configs(resources[0], &config_cnt);
+
+						for (size_t i = 0; i < config_cnt; i++)
+						{
+							const char* name = rd_kafka_ConfigEntry_name(entries[i]);
+							const char* value = rd_kafka_ConfigEntry_value(entries[i]);
+							int is_sensitive = rd_kafka_ConfigEntry_is_sensitive(entries[i]);
+							int is_default = rd_kafka_ConfigEntry_is_default(entries[i]);
+							int is_read_only = rd_kafka_ConfigEntry_is_read_only(entries[i]);
+
+							boost::property_tree::ptree node;
+							node.put("name", name ? name : "");
+							node.put("value", (value && !is_sensitive) ? value : "");
+							node.put("is_sensitive", is_sensitive ? true : false);
+							node.put("is_default", is_default ? true : false);
+							node.put("is_read_only", is_read_only ? true : false);
+							configChildren.push_back(boost::property_tree::ptree::value_type("", node));
+						}
+
+						jsonObj.put_child("configs", configChildren);
+						boost::property_tree::write_json(s, jsonObj, true);
+						result = s.str();
+					}
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = "Response timeout";
+	}
+
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_ConfigResource_destroy(config_resource);
+	return result;
+}
+
+bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& brokerId, const variant_t& configJson, const variant_t& timeout)
+{
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	int32_t tBrokerId = std::get<int32_t>(brokerId);
+	std::string tConfigJson = std::get<std::string>(configJson);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	if (!isValidBrokerList(tBrokers, msg_err))
+		return false;
+	if (!isValidJson(tConfigJson, msg_err))
+		return false;
+
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
+	if (!admin.isValid())
+	{
+		msg_err = admin.error();
+		return false;
+	}
+
+	std::string brokerIdStr = std::to_string(tBrokerId);
+
+	rd_kafka_ConfigResource_t* config_resource =
+		rd_kafka_ConfigResource_new(RD_KAFKA_RESOURCE_BROKER, brokerIdStr.c_str());
+
+	try
+	{
+		boost::json::value parsed = boost::json::parse(tConfigJson);
+		boost::json::object obj = parsed.as_object();
+
+		for (auto& kv : obj)
+		{
+			std::string key = kv.key();
+			std::string value;
+
+			if (kv.value().is_string())
+				value = kv.value().as_string();
+			else if (kv.value().is_int64())
+				value = std::to_string(kv.value().as_int64());
+			else if (kv.value().is_bool())
+				value = kv.value().as_bool() ? "true" : "false";
+			else if (kv.value().is_double())
+				value = std::to_string(kv.value().as_double());
+			else
+				continue;
+
+			rd_kafka_ConfigResource_set_config(config_resource, key.c_str(), value.c_str());
+		}
+	}
+	catch (std::exception const& ex)
+	{
+		msg_err = "JSON parsing error: " + std::string(ex.what());
+		rd_kafka_ConfigResource_destroy(config_resource);
+		return false;
+	}
+
+	rd_kafka_AdminOptions_t* options =
+		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
+	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+
+	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
+	rd_kafka_AlterConfigs(admin.get(), config_arr, 1, options, admin.queue());
+
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_AlterConfigs_result_t* res = rd_kafka_event_AlterConfigs_result(rkev);
+			if (res)
+			{
+				size_t res_cnt;
+				const rd_kafka_ConfigResource_t** resources =
+					rd_kafka_AlterConfigs_result_resources(res, &res_cnt);
+
+				if (res_cnt > 0)
+				{
+					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
+					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
+						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
+					else
+						success = true;
+				}
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = "Response timeout";
+	}
+
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_ConfigResource_destroy(config_resource);
+	return success;
+}

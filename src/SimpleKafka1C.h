@@ -219,6 +219,8 @@ private:
 	bool deleteRecords(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionsJson, const variant_t& timeout);
 	std::string getTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 	bool setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout);
+	std::string getBrokerConfig(const variant_t& brokers, const variant_t& brokerId, const variant_t& timeout);
+	bool setBrokerConfig(const variant_t& brokers, const variant_t& brokerId, const variant_t& configJson, const variant_t& timeout);
 	std::string getConsumerLag(const variant_t& brokers, const variant_t& topicName, const variant_t& consumerGroup, const variant_t& timeout);
 	std::string getTopicConsumerGroups(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 
