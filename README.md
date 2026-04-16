@@ -30,6 +30,8 @@
 
 [Админ API](./docs/admin.md)
 
+[ACL (Access Control List)](./docs/acl.md)
+
 [Логирование](./docs/logging.md)
 
 [Статистика](./docs/statistic.md)
