@@ -425,7 +425,7 @@ SimpleKafka1C::SimpleKafka1C()
 	// + cluster and broker information
 	AddMethod(L"GetClusterInfo", L"ПолучитьИнформациюОКластере", this, &SimpleKafka1C::getClusterInfo);
 	AddMethod(L"GetBrokerInfo", L"ПолучитьИнформациюОБрокере", this, &SimpleKafka1C::getBrokerInfo);
-	AddMethod(L"GetPartitionWatermarks", L"ПолучитьГраницыПартиции", this, &SimpleKafka1C::getPartitionWatermarks);
+	AddMethod(L"GetPartitionWatermarks", L"ПолучитьГраницыПартиции", this, &SimpleKafka1C::getPartitionWatermarks, { {3, false} });
 	AddMethod(L"PingBroker", L"ПроверитьДоступностьБрокера", this, &SimpleKafka1C::pingBroker);
 	AddMethod(L"GetPartitionMessageCount", L"ПолучитьКоличествоСообщенийВПартиции", this, &SimpleKafka1C::getPartitionMessageCount);
 	AddMethod(L"GetBuiltinFeatures", L"ПолучитьВозможностиБиблиотеки", this, &SimpleKafka1C::getBuiltinFeatures);

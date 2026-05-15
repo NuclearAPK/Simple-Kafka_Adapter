@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.8.6";
+	static constexpr char Version[] = u8"1.8.7";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -240,7 +240,7 @@ private:
 	// cluster and broker information
 	std::string getClusterInfo(const variant_t& brokers);
 	std::string getBrokerInfo(const variant_t& brokers, const variant_t& brokerId);
-	std::string getPartitionWatermarks(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
+	std::string getPartitionWatermarks(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& includeLastTimestamp);
 	bool pingBroker(const variant_t& brokers, const variant_t& timeout);
 	double getPartitionMessageCount(const variant_t& brokers, const variant_t& topicName, const variant_t& partition);
 	std::string getBuiltinFeatures();

@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.7] - 2026-05-12
+
+### Изменено
+
+#### Admin / Metadata
+- `GetPartitionWatermarks` / `ПолучитьГраницыПартиции` — добавлен необязательный параметр `IncludeLastTimestamp` (по умолчанию `false`). При значении `true` метод дополнительно читает сообщение по offset = `high_watermark - 1` через временный `KafkaConsumer` с уникальным synthetic `group.id` и возвращает в JSON поля `last_message_timestamp` (Unix ms) и `last_message_timestamp_iso` (ISO 8601 UTC). Для пустых партиций (`high == low`) поля остаются пустыми. Обратная совместимость сохранена: существующий код 1С продолжает работать без изменений
+
+---
+
 ## [1.8.6] - 2026-04-16
 
 ### Добавлено
@@ -477,6 +486,7 @@
 
 ---
 
+[1.8.7]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.4...v1.8.5
 [1.8.4]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.3...v1.8.4

@@ -329,16 +329,43 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	return s.str();
 }
 
+// Format Unix milliseconds as ISO 8601 UTC (e.g. 2026-05-12T10:23:45.678Z)
+static std::string formatIso8601FromUnixMs(int64_t ms)
+{
+	auto seconds = std::chrono::seconds(ms / 1000);
+	auto millis = ms % 1000;
+	std::chrono::system_clock::time_point tp(seconds);
+
+	std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+	std::tm utc_tm;
+#ifdef _WIN32
+	gmtime_s(&utc_tm, &tt);
+#else
+	gmtime_r(&tt, &utc_tm);
+#endif
+
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ",
+		utc_tm.tm_year + 1900, utc_tm.tm_mon + 1, utc_tm.tm_mday,
+		utc_tm.tm_hour, utc_tm.tm_min, utc_tm.tm_sec,
+		static_cast<int>(millis));
+
+	return std::string(buf);
+}
+
 std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
                                                    const variant_t& topicName,
-                                                   const variant_t& partition)
+                                                   const variant_t& partition,
+                                                   const variant_t& includeLastTimestamp)
 {
 	std::stringstream s{};
 
+	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tPartition = std::get<int32_t>(partition);
+	bool tIncludeLastTimestamp = std::get<bool>(includeLastTimestamp);
 
-	auto producer = createMetadataClient(std::get<std::string>(brokers));
+	auto producer = createMetadataClient(tBrokers);
 	if (!producer)
 		return "";
 
@@ -360,6 +387,56 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 	jsonObj.put("low_watermark", std::to_string(low));
 	jsonObj.put("high_watermark", std::to_string(high));
 	jsonObj.put("message_count", std::to_string(high - low));
+
+	// получение timestamp последнего сообщения (опционально)
+	if (tIncludeLastTimestamp)
+	{
+		jsonObj.put("last_message_timestamp", "");
+		jsonObj.put("last_message_timestamp_iso", "");
+
+		if (high > low)
+		{
+			std::string errstr;
+			RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
+
+			if (applyKafkaSettings(conf.get(), errstr) &&
+			    conf->set("metadata.broker.list", tBrokers, errstr) == RdKafka::Conf::CONF_OK)
+			{
+				std::string groupId = "__getPartitionWatermarks_" + clientID() + "_"
+					+ std::to_string(pid) + "_" + std::to_string(getTimeStamp());
+				conf->set("group.id", groupId, errstr);
+				conf->set("enable.auto.commit", "false", errstr);
+
+				std::unique_ptr<RdKafka::KafkaConsumer> consumer(
+					RdKafka::KafkaConsumer::create(conf.get(), errstr));
+
+				if (consumer)
+				{
+					int64_t lastOffset = high - 1;
+					std::vector<RdKafka::TopicPartition*> partitions;
+					partitions.push_back(RdKafka::TopicPartition::create(tTopicName, tPartition, lastOffset));
+
+					RdKafka::ErrorCode assignErr = consumer->assign(partitions);
+					if (assignErr == RdKafka::ERR_NO_ERROR)
+					{
+						std::unique_ptr<RdKafka::Message> msg(consumer->consume(5000));
+						if (msg && msg->err() == RdKafka::ERR_NO_ERROR)
+						{
+							RdKafka::MessageTimestamp ts = msg->timestamp();
+							if (ts.type != RdKafka::MessageTimestamp::MSG_TIMESTAMP_NOT_AVAILABLE)
+							{
+								jsonObj.put("last_message_timestamp", std::to_string(ts.timestamp));
+								jsonObj.put("last_message_timestamp_iso", formatIso8601FromUnixMs(ts.timestamp));
+							}
+						}
+					}
+
+					for (auto* tp : partitions) delete tp;
+					consumer->close();
+				}
+			}
+		}
+	}
 
 	boost::property_tree::write_json(s, jsonObj, true);
 	return s.str();
