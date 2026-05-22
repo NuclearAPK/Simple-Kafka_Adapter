@@ -5,6 +5,20 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.8.8] - 2026-05-22
+
+### Исправлено
+
+#### Consumer
+- `StopConsumer` / `ОстановитьКонсьюмера` — удалён вызов глобального `RdKafka::wait_destroyed()` из `stopConsumer()`. Эта функция ждёт уничтожения **всех** хэндлов librdkafka в процессе, а не конкретного консьюмера, и почти всегда возвращала таймаут (`-1`) на Windows, из-за чего метод выдавал ложно-отрицательный результат с сообщением `Consumer wait_destroyed timeout: -1 object(s) still exist` (значение `-1` было кодом таймаута, а не количеством объектов). Теперь метод возвращает `Ложь` только если сам `RdKafka::KafkaConsumer::close()` завершился с ошибкой. Сам close + delete консьюмера уже выполняли всю значимую работу, поэтому функциональное поведение не меняется
+
+### Устарело
+
+#### Consumer
+- `SetConsumerCloseTimeout` / `УстановитьТаймаутОчисткиКонсьюмера` — метод оставлен для обратной совместимости как no-op. После удаления вызова `wait_destroyed` сохранённое значение нигде не читается. Существующий код 1С продолжает работать без изменений; в будущих мажорных версиях метод может быть удалён
+
+---
+
 ## [1.8.7] - 2026-05-12
 
 ### Изменено
@@ -486,6 +500,7 @@
 
 ---
 
+[1.8.8]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.5...v1.8.6
 [1.8.5]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.4...v1.8.5
