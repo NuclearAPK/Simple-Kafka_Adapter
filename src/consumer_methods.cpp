@@ -748,23 +748,12 @@ bool SimpleKafka1C::stopConsumer()
 	{
 		RdKafka::ErrorCode closeErr = hConsumer->close();
 
-		if (closeErr != RdKafka::ERR_NO_ERROR)
-		{
-			msg_err = "Consumer close error: " + RdKafka::err2str(closeErr);
-			delete hConsumer;
-			hConsumer = nullptr;
-			RdKafka::wait_destroyed(consumerCloseTimeout);
-			return false;
-		}
-
 		delete hConsumer;
 		hConsumer = nullptr;
 
-		// Ожидаем завершения всех фоновых операций
-		int waitResult = RdKafka::wait_destroyed(consumerCloseTimeout);
-		if (waitResult != 0)
+		if (closeErr != RdKafka::ERR_NO_ERROR)
 		{
-			msg_err = "Consumer wait_destroyed timeout: " + std::to_string(waitResult) + " object(s) still exist";
+			msg_err = "Consumer close error: " + RdKafka::err2str(closeErr);
 			return false;
 		}
 	}
