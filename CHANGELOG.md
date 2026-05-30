@@ -5,6 +5,23 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.9.0] - 2026-05-30
+
+### Добавлено
+
+#### Avro — логические типы
+- `decimal` (`logicalType: decimal` поверх `bytes` или `fixed`) — корректная сериализация и десериализация с учётом `precision` и `scale`. Распакованное значение возвращается в JSON как **число** (например, `1234.56`), при упаковке принимается число или строка. Реализована собственная big-integer арифметика (two's complement big-endian) для поддержки `precision` > 18 без сторонних зависимостей. Исправляет [issue #73](https://github.com/NuclearAPK/Simple-Kafka_Adapter/issues/73)
+- `date` (`logicalType: date` поверх `int`) — при упаковке принимается ISO-строка `"YYYY-MM-DD"` или число (дней с эпохи); при распаковке возвращается ISO-строка
+- `time-millis` (`logicalType: time-millis` поверх `int`) — при упаковке принимается ISO-строка `"HH:MM:SS[.fff]"` или число (мс с полуночи); при распаковке возвращается ISO-строка
+- `timestamp-millis` (`logicalType: timestamp-millis` поверх `long`) — при упаковке принимается ISO-строка `"YYYY-MM-DDTHH:MM:SS[.fff]Z"` (с опциональным timezone-offset) или число (мс с эпохи UTC); при распаковке возвращается ISO-8601 UTC строка с суффиксом `Z`. Конвертация часового пояса между локальным временем 1С и UTC остаётся на стороне 1С. Исправляет [issue #74](https://github.com/NuclearAPK/Simple-Kafka_Adapter/issues/74)
+
+### Изменено
+
+#### Avro — поведение вывода (breaking change)
+- Поля с logicalType `decimal`, `date`, `time-millis`, `timestamp-millis` теперь возвращаются в распакованном JSON в человекочитаемом виде, а не как сырые байты/целые числа. Если ваш код 1С разбирал hex-строки байтов или целые числа дней/мс — потребуется адаптация. При упаковке поддерживаются оба варианта (новый строковый и старый числовой), поэтому обратная совместимость на стороне записи сохранена
+
+---
+
 ## [1.8.8] - 2026-05-22
 
 ### Исправлено
@@ -500,6 +517,7 @@
 
 ---
 
+[1.9.0]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.8...v1.9.0
 [1.8.8]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.6...v1.8.7
 [1.8.6]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.5...v1.8.6

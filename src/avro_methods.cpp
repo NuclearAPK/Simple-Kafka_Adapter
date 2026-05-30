@@ -10,12 +10,574 @@
 #include <avro/DataFile.hh>
 #include <avro/GenericDatum.hh>
 #include <avro/Generic.hh>
+#include <avro/LogicalType.hh>
 
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <ctime>
+#include <cstdint>
+#include <cstdlib>
+#include <algorithm>
+#include <cmath>
 
 #include "SimpleKafka1C.h"
+
+//================================== Avro logical types: helpers ==================
+
+namespace {
+
+// --- Big-integer helpers for Avro decimal (no external bigint dependency).
+// Internal representation: sign + decimal digits string.
+
+// Multiply unsigned magnitude (big-endian byte vector) by small factor, add addend.
+// Used in: digits-string -> magnitude bytes.
+static void bigMulAdd(std::vector<uint8_t>& bytes, uint32_t mul, uint32_t add)
+{
+	uint64_t carry = add;
+	for (auto it = bytes.rbegin(); it != bytes.rend(); ++it)
+	{
+		uint64_t v = static_cast<uint64_t>(*it) * mul + carry;
+		*it = static_cast<uint8_t>(v & 0xFF);
+		carry = v >> 8;
+	}
+	while (carry > 0)
+	{
+		bytes.insert(bytes.begin(), static_cast<uint8_t>(carry & 0xFF));
+		carry >>= 8;
+	}
+}
+
+// Convert decimal magnitude string ("12345") to minimal big-endian byte magnitude.
+static std::vector<uint8_t> digitsToBytes(const std::string& digits)
+{
+	std::vector<uint8_t> result;
+	for (char c : digits)
+	{
+		if (c < '0' || c > '9') continue;
+		bigMulAdd(result, 10, static_cast<uint32_t>(c - '0'));
+	}
+	if (result.empty()) result.push_back(0);
+	// strip leading zeros
+	size_t firstNonZero = 0;
+	while (firstNonZero + 1 < result.size() && result[firstNonZero] == 0)
+		++firstNonZero;
+	if (firstNonZero > 0)
+		result.erase(result.begin(), result.begin() + firstNonZero);
+	return result;
+}
+
+// Two's complement encoding of signed integer (decimal digits + sign) into
+// minimal big-endian bytes (Avro decimal spec) or fixed-size bytes.
+static bool encodeDecimalBytes(bool negative, const std::string& digits,
+                                std::vector<uint8_t>& out, size_t fixedSize,
+                                std::string& err)
+{
+	// magnitude bytes (positive)
+	std::vector<uint8_t> mag = digitsToBytes(digits);
+
+	if (!negative)
+	{
+		// ensure top bit is 0 — prepend 0x00 if needed
+		if ((mag[0] & 0x80) != 0)
+			mag.insert(mag.begin(), 0x00);
+		// minimise: drop leading 0x00 if next byte still has top bit clear
+		while (mag.size() > 1 && mag[0] == 0x00 && (mag[1] & 0x80) == 0)
+			mag.erase(mag.begin());
+	}
+	else
+	{
+		// two's complement: invert bits and add 1
+		// Compute width in bytes that fits the magnitude with sign bit set
+		// First, get the result of (-mag) in two's complement of arbitrary width.
+		// Strategy: compute (2^(8*n) - mag) for the smallest n such that result fits with top bit = 1.
+		size_t n = mag.size();
+		// If the magnitude top bit is already 1, we need one extra byte
+		// (e.g. mag = 0x80 -> -128 fits in 1 byte 0x80, but mag = 0x81 needs 2 bytes 0xFF7F).
+		// We handle this by computing inversion + 1 and checking sign bit afterwards.
+		std::vector<uint8_t> tc(n, 0);
+		for (size_t i = 0; i < n; ++i) tc[i] = ~mag[i];
+		// add 1
+		int carry = 1;
+		for (size_t i = n; i > 0 && carry; --i)
+		{
+			int v = static_cast<int>(tc[i - 1]) + carry;
+			tc[i - 1] = static_cast<uint8_t>(v & 0xFF);
+			carry = v >> 8;
+		}
+		// if top bit of tc is 0, magnitude was exactly a power-of-256 boundary (e.g. mag=0x80)
+		// — already correct as 0x80 represents -128. Otherwise if top bit is 0, we must prepend 0xFF.
+		if ((tc[0] & 0x80) == 0)
+			tc.insert(tc.begin(), 0xFF);
+		// minimise: drop leading 0xFF if next byte still has top bit set
+		while (tc.size() > 1 && tc[0] == 0xFF && (tc[1] & 0x80) != 0)
+			tc.erase(tc.begin());
+		mag = std::move(tc);
+	}
+
+	if (fixedSize > 0)
+	{
+		// pad to fixedSize on the left with sign byte
+		if (mag.size() > fixedSize)
+		{
+			err = "Decimal value does not fit into fixed of size " + std::to_string(fixedSize);
+			return false;
+		}
+		uint8_t pad = negative ? 0xFF : 0x00;
+		while (mag.size() < fixedSize)
+			mag.insert(mag.begin(), pad);
+	}
+
+	out = std::move(mag);
+	return true;
+}
+
+// Decode big-endian two's complement bytes into (sign, digits) decimal representation.
+static void decodeDecimalBytes(const uint8_t* data, size_t size,
+                                bool& negative, std::string& digitsOut)
+{
+	if (size == 0) { negative = false; digitsOut = "0"; return; }
+	negative = (data[0] & 0x80) != 0;
+
+	std::vector<uint8_t> mag(data, data + size);
+	if (negative)
+	{
+		// two's complement: invert + 1
+		for (auto& b : mag) b = ~b;
+		int carry = 1;
+		for (size_t i = mag.size(); i > 0 && carry; --i)
+		{
+			int v = static_cast<int>(mag[i - 1]) + carry;
+			mag[i - 1] = static_cast<uint8_t>(v & 0xFF);
+			carry = v >> 8;
+		}
+	}
+	// strip leading zeros
+	size_t firstNonZero = 0;
+	while (firstNonZero + 1 < mag.size() && mag[firstNonZero] == 0)
+		++firstNonZero;
+	if (firstNonZero > 0)
+		mag.erase(mag.begin(), mag.begin() + firstNonZero);
+
+	// convert magnitude to decimal digits via long division by 10
+	if (mag.size() == 1 && mag[0] == 0) { digitsOut = "0"; negative = false; return; }
+
+	std::string reversed;
+	while (!(mag.size() == 1 && mag[0] == 0))
+	{
+		uint32_t rem = 0;
+		for (size_t i = 0; i < mag.size(); ++i)
+		{
+			uint32_t cur = (rem << 8) | mag[i];
+			mag[i] = static_cast<uint8_t>(cur / 10);
+			rem = cur % 10;
+		}
+		reversed.push_back(static_cast<char>('0' + rem));
+		// trim leading zeros for next iteration
+		size_t fz = 0;
+		while (fz + 1 < mag.size() && mag[fz] == 0) ++fz;
+		if (fz > 0) mag.erase(mag.begin(), mag.begin() + fz);
+	}
+	std::reverse(reversed.begin(), reversed.end());
+	digitsOut = reversed.empty() ? "0" : reversed;
+}
+
+// Compose a JSON-number decimal literal from sign, unscaled digits and scale.
+// Result is a valid JSON number (no quotes).
+static std::string formatDecimalJson(bool negative, const std::string& unscaledDigits, int scale)
+{
+	std::string digits = unscaledDigits;
+	if (digits.empty()) digits = "0";
+	if (digits == "0") return "0";
+
+	std::string result;
+	if (scale <= 0)
+	{
+		result = digits;
+		if (scale < 0) result.append(static_cast<size_t>(-scale), '0');
+	}
+	else
+	{
+		int sc = scale;
+		if (static_cast<int>(digits.size()) > sc)
+		{
+			size_t pointPos = digits.size() - sc;
+			result = digits.substr(0, pointPos) + "." + digits.substr(pointPos);
+		}
+		else
+		{
+			// 0.<leading zeros><digits>
+			std::string frac(sc - digits.size(), '0');
+			frac += digits;
+			result = "0." + frac;
+		}
+		// strip trailing zeros after the decimal point? Keep them for full precision.
+	}
+	if (negative) result.insert(result.begin(), '-');
+	return result;
+}
+
+// Parse number-like JSON value (number or string) into sign + unscaled digits at given scale.
+// Returns false on error.
+static bool parseDecimalToUnscaled(const boost::json::value& v, int scale,
+                                    bool& negative, std::string& unscaledDigits,
+                                    std::string& err)
+{
+	std::string s;
+	if (v.is_string())
+	{
+		s = std::string(v.as_string());
+	}
+	else if (v.is_int64())
+	{
+		int64_t x = v.as_int64();
+		if (x < 0) { negative = true; x = -x; } else negative = false;
+		s = std::to_string(x);
+	}
+	else if (v.is_uint64())
+	{
+		negative = false;
+		s = std::to_string(v.as_uint64());
+	}
+	else if (v.is_double())
+	{
+		// Format with enough precision to preserve scale.
+		double d = v.as_double();
+		std::ostringstream oss;
+		// Up to 17 significant digits for double, plus extra for scale.
+		oss.precision(17);
+		oss << std::fixed << d;
+		s = oss.str();
+	}
+	else if (v.is_null())
+	{
+		err = "Decimal value is null";
+		return false;
+	}
+	else
+	{
+		err = "Decimal value must be a number or string";
+		return false;
+	}
+
+	// trim spaces
+	while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.erase(s.begin());
+	while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.pop_back();
+	if (s.empty()) { err = "Empty decimal string"; return false; }
+
+	negative = false;
+	size_t pos = 0;
+	if (s[pos] == '+') { ++pos; }
+	else if (s[pos] == '-') { negative = true; ++pos; }
+
+	std::string intPart, fracPart;
+	bool sawDot = false;
+	int expPart = 0;
+	for (; pos < s.size(); ++pos)
+	{
+		char c = s[pos];
+		if (c >= '0' && c <= '9')
+		{
+			if (sawDot) fracPart.push_back(c);
+			else intPart.push_back(c);
+		}
+		else if (c == '.' && !sawDot)
+		{
+			sawDot = true;
+		}
+		else if (c == 'e' || c == 'E')
+		{
+			// scientific notation
+			std::string expStr = s.substr(pos + 1);
+			if (expStr.empty()) { err = "Invalid decimal: missing exponent"; return false; }
+			try { expPart = std::stoi(expStr); }
+			catch (...) { err = "Invalid decimal exponent"; return false; }
+			break;
+		}
+		else
+		{
+			err = std::string("Invalid character in decimal: '") + c + "'";
+			return false;
+		}
+	}
+
+	// Compose unscaled with given scale.
+	// effective fractional digits = fracPart.size() - expPart
+	int fracLen = static_cast<int>(fracPart.size()) - expPart;
+	// shift integer/fraction by expPart
+	if (expPart > 0)
+	{
+		// move expPart digits from fracPart to intPart
+		int take = std::min<int>(expPart, static_cast<int>(fracPart.size()));
+		intPart += fracPart.substr(0, take);
+		fracPart.erase(0, take);
+		int remaining = expPart - take;
+		if (remaining > 0)
+		{
+			intPart.append(remaining, '0');
+		}
+	}
+	else if (expPart < 0)
+	{
+		// move -expPart digits from intPart to front of fracPart
+		int shift = -expPart;
+		if (static_cast<int>(intPart.size()) >= shift)
+		{
+			fracPart = intPart.substr(intPart.size() - shift) + fracPart;
+			intPart.erase(intPart.size() - shift);
+		}
+		else
+		{
+			// prepend zeros
+			std::string z(shift - intPart.size(), '0');
+			fracPart = z + intPart + fracPart;
+			intPart.clear();
+		}
+	}
+
+	// Now adjust to target scale.
+	int curFrac = static_cast<int>(fracPart.size());
+	if (curFrac < scale)
+	{
+		fracPart.append(scale - curFrac, '0');
+	}
+	else if (curFrac > scale)
+	{
+		// Round half-up at position 'scale' (banker's would be more accurate, but keep simple)
+		// Truncation with rounding on the next digit.
+		std::string keep = fracPart.substr(0, scale);
+		char nextDigit = fracPart[scale];
+		fracPart = keep;
+		if (nextDigit >= '5')
+		{
+			// add 1 to the lowest digit
+			std::string all = intPart + fracPart;
+			if (all.empty()) all = "0";
+			int i = static_cast<int>(all.size()) - 1;
+			int carry = 1;
+			while (i >= 0 && carry)
+			{
+				int d = (all[i] - '0') + carry;
+				all[i] = static_cast<char>('0' + (d % 10));
+				carry = d / 10;
+				--i;
+			}
+			if (carry) all.insert(all.begin(), '1');
+			// split back
+			int splitPos = static_cast<int>(all.size()) - scale;
+			if (splitPos < 0) { intPart.clear(); fracPart = std::string(-splitPos, '0') + all; }
+			else { intPart = all.substr(0, splitPos); fracPart = all.substr(splitPos); }
+		}
+	}
+	// Strip leading zeros from intPart (keep at least one)
+	size_t firstNonZero = 0;
+	while (firstNonZero + 1 < intPart.size() && intPart[firstNonZero] == '0') ++firstNonZero;
+	if (firstNonZero > 0) intPart.erase(0, firstNonZero);
+	if (intPart.empty()) intPart = "0";
+
+	unscaledDigits = (intPart == "0" ? std::string() : intPart) + fracPart;
+	if (unscaledDigits.empty()) unscaledDigits = "0";
+	// Strip leading zeros from unscaled
+	firstNonZero = 0;
+	while (firstNonZero + 1 < unscaledDigits.size() && unscaledDigits[firstNonZero] == '0') ++firstNonZero;
+	if (firstNonZero > 0) unscaledDigits.erase(0, firstNonZero);
+
+	if (unscaledDigits == "0") negative = false;
+
+	(void)fracLen;
+	return true;
+}
+
+// --- ISO-8601 helpers for date / time-millis / timestamp-millis logical types.
+
+static bool isDigits(const std::string& s, size_t from, size_t len)
+{
+	if (from + len > s.size()) return false;
+	for (size_t i = 0; i < len; ++i)
+		if (s[from + i] < '0' || s[from + i] > '9') return false;
+	return true;
+}
+
+// Days from civil date (proleptic Gregorian) — Howard Hinnant's algorithm.
+static int64_t daysFromCivil(int y, unsigned m, unsigned d)
+{
+	y -= m <= 2;
+	const int era = (y >= 0 ? y : y - 399) / 400;
+	const unsigned yoe = static_cast<unsigned>(y - era * 400);
+	const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097LL + static_cast<int64_t>(doe) - 719468LL;
+}
+
+static void civilFromDays(int64_t z, int& y, unsigned& m, unsigned& d)
+{
+	z += 719468;
+	const int64_t era = (z >= 0 ? z : z - 146096) / 146097;
+	const unsigned doe = static_cast<unsigned>(z - era * 146097);
+	const unsigned yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	const int yi = static_cast<int>(yoe) + static_cast<int>(era) * 400;
+	const unsigned doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	const unsigned mp = (5 * doy + 2) / 153;
+	d = doy - (153 * mp + 2) / 5 + 1;
+	m = mp < 10 ? mp + 3 : mp - 9;
+	y = yi + (m <= 2 ? 1 : 0);
+}
+
+// Parse "YYYY-MM-DD" into days since 1970-01-01. Returns false if format invalid.
+static bool parseIsoDate(const std::string& s, int32_t& outDays, std::string& err)
+{
+	if (s.size() < 10 || s[4] != '-' || s[7] != '-' ||
+	    !isDigits(s, 0, 4) || !isDigits(s, 5, 2) || !isDigits(s, 8, 2))
+	{
+		err = "Invalid ISO date format, expected YYYY-MM-DD";
+		return false;
+	}
+	int y = std::atoi(s.substr(0, 4).c_str());
+	int mo = std::atoi(s.substr(5, 2).c_str());
+	int d = std::atoi(s.substr(8, 2).c_str());
+	if (mo < 1 || mo > 12 || d < 1 || d > 31)
+	{
+		err = "ISO date out of range";
+		return false;
+	}
+	int64_t days = daysFromCivil(y, static_cast<unsigned>(mo), static_cast<unsigned>(d));
+	outDays = static_cast<int32_t>(days);
+	return true;
+}
+
+static std::string formatIsoDate(int32_t days)
+{
+	int y; unsigned m, d;
+	civilFromDays(days, y, m, d);
+	char buf[16];
+	std::snprintf(buf, sizeof(buf), "%04d-%02u-%02u", y, m, d);
+	return std::string(buf);
+}
+
+// Parse "HH:MM:SS[.fff]" into milliseconds since midnight.
+static bool parseIsoTimeMillis(const std::string& s, int32_t& outMs, std::string& err)
+{
+	if (s.size() < 8 || s[2] != ':' || s[5] != ':' ||
+	    !isDigits(s, 0, 2) || !isDigits(s, 3, 2) || !isDigits(s, 6, 2))
+	{
+		err = "Invalid ISO time format, expected HH:MM:SS[.fff]";
+		return false;
+	}
+	int h = std::atoi(s.substr(0, 2).c_str());
+	int mi = std::atoi(s.substr(3, 2).c_str());
+	int se = std::atoi(s.substr(6, 2).c_str());
+	int ms = 0;
+	if (s.size() > 8 && s[8] == '.')
+	{
+		std::string frac;
+		for (size_t i = 9; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i)
+			frac.push_back(s[i]);
+		if (frac.size() > 3) frac = frac.substr(0, 3);
+		while (frac.size() < 3) frac.push_back('0');
+		ms = std::atoi(frac.c_str());
+	}
+	if (h < 0 || h > 23 || mi < 0 || mi > 59 || se < 0 || se > 59)
+	{
+		err = "ISO time out of range";
+		return false;
+	}
+	outMs = ((h * 60 + mi) * 60 + se) * 1000 + ms;
+	return true;
+}
+
+static std::string formatIsoTimeMillis(int32_t ms)
+{
+	if (ms < 0) ms = 0;
+	int h = ms / 3600000;
+	ms -= h * 3600000;
+	int mi = ms / 60000;
+	ms -= mi * 60000;
+	int se = ms / 1000;
+	int frac = ms - se * 1000;
+	char buf[32];
+	std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", h, mi, se, frac);
+	return std::string(buf);
+}
+
+// Parse "YYYY-MM-DDTHH:MM:SS[.fff][Z|+hh:mm|-hh:mm]" into ms since UTC epoch.
+static bool parseIsoTimestampMillis(const std::string& s, int64_t& outMs, std::string& err)
+{
+	if (s.size() < 19 || (s[10] != 'T' && s[10] != ' '))
+	{
+		err = "Invalid ISO timestamp, expected YYYY-MM-DDTHH:MM:SS[.fff][Z]";
+		return false;
+	}
+	int32_t days = 0;
+	if (!parseIsoDate(s.substr(0, 10), days, err)) return false;
+	int32_t timeMs = 0;
+	if (!parseIsoTimeMillis(s.substr(11, 8) + (s.size() > 19 && s[19] == '.' ? s.substr(19) : std::string()), timeMs, err))
+		return false;
+	// timezone offset
+	int tzMin = 0;
+	size_t tzPos = s.find_first_of("Zz+", 19);
+	if (tzPos == std::string::npos)
+	{
+		// Maybe '-' offset; search for sign past possible fractional digits
+		for (size_t i = 19; i < s.size(); ++i)
+		{
+			if (s[i] == '-' || s[i] == '+' || s[i] == 'Z' || s[i] == 'z') { tzPos = i; break; }
+		}
+	}
+	if (tzPos != std::string::npos)
+	{
+		char c = s[tzPos];
+		if (c == 'Z' || c == 'z')
+		{
+			tzMin = 0;
+		}
+		else
+		{
+			int sign = (c == '+') ? 1 : -1;
+			std::string off = s.substr(tzPos + 1);
+			int oh = 0, om = 0;
+			if (off.size() >= 5 && off[2] == ':')
+			{
+				oh = std::atoi(off.substr(0, 2).c_str());
+				om = std::atoi(off.substr(3, 2).c_str());
+			}
+			else if (off.size() >= 4)
+			{
+				oh = std::atoi(off.substr(0, 2).c_str());
+				om = std::atoi(off.substr(2, 2).c_str());
+			}
+			else if (off.size() >= 2)
+			{
+				oh = std::atoi(off.substr(0, 2).c_str());
+			}
+			tzMin = sign * (oh * 60 + om);
+		}
+	}
+	int64_t epochMs = static_cast<int64_t>(days) * 86400000LL + timeMs;
+	epochMs -= static_cast<int64_t>(tzMin) * 60000LL;
+	outMs = epochMs;
+	return true;
+}
+
+static std::string formatIsoTimestampMillis(int64_t ms)
+{
+	int64_t days = ms / 86400000LL;
+	int64_t rem = ms - days * 86400000LL;
+	if (rem < 0) { rem += 86400000LL; --days; }
+	int y; unsigned m, d;
+	civilFromDays(days, y, m, d);
+	int h = static_cast<int>(rem / 3600000);
+	rem -= static_cast<int64_t>(h) * 3600000;
+	int mi = static_cast<int>(rem / 60000);
+	rem -= static_cast<int64_t>(mi) * 60000;
+	int se = static_cast<int>(rem / 1000);
+	int frac = static_cast<int>(rem - static_cast<int64_t>(se) * 1000);
+	char buf[40];
+	std::snprintf(buf, sizeof(buf), "%04d-%02u-%02uT%02d:%02d:%02d.%03dZ",
+	              y, m, d, h, mi, se, frac);
+	return std::string(buf);
+}
+
+} // anonymous namespace
 
 //================================== Avro ==========================================
 
@@ -58,6 +620,8 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		datum.selectBranch(1);
 	}
 
+	avro::LogicalType lt = datum.logicalType();
+
 	switch (datum.type())
 	{
 	case avro::AVRO_STRING:
@@ -70,6 +634,26 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		return true;
 
 	case avro::AVRO_LONG:
+	{
+		if (lt.type() == avro::LogicalType::TIMESTAMP_MILLIS)
+		{
+			int64_t ms = 0;
+			if (jsonValue.is_string())
+			{
+				std::string sub;
+				if (!parseIsoTimestampMillis(std::string(jsonValue.as_string()), ms, sub))
+				{
+					errMsg = "Invalid timestamp-millis at " + path + ": " + sub;
+					return false;
+				}
+			}
+			else if (jsonValue.is_int64()) ms = jsonValue.as_int64();
+			else if (jsonValue.is_uint64()) ms = static_cast<int64_t>(jsonValue.as_uint64());
+			else if (jsonValue.is_double()) ms = static_cast<int64_t>(jsonValue.as_double());
+			else { errMsg = "Expected timestamp-millis (string or number) at " + path; return false; }
+			datum.value<int64_t>() = ms;
+			return true;
+		}
 		if (!jsonValue.is_int64())
 		{
 			errMsg = "Expected long at " + path;
@@ -77,8 +661,44 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		}
 		datum.value<int64_t>() = jsonValue.as_int64();
 		return true;
+	}
 
 	case avro::AVRO_INT:
+	{
+		if (lt.type() == avro::LogicalType::DATE)
+		{
+			int32_t days = 0;
+			if (jsonValue.is_string())
+			{
+				std::string sub;
+				if (!parseIsoDate(std::string(jsonValue.as_string()), days, sub))
+				{
+					errMsg = "Invalid date at " + path + ": " + sub;
+					return false;
+				}
+			}
+			else if (jsonValue.is_int64()) days = static_cast<int32_t>(jsonValue.as_int64());
+			else { errMsg = "Expected date (string or number) at " + path; return false; }
+			datum.value<int32_t>() = days;
+			return true;
+		}
+		if (lt.type() == avro::LogicalType::TIME_MILLIS)
+		{
+			int32_t ms = 0;
+			if (jsonValue.is_string())
+			{
+				std::string sub;
+				if (!parseIsoTimeMillis(std::string(jsonValue.as_string()), ms, sub))
+				{
+					errMsg = "Invalid time-millis at " + path + ": " + sub;
+					return false;
+				}
+			}
+			else if (jsonValue.is_int64()) ms = static_cast<int32_t>(jsonValue.as_int64());
+			else { errMsg = "Expected time-millis (string or number) at " + path; return false; }
+			datum.value<int32_t>() = ms;
+			return true;
+		}
 		if (!jsonValue.is_int64())
 		{
 			errMsg = "Expected int at " + path;
@@ -86,6 +706,7 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		}
 		datum.value<int32_t>() = static_cast<int32_t>(jsonValue.as_int64());
 		return true;
+	}
 
 	case avro::AVRO_FLOAT:
 		if (jsonValue.is_double())
@@ -126,6 +747,25 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 
 	case avro::AVRO_BYTES:
 	{
+		if (lt.type() == avro::LogicalType::DECIMAL)
+		{
+			bool neg = false;
+			std::string unscaled;
+			std::string sub;
+			if (!parseDecimalToUnscaled(jsonValue, lt.scale(), neg, unscaled, sub))
+			{
+				errMsg = "Invalid decimal at " + path + ": " + sub;
+				return false;
+			}
+			std::vector<uint8_t> bytes;
+			if (!encodeDecimalBytes(neg, unscaled, bytes, 0, sub))
+			{
+				errMsg = "Decimal encoding failed at " + path + ": " + sub;
+				return false;
+			}
+			datum.value<std::vector<uint8_t>>() = std::move(bytes);
+			return true;
+		}
 		if (!jsonValue.is_string())
 		{
 			errMsg = "Expected string (bytes) at " + path;
@@ -139,12 +779,37 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 
 	case avro::AVRO_FIXED:
 	{
+		avro::GenericFixed& fixed = datum.value<avro::GenericFixed>();
+		if (lt.type() == avro::LogicalType::DECIMAL)
+		{
+			bool neg = false;
+			std::string unscaled;
+			std::string sub;
+			if (!parseDecimalToUnscaled(jsonValue, lt.scale(), neg, unscaled, sub))
+			{
+				errMsg = "Invalid decimal at " + path + ": " + sub;
+				return false;
+			}
+			size_t fixedSize = fixed.value().size();
+			if (fixedSize == 0)
+			{
+				// schema size — fall back to schema node
+				fixedSize = fixed.schema()->fixedSize();
+			}
+			std::vector<uint8_t> bytes;
+			if (!encodeDecimalBytes(neg, unscaled, bytes, fixedSize, sub))
+			{
+				errMsg = "Decimal encoding failed at " + path + ": " + sub;
+				return false;
+			}
+			fixed.value() = std::move(bytes);
+			return true;
+		}
 		if (!jsonValue.is_string())
 		{
 			errMsg = "Expected string (fixed) at " + path;
 			return false;
 		}
-		avro::GenericFixed& fixed = datum.value<avro::GenericFixed>();
 		std::string strVal = std::string(jsonValue.as_string());
 		// Проверка на UUID формат
 		if (strVal.length() == 36 && strVal[8] == '-' && strVal[13] == '-')
@@ -542,6 +1207,7 @@ static std::string escapeJsonString(const std::string& input)
 static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 {
 	std::ostringstream oss;
+	avro::LogicalType lt = datum.logicalType();
 
 	switch (datum.type())
 	{
@@ -554,12 +1220,26 @@ static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 		break;
 
 	case avro::AVRO_INT:
-		oss << datum.value<int32_t>();
+	{
+		int32_t v = datum.value<int32_t>();
+		if (lt.type() == avro::LogicalType::DATE)
+			oss << "\"" << formatIsoDate(v) << "\"";
+		else if (lt.type() == avro::LogicalType::TIME_MILLIS)
+			oss << "\"" << formatIsoTimeMillis(v) << "\"";
+		else
+			oss << v;
 		break;
+	}
 
 	case avro::AVRO_LONG:
-		oss << datum.value<int64_t>();
+	{
+		int64_t v = datum.value<int64_t>();
+		if (lt.type() == avro::LogicalType::TIMESTAMP_MILLIS)
+			oss << "\"" << formatIsoTimestampMillis(v) << "\"";
+		else
+			oss << v;
 		break;
+	}
 
 	case avro::AVRO_FLOAT:
 		oss << std::setprecision(9) << datum.value<float>();
@@ -576,6 +1256,14 @@ static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 	case avro::AVRO_BYTES:
 	{
 		const auto& bytes = datum.value<std::vector<uint8_t>>();
+		if (lt.type() == avro::LogicalType::DECIMAL)
+		{
+			bool neg = false;
+			std::string digits;
+			decodeDecimalBytes(bytes.data(), bytes.size(), neg, digits);
+			oss << formatDecimalJson(neg, digits, lt.scale());
+			break;
+		}
 		oss << "\"";
 		for (uint8_t byte : bytes)
 		{
@@ -589,6 +1277,14 @@ static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 	{
 		const auto& fixed = datum.value<avro::GenericFixed>();
 		const auto& bytes = fixed.value();
+		if (lt.type() == avro::LogicalType::DECIMAL)
+		{
+			bool neg = false;
+			std::string digits;
+			decodeDecimalBytes(bytes.data(), bytes.size(), neg, digits);
+			oss << formatDecimalJson(neg, digits, lt.scale());
+			break;
+		}
 		oss << "\"";
 		for (uint8_t byte : bytes)
 		{
