@@ -495,7 +495,11 @@ static std::string formatIsoTimeMillis(int32_t ms)
 	int se = ms / 1000;
 	int frac = ms - se * 1000;
 	char buf[32];
-	std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", h, mi, se, frac);
+	// Emit fractional part only when milliseconds are actually present.
+	if (frac != 0)
+		std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d.%03d", h, mi, se, frac);
+	else
+		std::snprintf(buf, sizeof(buf), "%02d:%02d:%02d", h, mi, se);
 	return std::string(buf);
 }
 
@@ -572,8 +576,14 @@ static std::string formatIsoTimestampMillis(int64_t ms)
 	int se = static_cast<int>(rem / 1000);
 	int frac = static_cast<int>(rem - static_cast<int64_t>(se) * 1000);
 	char buf[40];
-	std::snprintf(buf, sizeof(buf), "%04d-%02u-%02uT%02d:%02d:%02d.%03dZ",
-	              y, m, d, h, mi, se, frac);
+	// Avro timestamp-millis has no timezone (always UTC) — omit the trailing 'Z',
+	// and emit the fractional part only when milliseconds are actually present.
+	if (frac != 0)
+		std::snprintf(buf, sizeof(buf), "%04d-%02u-%02uT%02d:%02d:%02d.%03d",
+		              y, m, d, h, mi, se, frac);
+	else
+		std::snprintf(buf, sizeof(buf), "%04d-%02u-%02uT%02d:%02d:%02d",
+		              y, m, d, h, mi, se);
 	return std::string(buf);
 }
 

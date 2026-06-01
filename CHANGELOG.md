@@ -5,6 +5,17 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.9.1] - 2026-06-01
+
+### Изменено
+
+#### Avro — формат вывода даты/времени
+- `timestamp-millis` при распаковке больше **не добавляет суффикс `Z`**. Avro хранит значение в UTC без информации о часовом поясе, поэтому `Z` избыточен и мешал разбору строки в тип `Дата` на стороне 1С.
+- `time-millis` и `timestamp-millis` при распаковке выводят дробную часть (`.fff`) **только если миллисекунды не равны нулю**. Тип `Дата` в 1С имеет секундную точность, поэтому хвост `.000` при нулевых мс убран как лишний. Пример: `2026-06-01T14:30:00` вместо `2026-06-01T14:30:00.000Z`, но `2026-06-01T14:30:00.123` сохраняется при наличии мс.
+- Сторона упаковки не изменилась: ISO-строки с `Z`, timezone-offset и дробной частью по-прежнему принимаются.
+
+---
+
 ## [1.9.0] - 2026-05-30
 
 ### Добавлено
@@ -517,6 +528,7 @@
 
 ---
 
+[1.9.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.0...v1.9.1
 [1.9.0]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.8...v1.9.0
 [1.8.8]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.7...v1.8.8
 [1.8.7]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.8.6...v1.8.7
