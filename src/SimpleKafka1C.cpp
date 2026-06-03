@@ -463,6 +463,7 @@ SimpleKafka1C::SimpleKafka1C()
 	// - admin api
 
 	AddMethod(L"Sleep", L"Пауза", this, &SimpleKafka1C::sleep);
+	AddMethod(L"GetProcessId", L"ПолучитьИдентификаторПроцесса", this, &SimpleKafka1C::getProcessId);
 	AddMethod(L"SetLogDirectory", L"УстановитьКаталогЛогов", this, &SimpleKafka1C::setLogDirectory);
 	AddMethod(L"SetFormatLogFiles", L"УстановитьФорматЛогов", this, &SimpleKafka1C::setFormatLogFiles);
 
@@ -923,6 +924,14 @@ bool SimpleKafka1C::sleep(const variant_t& delay)
 	using namespace std;
 	this_thread::sleep_for(chrono::seconds(get<int32_t>(delay)));
 	return true;
+}
+
+int32_t SimpleKafka1C::getProcessId()
+{
+	// Process ID of the running component (the 1C platform host process on
+	// in-process loading, or the dedicated subprocess on out-of-process loading).
+	// Useful for identifying/terminating the component in OS task managers.
+	return static_cast<int32_t>(pid);
 }
 
 bool SimpleKafka1C::setLogDirectory(const variant_t& logDir)
