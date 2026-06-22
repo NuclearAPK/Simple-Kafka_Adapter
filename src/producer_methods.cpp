@@ -52,6 +52,8 @@ RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorC
 			{
 				if (eventFile.is_open())
 					eventFile << currentDateTime() << " Error: Max queue full retries exceeded (" << MAX_QUEUE_FULL_RETRIES << ")" << std::endl;
+				msg_err = std::string("Max queue full retries exceeded (")
+					+ std::to_string(MAX_QUEUE_FULL_RETRIES) + "): " + RdKafka::err2str(resp);
 				break;
 			}
 			hProducer->poll(1000);
@@ -70,6 +72,14 @@ RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorC
 
 bool SimpleKafka1C::initProducer(const variant_t& brokers)
 {
+	// Сбрасываем устаревшую асинхронную ошибку, чтобы она не маскировала успех новой инициализации
+	if (asyncErrorState)
+	{
+		std::lock_guard<std::mutex> lk(asyncErrorState->mtx);
+		asyncErrorState->lastError.clear();
+		asyncErrorState->fatal = false;
+	}
+
 	// Освобождаем предыдущий экземпляр продюсера, если он существует
 	if (hProducer != nullptr)
 	{
@@ -416,6 +426,9 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 				if (eventFile.is_open())
 					eventFile << currentDateTime() << " Error: Failed to produce message: " << RdKafka::err2str(resp) << std::endl;
 
+				// Пробрасываем текст ошибки в 1С (последняя ошибка батча)
+				msg_err = std::string("produceBatch: failed to produce message: ") + RdKafka::err2str(resp);
+
 				if (hdrs != nullptr)
 					delete hdrs;
 			}
@@ -552,8 +565,13 @@ std::string SimpleKafka1C::produceBatchWithResult(const variant_t& messagesJson,
 
 		// Wait for all callbacks to fire
 		RdKafka::ErrorCode flushRc = hProducer->flush(tFlushTimeout);
-		if (flushRc != RdKafka::ERR_NO_ERROR && eventFile.is_open())
-			eventFile << currentDateTime() << " Warning: flush returned " << RdKafka::err2str(flushRc) << std::endl;
+		if (flushRc != RdKafka::ERR_NO_ERROR)
+		{
+			// Таймаут/ошибка flush — пробрасываем текст в 1С, а не только в лог
+			msg_err = std::string("produceBatchWithResult: flush returned ") + RdKafka::err2str(flushRc);
+			if (eventFile.is_open())
+				eventFile << currentDateTime() << " Warning: flush returned " << RdKafka::err2str(flushRc) << std::endl;
+		}
 
 		// Build JSON response
 		boost::property_tree::ptree jsonObj;

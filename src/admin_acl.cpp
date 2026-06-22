@@ -164,7 +164,13 @@ bool SimpleKafka1C::addAcl(const variant_t& brokers, const variant_t& resourceTy
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_CREATEACLS);
-	rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_AclBinding_destroy(acl);
+		return false;
+	}
 
 	rd_kafka_AclBinding_t* acl_arr[1] = { acl };
 	rd_kafka_CreateAcls(admin.get(), acl_arr, 1, options, admin.queue());
@@ -271,7 +277,13 @@ std::string SimpleKafka1C::describeAcls(const variant_t& brokers, const variant_
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBEACLS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_AclBinding_destroy(filter);
+		return result;
+	}
 
 	rd_kafka_DescribeAcls(admin.get(), filter, options, admin.queue());
 
@@ -374,7 +386,13 @@ std::string SimpleKafka1C::deleteAcl(const variant_t& brokers, const variant_t& 
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETEACLS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_AclBinding_destroy(filter);
+		return result;
+	}
 
 	rd_kafka_AclBindingFilter_t* filter_arr[1] = { filter };
 	rd_kafka_DeleteAcls(admin.get(), filter_arr, 1, options, admin.queue());

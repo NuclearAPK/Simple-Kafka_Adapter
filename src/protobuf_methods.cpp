@@ -25,7 +25,8 @@
 // Helper to convert JSON value to protobuf field
 static bool SetProtobufFieldFromJson(google::protobuf::Message* message,
 	const google::protobuf::FieldDescriptor* field,
-	const boost::json::value& json_value)
+	const boost::json::value& json_value,
+	std::string* errMsg = nullptr)
 {
 	const google::protobuf::Reflection* reflection = message->GetReflection();
 
@@ -79,7 +80,7 @@ static bool SetProtobufFieldFromJson(google::protobuf::Message* message,
 					const google::protobuf::FieldDescriptor* sub_field =
 						sub_descriptor->FindFieldByName(std::string(kv.key()));
 					if (sub_field) {
-						SetProtobufFieldFromJson(sub_message, sub_field, kv.value());
+						SetProtobufFieldFromJson(sub_message, sub_field, kv.value(), errMsg);
 					}
 				}
 			}
@@ -90,7 +91,12 @@ static bool SetProtobufFieldFromJson(google::protobuf::Message* message,
 		}
 		return true;
 	}
+	catch (const std::exception& ex) {
+		if (errMsg) *errMsg = ex.what();
+		return false;
+	}
 	catch (...) {
+		if (errMsg) *errMsg = "unknown exception";
 		return false;
 	}
 }
@@ -269,8 +275,11 @@ bool SimpleKafka1C::convertToProtobufFormat(const variant_t& msgJson, const vari
 				const google::protobuf::FieldDescriptor* field =
 					descriptor->FindFieldByName(std::string(kv.key()));
 				if (field) {
-					if (!SetProtobufFieldFromJson(message.get(), field, kv.value())) {
+					std::string fieldErr;
+					if (!SetProtobufFieldFromJson(message.get(), field, kv.value(), &fieldErr)) {
 						msg_err = "Field assignment error: " + std::string(kv.key());
+						if (!fieldErr.empty())
+							msg_err += " (" + fieldErr + ")";
 						return false;
 					}
 				}
@@ -383,7 +392,9 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		// Parse binary data
 		if (!message->ParseFromString(*dataPtr))
 		{
-			msg_err = "Protobuf message deserialization error";
+			// ParseFromString не отдаёт текст причины — добавляем контекст (схема, размер данных)
+			msg_err = "Protobuf message deserialization error (schema: " + name
+				+ ", data size: " + std::to_string(dataPtr->size()) + " bytes)";
 			return std::string("");
 		}
 

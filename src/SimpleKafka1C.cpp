@@ -175,6 +175,15 @@ void SimpleKafka1C::clEventCb::event_cb(RdKafka::Event& event)
 	switch (event.type())
 	{
 	case RdKafka::Event::EVENT_ERROR:
+		// Пробрасываем асинхронную ошибку в общий слот (доступен через GetLastError
+		// независимо от того, задан ли LogDirectory)
+		if (asyncError)
+		{
+			std::lock_guard<std::mutex> lk(asyncError->mtx);
+			asyncError->lastError = std::string(event.fatal() ? "FATAL " : "")
+				+ "ERROR (" + RdKafka::err2str(event.err()) + "): " + event.str();
+			asyncError->fatal = event.fatal();
+		}
 		if (eventFile.is_open())
 		{
 			if (event.fatal())
@@ -228,6 +237,14 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 		br->delivered = (message.err() == RdKafka::ERR_NO_ERROR);
 		if (message.err() != RdKafka::ERR_NO_ERROR)
 			br->errorMsg = message.errstr();
+	}
+
+	// Пробрасываем ошибку доставки в общий слот (доступен через GetLastError
+	// независимо от LogDirectory и пакетного режима)
+	if (message.err() != RdKafka::ERR_NO_ERROR && asyncError)
+	{
+		std::lock_guard<std::mutex> lk(asyncError->mtx);
+		asyncError->lastError = std::string("Delivery failed: ") + message.errstr();
 	}
 
 	if (!logDir.empty())
@@ -343,10 +360,30 @@ std::string SimpleKafka1C::extensionName()
 	return u8"SimpleKafka1C";
 }
 
+// Возвращает последнюю синхронную ошибку (msg_err); если её нет — последнюю
+// асинхронную ошибку из event_cb/dr_cb (SASL auth fail, недоступный брокер,
+// SSL handshake, сбой доставки), которая иначе была бы не видна на стороне 1С.
+std::string SimpleKafka1C::getLastError()
+{
+	if (!msg_err.empty())
+		return msg_err;
+	if (asyncErrorState)
+	{
+		std::lock_guard<std::mutex> lk(asyncErrorState->mtx);
+		if (!asyncErrorState->lastError.empty())
+			return asyncErrorState->lastError;
+	}
+	return msg_err;
+}
+
 SimpleKafka1C::SimpleKafka1C()
 {
 	hProducer = nullptr;
 	hConsumer = nullptr;
+
+	// Подключаем общий потокобезопасный слот асинхронных ошибок к колбэкам
+	cl_event_cb.asyncError = asyncErrorState;
+	cl_dr_cb.asyncError = asyncErrorState;
 
 	clearMessageMetadata();
 

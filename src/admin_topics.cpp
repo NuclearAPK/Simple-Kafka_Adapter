@@ -177,7 +177,13 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_CREATETOPICS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_NewTopic_destroy(newt);
+		return false;
+	}
 
 	// выполняем создание топика
 	rd_kafka_NewTopic_t* newt_arr[1] = { newt };
@@ -260,7 +266,13 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETETOPICS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, timeout_ms, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_DeleteTopic_destroy(delt);
+		return false;
+	}
 
 	// выполняем удаление топика
 	rd_kafka_DeleteTopic_t* delt_arr[1] = { delt };
@@ -385,7 +397,14 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETERECORDS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_DeleteRecords_destroy(delr);
+		rd_kafka_topic_partition_list_destroy(partitions);
+		return false;
+	}
 
 	// выполняем удаление записей
 	rd_kafka_DeleteRecords_t* delr_arr[1] = { delr };
@@ -481,7 +500,13 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_ConfigResource_destroy(config_resource);
+		return result;
+	}
 
 	// выполняем запрос конфигурации
 	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
@@ -669,7 +694,13 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_ConfigResource_destroy(config_resource);
+		return false;
+	}
 
 	// выполняем изменение конфигурации
 	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
@@ -766,7 +797,13 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 
 	rd_kafka_AdminOptions_t* options =
 		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_ConfigResource_destroy(config_resource);
+		return result;
+	}
 
 	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
 	rd_kafka_DescribeConfigs(admin.get(), config_arr, 1, options, admin.queue());
@@ -901,7 +938,13 @@ bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& b
 
 	rd_kafka_AdminOptions_t* options =
 		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_ConfigResource_destroy(config_resource);
+		return false;
+	}
 
 	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
 	rd_kafka_AlterConfigs(admin.get(), config_arr, 1, options, admin.queue());

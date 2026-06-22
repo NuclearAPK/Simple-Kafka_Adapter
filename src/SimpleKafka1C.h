@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.9.1";
+	static constexpr char Version[] = u8"1.9.1-fork.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -273,7 +273,7 @@ private:
 	int32_t getProcessId();
 	bool setLogDirectory(const variant_t& logDir);
 	bool setFormatLogFiles(const variant_t& format);
-	std::string getLastError() { return msg_err; }
+	std::string getLastError();
 	void openEventFile(const std::string& logName, std::ofstream& eventFile);
 
 	// Metrics API
@@ -331,6 +331,19 @@ private:
 			std::string errstr_msg;
 		};
 
+	// Потокобезопасный слот для последней АСИНХРОННОЙ ошибки librdkafka.
+	// librdkafka доставляет асинхронные ошибки (SASL auth fail, недоступный брокер,
+	// SSL handshake, сбой доставки) в фоновом потоке через event_cb/dr_cb. Раньше они
+	// попадали только в лог-файл и не доходили до GetLastError (а при пустом LogDirectory
+	// терялись полностью). Этот слот делает их доступными через GetLastError независимо от лога.
+	struct AsyncErrorState
+	{
+		std::mutex mtx;
+		std::string lastError;
+		bool fatal = false;
+	};
+	std::shared_ptr<AsyncErrorState> asyncErrorState = std::make_shared<AsyncErrorState>();
+
 	class clEventCb : public RdKafka::EventCb
 	{
 	public:
@@ -341,6 +354,7 @@ private:
 		std::string statLogName;
 		bool statisticsOn = false;
 		std::string clientid;
+		std::shared_ptr<AsyncErrorState> asyncError;  // общий слот с владельцем
 
 		void event_cb(RdKafka::Event &event);
 	};
@@ -354,6 +368,7 @@ private:
 		std::string logDir;
 		std::string producerLogName;
 		std::string clientid;
+		std::shared_ptr<AsyncErrorState> asyncError;  // общий слот с владельцем
 
 		void dr_cb(RdKafka::Message &message);
 	};

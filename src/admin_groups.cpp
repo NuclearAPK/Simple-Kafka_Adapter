@@ -76,7 +76,8 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	rd_kafka_topic_t* rkt = rd_kafka_topic_new(rk, tTopicName.c_str(), nullptr);
 	if (!rkt)
 	{
-		msg_err = "Topic handle creation error";
+		// rd_kafka_topic_new при ошибке возвращает NULL; причину берём из rd_kafka_last_error()
+		msg_err = std::string("Topic handle creation error: ") + rd_kafka_err2str(rd_kafka_last_error());
 		rd_kafka_destroy(rk);
 		return result;
 	}
@@ -215,7 +216,12 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 
 	// опции для операции ListConsumerGroups
 	rd_kafka_AdminOptions_t* list_options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPS);
-	rd_kafka_AdminOptions_set_request_timeout(list_options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_request_timeout(list_options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(list_options);
+		return result;
+	}
 
 	// получаем список всех consumer groups
 	rd_kafka_ListConsumerGroups(admin.get(), list_options, admin.queue());
@@ -288,7 +294,8 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	rd_kafka_topic_t* rkt = rd_kafka_topic_new(admin.get(), tTopicName.c_str(), nullptr);
 	if (!rkt)
 	{
-		msg_err = "Topic handle creation error";
+		// rd_kafka_topic_new при ошибке возвращает NULL; причину берём из rd_kafka_last_error()
+		msg_err = std::string("Topic handle creation error: ") + rd_kafka_err2str(rd_kafka_last_error());
 		return result;
 	}
 
@@ -343,7 +350,14 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 		rd_kafka_ListConsumerGroupOffsets_t* grp_offsets_arr[1] = { grp_offsets };
 
 		rd_kafka_AdminOptions_t* offsets_options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPOFFSETS);
-		rd_kafka_AdminOptions_set_request_timeout(offsets_options, tTimeout, errstr, sizeof(errstr));
+		if (rd_kafka_AdminOptions_set_request_timeout(offsets_options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+		{
+			msg_err = errstr;
+			rd_kafka_AdminOptions_destroy(offsets_options);
+			rd_kafka_ListConsumerGroupOffsets_destroy(grp_offsets);
+			rd_kafka_topic_partition_list_destroy(partitions);
+			continue;
+		}
 
 		rd_kafka_ListConsumerGroupOffsets(admin.get(), grp_offsets_arr, 1, offsets_options, admin.queue());
 
@@ -390,6 +404,11 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 				}
 			}
 			rd_kafka_event_destroy(offset_ev);
+		}
+		else
+		{
+			// queue_poll вернул NULL (таймаут) — фиксируем причину, иначе она терялась молча
+			msg_err = std::string("Timeout while retrieving offsets for group: ") + group_id;
 		}
 
 		rd_kafka_AdminOptions_destroy(offsets_options);
@@ -575,7 +594,13 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 
 	// опции для операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETECONSUMERGROUPOFFSETS);
-	rd_kafka_AdminOptions_set_request_timeout(options, 10000, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_request_timeout(options, 10000, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_DeleteConsumerGroupOffsets_destroy(del_groups[0]);
+		rd_kafka_AdminOptions_destroy(options);
+		return false;
+	}
 
 	// выполняем операцию удаления
 	rd_kafka_DeleteConsumerGroupOffsets(admin.get(), del_groups, 1, options, admin.queue());
@@ -1033,7 +1058,12 @@ std::string SimpleKafka1C::getConsumerGroupList(const variant_t& brokers, const 
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_LISTCONSUMERGROUPS);
-	rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
 
 	rd_kafka_ListConsumerGroups(admin.get(), options, admin.queue());
 
@@ -1127,7 +1157,12 @@ std::string SimpleKafka1C::describeConsumerGroup(const variant_t& brokers, const
 	const char* groups[1] = { tGroupId.c_str() };
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONSUMERGROUPS);
-	rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr));
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		return result;
+	}
 
 	rd_kafka_DescribeConsumerGroups(admin.get(), groups, 1, options, admin.queue());
 
