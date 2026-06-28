@@ -407,8 +407,9 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 		}
 		else
 		{
-			// queue_poll вернул NULL (таймаут) — фиксируем причину, иначе она терялась молча
-			msg_err = std::string("Timeout while retrieving offsets for group: ") + group_id;
+			// queue_poll вернул NULL (таймаут) по этой группе: best-effort обход продолжается,
+			// частичный результат возвращается. msg_err НЕ трогаем, иначе успешный вызов
+			// выглядел бы как ошибка в GetLastError.
 		}
 
 		rd_kafka_AdminOptions_destroy(offsets_options);

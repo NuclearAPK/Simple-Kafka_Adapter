@@ -26,14 +26,14 @@
 
 **Producer / Consumer — пустой текст ошибки**
 - `CommitOffset` — при ошибке `commitSync()` теперь сохраняется текст (`err2str`), а не просто `Ложь`.
-- `ConsumeBatch` — ошибка доставки сообщения (не таймаут) пробрасывает `errstr()`.
+- `ConsumeBatch` — ошибка доставки сообщения (не таймаут и не конец партиции `PARTITION_EOF`) пробрасывает `errstr()`; достижение конца партиции считается нормой и `msg_err` не выставляет.
 - `ProduceBatch` — ошибка `produce()` пробрасывается в 1С (раньше только в лог).
 - `ProduceBatchWithResult` — таймаут/ошибка `flush()` пробрасывается в 1С.
 - `ProduceWithRetry` — при превышении лимита повторов по `QUEUE_FULL` сохраняется причина и код ошибки.
 
 **Admin — пустой/подменённый текст ошибки**
-- `GetPartitionWatermarks` — проверяются результаты `conf->set` и `assign` при чтении last_timestamp; причина фиксируется.
-- `GetTopicConsumerGroups` — таймаут `queue_poll` по группе больше не теряется молча.
+- `GetPartitionWatermarks` — проверяются результаты `conf->set` и `assign` при чтении last_timestamp. Это обогащение best-effort поверх основного результата (границы партиции): при сбое поле `last_message_timestamp_iso` остаётся пустым, `msg_err` не выставляется, чтобы успешный вызов не выглядел ошибкой в `GetLastError`.
+- `GetTopicConsumerGroups` — таймаут `queue_poll` по отдельной группе не прерывает обход: возвращается частичный результат, `msg_err` не выставляется (успешный вызов с частичными данными не должен выглядеть ошибкой).
 - `GetConsumerLag`, `GetConsumerGroupOffsets` — реальная причина `rd_kafka_topic_new` берётся из `rd_kafka_last_error()` (раньше — общая фраза без причины).
 - Все вызовы `AdminOptions_set_request_timeout` / `set_operation_timeout` (ACL, топики, группы) — проверяется код возврата, при ошибке причина (`errstr`) пробрасывается, ресурсы освобождаются.
 

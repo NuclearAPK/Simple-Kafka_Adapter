@@ -691,9 +691,14 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 			// Таймаут poll сам по себе не означает конец батча:
 			// продолжаем до достижения maxWait/maxMessages.
 		}
+		else if (resultConsume == RdKafka::ERR__PARTITION_EOF)
+		{
+			// Достигнут конец партиции — это не ошибка, новых сообщений просто нет.
+			// Не пишем в msg_err, иначе успешный батч выглядел бы как ошибка в GetLastError.
+		}
 		else
 		{
-			// Ошибка доставки (не таймаут) — сохраняем реальный текст librdkafka
+			// Ошибка доставки (не таймаут и не EOF) — сохраняем реальный текст librdkafka
 			msg_err = msg->errstr();
 			consumerMetrics.errorsCount++;
 		}
