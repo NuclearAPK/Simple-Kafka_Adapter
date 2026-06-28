@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.9.1";
+	static constexpr char Version[] = u8"1.9.2";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -149,6 +149,13 @@ private:
 		// Helper: create a temporary Producer for metadata/admin queries
 		std::unique_ptr<RdKafka::Producer> createMetadataClient(const std::string& brokers);
 
+		// Helper: broker list from settings (bootstrap.servers / metadata.broker.list), empty if not configured
+		std::string getConfiguredBrokers() const;
+
+		// Helper: validate topic/partition existence and offset range via a temporary metadata client.
+		// Sets msg_err and returns false on validation failure.
+		bool checkReadingPosition(RdKafka::Producer* producer, const std::string& topic, int32_t partition, int64_t offset);
+
 		// Helper: common logic for produceWithWaitResult / produceAvroWithWaitResult / produceProtobufWithWaitResult
 		int32_t produceAndWaitResult(std::function<int32_t()> produceFn, const std::string& methodLogName);
 
@@ -209,8 +216,8 @@ private:
 
 	std::string readMessageByOffset(const variant_t &brokers, const variant_t &topicName, const variant_t &partition, const variant_t &offset, const variant_t &timeout);
 	bool commitOffset(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
-	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition);
-	bool setReadingPositions(const variant_t& jsonTopicPartitions);
+	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition, const variant_t &brokers);
+	bool setReadingPositions(const variant_t& jsonTopicPartitions, const variant_t& brokers);
 	bool stopConsumer();
 	bool setWaitingTimeout(const variant_t &timeout);
 	bool setProducerFlushTimeout(const variant_t &timeout);

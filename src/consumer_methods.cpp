@@ -135,37 +135,253 @@ bool SimpleKafka1C::setAdminOperationTimeout(const variant_t& timeout)
 	return true;
 }
 
-bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant_t& offset, const variant_t& partition)
+std::string SimpleKafka1C::getConfiguredBrokers() const
 {
-	auto assignOffset = std::get<int32_t>(offset);
-	auto assignTopic = std::get<std::string>(topicName);
-	auto assignPartition = std::get<int32_t>(partition);
+	std::string brokers = getSettingValue("bootstrap.servers");
+	if (brokers.empty())
+		brokers = getSettingValue("metadata.broker.list");
+	return brokers;
+}
+
+bool SimpleKafka1C::checkReadingPosition(RdKafka::Producer* producer,
+	const std::string& topic, int32_t partition, int64_t offset)
+{
+	const int timeout = adminOperationTimeout;
+
+	std::string handleErr;
+	std::unique_ptr<RdKafka::Topic> topicHandle(RdKafka::Topic::create(producer, topic, nullptr, handleErr));
+	if (!topicHandle)
+	{
+		msg_err = "Topic handle creation error: " + handleErr;
+		return false;
+	}
+
+	RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode err = producer->metadata(false, topicHandle.get(), &metadata, timeout);
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = "Failed to get metadata for topic '" + topic + "': " + RdKafka::err2str(err);
+		return false;
+	}
+
+	// Find requested topic in returned metadata
+	const RdKafka::Metadata::TopicMetadataVector* topics = metadata->topics();
+	const RdKafka::TopicMetadata* topicMeta = nullptr;
+	for (auto it = topics->begin(); it != topics->end(); ++it)
+	{
+		if ((*it)->topic() == topic)
+		{
+			topicMeta = *it;
+			break;
+		}
+	}
+
+	if (!topicMeta || topicMeta->err() != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = "Topic '" + topic + "' does not exist";
+		delete metadata;
+		return false;
+	}
+
+	// Validate that the requested partition exists in the topic
+	bool partitionFound = false;
+	for (auto it = topicMeta->partitions()->begin(); it != topicMeta->partitions()->end(); ++it)
+	{
+		if ((*it)->id() == partition)
+		{
+			partitionFound = true;
+			break;
+		}
+	}
+
+	delete metadata;
+
+	if (!partitionFound)
+	{
+		msg_err = "Partition " + std::to_string(partition) + " does not exist in topic '" + topic + "'";
+		return false;
+	}
+
+	// Validate offset range only for explicit (non-negative) offsets. Negative values are special
+	// librdkafka offsets (beginning/end/stored) and must be passed through unchanged.
+	if (offset >= 0)
+	{
+		int64_t low = 0;
+		int64_t high = 0;
+		err = producer->query_watermark_offsets(topic, partition, &low, &high, timeout);
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = "Failed to query watermarks for topic '" + topic + "' partition "
+				+ std::to_string(partition) + ": " + RdKafka::err2str(err);
+			return false;
+		}
+
+		if (offset > high)
+		{
+			msg_err = "Offset " + std::to_string(offset) + " is out of range for topic '" + topic
+				+ "' partition " + std::to_string(partition) + " (valid range: "
+				+ std::to_string(low) + ".." + std::to_string(high) + ")";
+			return false;
+		}
+	}
+
+	return true;
+}
+
+bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant_t& offset, const variant_t& partition, const variant_t& brokers)
+{
+	int32_t assignOffset;
+	std::string assignTopic;
+	int32_t assignPartition;
+	std::string explicitBrokers;
+
+	try
+	{
+		assignOffset = std::get<int32_t>(offset);
+		assignTopic = std::get<std::string>(topicName);
+		assignPartition = std::get<int32_t>(partition);
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Invalid argument type: ") + e.what();
+		return false;
+	}
+
+	if (std::holds_alternative<std::string>(brokers))
+		explicitBrokers = std::get<std::string>(brokers);
+
+	// Argument validation
+	if (!isValidTopicName(assignTopic, msg_err))
+		return false;
+
+	if (assignPartition < 0)
+	{
+		msg_err = "Partition must be >= 0";
+		return false;
+	}
+
+	// Topic/partition existence check via a temporary metadata client.
+	// Broker address precedence: explicit parameter -> settings; if neither is set, the check is skipped.
+	std::string brokerAddr = explicitBrokers;
+	if (brokerAddr.empty())
+		brokerAddr = getConfiguredBrokers();
+	if (!brokerAddr.empty())
+	{
+		auto producer = createMetadataClient(brokerAddr);
+		if (!producer)
+			return false;
+
+		if (!checkReadingPosition(producer.get(), assignTopic, assignPartition, assignOffset))
+			return false;
+	}
 
 	RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(assignTopic, assignPartition, assignOffset);
 	cl_rebalance_cb.offsets.push_back(ptr);
 	return true;
 }
 
-bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions)
+bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions, const variant_t& brokers)
 {
 	using namespace boost::json;
-	std::string jsonString = std::get<std::string>(jsonTopicPartitions);
 
-	auto parsed_data = parse(jsonString);
-	auto meta = parsed_data.at("metadata");
-
-	if (meta.is_array())
+	std::string jsonString;
+	std::string explicitBrokers;
+	try
 	{
+		jsonString = std::get<std::string>(jsonTopicPartitions);
+	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("Invalid argument type: ") + e.what();
+		return false;
+	}
+
+	if (std::holds_alternative<std::string>(brokers))
+		explicitBrokers = std::get<std::string>(brokers);
+
+	struct PositionEntry {
+		std::string topic;
+		int32_t partition;
+		long long offset;
+	};
+	std::vector<PositionEntry> entries;
+
+	// Parse JSON safely
+	try
+	{
+		auto parsed_data = parse(jsonString);
+		if (!parsed_data.is_object() || !parsed_data.as_object().contains("metadata"))
+		{
+			msg_err = "JSON must contain 'metadata' array";
+			return false;
+		}
+
+		auto meta = parsed_data.at("metadata");
+		if (!meta.is_array())
+		{
+			msg_err = "'metadata' must be an array";
+			return false;
+		}
+
 		for (size_t i = 0; i < meta.as_array().size(); i++)
 		{
-			std::string topic_ = value_to<std::string>(meta.at(i).at("topic"));
-			int partition_ = value_to<int>(meta.at(i).at("partition"));
-			long long offset_ = value_to<long long>(meta.at(i).at("offset"));
-
-			RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(topic_, partition_, offset_);
-			cl_rebalance_cb.offsets.push_back(ptr);
+			PositionEntry entry;
+			entry.topic = value_to<std::string>(meta.at(i).at("topic"));
+			entry.partition = value_to<int>(meta.at(i).at("partition"));
+			entry.offset = value_to<long long>(meta.at(i).at("offset"));
+			entries.push_back(entry);
 		}
 	}
+	catch (const std::exception& e)
+	{
+		msg_err = std::string("JSON parse error: ") + e.what();
+		return false;
+	}
+
+	if (entries.empty())
+	{
+		msg_err = "'metadata' array is empty";
+		return false;
+	}
+
+	// Argument validation for all entries before applying any of them
+	for (const auto& entry : entries)
+	{
+		if (!isValidTopicName(entry.topic, msg_err))
+			return false;
+
+		if (entry.partition < 0)
+		{
+			msg_err = "Partition must be >= 0 (topic '" + entry.topic + "')";
+			return false;
+		}
+	}
+
+	// Topic/partition existence check via a single temporary metadata client.
+	// Broker address precedence: explicit parameter -> settings; if neither is set, the check is skipped.
+	std::string brokerAddr = explicitBrokers;
+	if (brokerAddr.empty())
+		brokerAddr = getConfiguredBrokers();
+	if (!brokerAddr.empty())
+	{
+		auto producer = createMetadataClient(brokerAddr);
+		if (!producer)
+			return false;
+
+		for (const auto& entry : entries)
+		{
+			if (!checkReadingPosition(producer.get(), entry.topic, entry.partition, entry.offset))
+				return false;
+		}
+	}
+
+	// All entries valid - apply them
+	for (const auto& entry : entries)
+	{
+		RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(entry.topic, entry.partition, entry.offset);
+		cl_rebalance_cb.offsets.push_back(ptr);
+	}
+
 	return true;
 }
 

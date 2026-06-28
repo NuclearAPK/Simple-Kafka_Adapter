@@ -455,23 +455,31 @@ static std::string formatIsoDate(int32_t days)
 }
 
 // Parse "HH:MM:SS[.fff]" into milliseconds since midnight.
+// Also accepts a full ISO datetime "YYYY-MM-DDTHH:MM:SS[.fff]" (or with a space
+// separator) and uses only its time part — 1C serializes the Date type with a
+// date prefix even when only the time is meaningful (e.g. "0001-01-01T09:00:00").
 static bool parseIsoTimeMillis(const std::string& s, int32_t& outMs, std::string& err)
 {
-	if (s.size() < 8 || s[2] != ':' || s[5] != ':' ||
-	    !isDigits(s, 0, 2) || !isDigits(s, 3, 2) || !isDigits(s, 6, 2))
+	std::string t = s;
+	if (s.size() >= 11 && (s[10] == 'T' || s[10] == ' ') &&
+	    s[4] == '-' && s[7] == '-')
+		t = s.substr(11);
+
+	if (t.size() < 8 || t[2] != ':' || t[5] != ':' ||
+	    !isDigits(t, 0, 2) || !isDigits(t, 3, 2) || !isDigits(t, 6, 2))
 	{
 		err = "Invalid ISO time format, expected HH:MM:SS[.fff]";
 		return false;
 	}
-	int h = std::atoi(s.substr(0, 2).c_str());
-	int mi = std::atoi(s.substr(3, 2).c_str());
-	int se = std::atoi(s.substr(6, 2).c_str());
+	int h = std::atoi(t.substr(0, 2).c_str());
+	int mi = std::atoi(t.substr(3, 2).c_str());
+	int se = std::atoi(t.substr(6, 2).c_str());
 	int ms = 0;
-	if (s.size() > 8 && s[8] == '.')
+	if (t.size() > 8 && t[8] == '.')
 	{
 		std::string frac;
-		for (size_t i = 9; i < s.size() && s[i] >= '0' && s[i] <= '9'; ++i)
-			frac.push_back(s[i]);
+		for (size_t i = 9; i < t.size() && t[i] >= '0' && t[i] <= '9'; ++i)
+			frac.push_back(t[i]);
 		if (frac.size() > 3) frac = frac.substr(0, 3);
 		while (frac.size() < 3) frac.push_back('0');
 		ms = std::atoi(frac.c_str());

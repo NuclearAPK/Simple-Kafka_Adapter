@@ -385,8 +385,8 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"Subscribe", L"Подписаться", this, &SimpleKafka1C::subscribe); // experimental
 	AddMethod(L"Consume", L"Слушать", this, &SimpleKafka1C::consume);
 	AddMethod(L"CommitOffset", L"ЗафиксироватьСмещение", this, &SimpleKafka1C::commitOffset, { {2, 0} });
-	AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, { {2, 0} });
-	AddMethod(L"SetReadingPositions", L"УстановитьПозицииЧтения", this, &SimpleKafka1C::setReadingPositions); // experimental
+	AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, { {2, 0}, {3, std::string("")} });
+	AddMethod(L"SetReadingPositions", L"УстановитьПозицииЧтения", this, &SimpleKafka1C::setReadingPositions, { {1, std::string("")} }); // experimental
 	AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
 	AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
 	AddMethod(L"SetProducerFlushTimeout", L"УстановитьТаймаутОчисткиПродюсера", this, &SimpleKafka1C::setProducerFlushTimeout);
