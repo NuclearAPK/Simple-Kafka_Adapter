@@ -404,8 +404,16 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 			{
 				std::string groupId = "__getPartitionWatermarks_" + clientID() + "_"
 					+ std::to_string(pid) + "_" + std::to_string(getTimeStamp());
-				conf->set("group.id", groupId, errstr);
-				conf->set("enable.auto.commit", "false", errstr);
+				// Проверяем результат conf->set: при ошибке не теряем причину молча.
+				// Основной результат (границы партиции) уже посчитан — поэтому только
+				// фиксируем причину в msg_err и пропускаем обогащение last_timestamp.
+				if (conf->set("group.id", groupId, errstr) != RdKafka::Conf::CONF_OK ||
+				    conf->set("enable.auto.commit", "false", errstr) != RdKafka::Conf::CONF_OK)
+				{
+					msg_err = std::string("getPartitionWatermarks: last_timestamp skipped, conf->set failed: ") + errstr;
+				}
+				else
+				{
 
 				std::unique_ptr<RdKafka::KafkaConsumer> consumer(
 					RdKafka::KafkaConsumer::create(conf.get(), errstr));
@@ -417,7 +425,12 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 					partitions.push_back(RdKafka::TopicPartition::create(tTopicName, tPartition, lastOffset));
 
 					RdKafka::ErrorCode assignErr = consumer->assign(partitions);
-					if (assignErr == RdKafka::ERR_NO_ERROR)
+					if (assignErr != RdKafka::ERR_NO_ERROR)
+					{
+						// Ошибка assign — фиксируем причину (last_timestamp не будет прочитан)
+						msg_err = std::string("getPartitionWatermarks: assign failed: ") + RdKafka::err2str(assignErr);
+					}
+					else
 					{
 						std::unique_ptr<RdKafka::Message> msg(consumer->consume(5000));
 						if (msg && msg->err() == RdKafka::ERR_NO_ERROR)
@@ -436,6 +449,7 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 				}
 			}
 		}
+	}
 	}
 
 	boost::property_tree::write_json(s, jsonObj, true);

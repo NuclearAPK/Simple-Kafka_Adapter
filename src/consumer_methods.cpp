@@ -21,6 +21,14 @@
 
 bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 {
+	// Сбрасываем устаревшую асинхронную ошибку, чтобы она не маскировала успех новой инициализации
+	if (asyncErrorState)
+	{
+		std::lock_guard<std::mutex> lk(asyncErrorState->mtx);
+		asyncErrorState->lastError.clear();
+		asyncErrorState->fatal = false;
+	}
+
 	// Освобождаем предыдущий экземпляр консьюмера, если он существует
 	if (hConsumer != nullptr)
 	{
@@ -685,6 +693,8 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 		}
 		else
 		{
+			// Ошибка доставки (не таймаут) — сохраняем реальный текст librdkafka
+			msg_err = msg->errstr();
 			consumerMetrics.errorsCount++;
 		}
 
@@ -953,6 +963,7 @@ bool SimpleKafka1C::commitOffset(const variant_t& topicName, const variant_t& of
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
+		msg_err = RdKafka::err2str(err);
 		return false;
 	}
 	return true;

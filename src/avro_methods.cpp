@@ -615,8 +615,7 @@ bool SimpleKafka1C::putAvroSchema(const variant_t& schemaJsonName, const variant
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err = "Scheme compileError '";
-		msg_err += ex.what();
+		msg_err = std::string("Scheme compile error: ") + ex.what();
 	}
 
 	return msg_err.empty();
@@ -1162,8 +1161,8 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 	}
 	catch (std::exception const& ex)
 	{
-		msg_err += "Error converting to Avro: ";
-		msg_err += ex.what();
+		// Присваиваем (а не +=), чтобы не смешать с возможной предыдущей ошибкой
+		msg_err = std::string("Error converting to Avro: ") + ex.what();
 	}
 
 	return msg_err.empty();
