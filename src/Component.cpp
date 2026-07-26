@@ -473,7 +473,11 @@ std::string Component::toUTF8String(std::basic_string_view<WCHAR_T> src) {
     return cvt_utf8_utf16.to_bytes(src.data(), src.data() + src.size());
 #else 
     static std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> conv16;
-    return conv16.to_bytes(src.data());
+    // Convert by explicit range: the 1C buffer is (pwstrVal, wstrLen) and is not
+    // guaranteed to be null-terminated. The pointer-only to_bytes() overload reads
+    // until a NUL via char_traits::length(), which over-reads past the buffer for
+    // large, non-terminated strings and can hit an unmapped page (access violation).
+    return conv16.to_bytes(src.data(), src.data() + src.size());
 #endif
 }
 
@@ -494,7 +498,10 @@ std::u16string Component::toUTF16String(std::string_view src) {
     return std::u16string(reinterpret_cast<const char16_t *>(tmp.data()), tmp.size());
 #else 
     static std::wstring_convert<deletable_facet<std::codecvt<char16_t, char, std::mbstate_t>>, char16_t> conv16;
-    return conv16.from_bytes(src.data());
+    // Convert by explicit range (see toUTF8String): the pointer-only from_bytes()
+    // overload ignores src.size() and stops at the first NUL, which truncates
+    // strings with embedded NULs and over-reads non-terminated string_views.
+    return conv16.from_bytes(src.data(), src.data() + src.size());
 #endif
 }
 

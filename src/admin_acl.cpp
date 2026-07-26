@@ -277,7 +277,8 @@ std::string SimpleKafka1C::describeAcls(const variant_t& brokers, const variant_
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBEACLS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// DescribeAcls supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);
@@ -386,7 +387,8 @@ std::string SimpleKafka1C::deleteAcl(const variant_t& brokers, const variant_t& 
 	}
 
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETEACLS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// DeleteAcls supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);

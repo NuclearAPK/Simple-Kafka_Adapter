@@ -500,7 +500,8 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// DescribeConfigs supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);
@@ -694,7 +695,8 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 
 	// опции операции
 	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// AlterConfigs supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);
@@ -797,7 +799,8 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 
 	rd_kafka_AdminOptions_t* options =
 		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DESCRIBECONFIGS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// DescribeConfigs supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);
@@ -938,7 +941,8 @@ bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& b
 
 	rd_kafka_AdminOptions_t* options =
 		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	// AlterConfigs supports only request_timeout (operation_timeout is disabled for this API)
+	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
 		rd_kafka_AdminOptions_destroy(options);
