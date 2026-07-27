@@ -385,6 +385,10 @@ private:
 	public:
 
 		std::vector<RdKafka::TopicPartition*> offsets;
+		// offsets трогают два потока: поток 1С (SetReadingPosition/SetReadingPositions,
+		// деструктор компоненты) и фоновый поток librdkafka (rebalance_cb). Без защиты
+		// возможны гонка на векторе и двойное освобождение TopicPartition.
+		std::mutex offsetsMtx;
 
 		void rebalance_cb(RdKafka::KafkaConsumer* consumer,
 			RdKafka::ErrorCode err,

@@ -314,6 +314,7 @@ void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer* consumer
 	RdKafka::ErrorCode err,
 	std::vector<RdKafka::TopicPartition*>& partitions) 
 	{
+	std::lock_guard<std::mutex> lk(offsetsMtx);
 	if (err == RdKafka::ERR__ASSIGN_PARTITIONS) 
 	{
 		if (offsets.size()) 
@@ -557,11 +558,14 @@ SimpleKafka1C::~SimpleKafka1C()
 	stopProducer();
 
 	// Очистка rebalance callback offsets для предотвращения утечки памяти
-	for (auto* offset : cl_rebalance_cb.offsets)
 	{
-		delete offset;
+		std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+		for (auto* offset : cl_rebalance_cb.offsets)
+		{
+			delete offset;
+		}
+		cl_rebalance_cb.offsets.clear();
 	}
-	cl_rebalance_cb.offsets.clear();
 
 #ifdef SIMPLEKAFKA_HAS_OPENSSL
 	for (OSSL_PROVIDER* provider : loadedSslProviderHandles)
