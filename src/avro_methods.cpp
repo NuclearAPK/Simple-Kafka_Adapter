@@ -621,20 +621,101 @@ bool SimpleKafka1C::putAvroSchema(const variant_t& schemaJsonName, const variant
 	return msg_err.empty();
 }
 
-// Вспомогательная функция для рекурсивного заполнения GenericDatum из JSON
-static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value& jsonValue, std::string& errMsg, const std::string& path = "")
+// Ветка union, содержащая null. Если null-ветки нет или узел не union — 0 (прежнее поведение).
+static size_t avroNullBranch(const avro::NodePtr& node)
 {
-	// Обработка union типов
+	if (!node || node->type() != avro::AVRO_UNION)
+		return 0;
+	for (size_t i = 0; i < node->leaves(); ++i)
+		if (node->leafAt(i)->type() == avro::AVRO_NULL)
+			return i;
+	return 0;
+}
+
+// Вспомогательная функция для рекурсивного заполнения GenericDatum из JSON.
+// schemaNode — узел схемы, которому соответствует datum. Нужен ТОЛЬКО для union:
+// у самого датума схему ветвей не спросить (см. комментарий ниже). Для остальных
+// типов схема берётся из датума, как и раньше.
+static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value& jsonValue, std::string& errMsg, const std::string& path = "", const avro::NodePtr& schemaNode = avro::NodePtr())
+{
+	// Обработка union типов: ветка подбирается по схеме и типу JSON-значения,
+	// а не по жёстким индексам 0/1. Для классического [null, T] поведение прежнее.
 	if (datum.isUnion())
 	{
+		// ВНИМАНИЕ: схему union НЕЛЬЗЯ получить через datum.value<avro::GenericUnion>().
+		// GenericDatum::value<T>() прозрачно РАЗВОРАЧИВАЕТ union и для T = GenericUnion
+		// возвращает *std::any_cast<GenericUnion>(&<any выбранной ветки>) — в ветке лежит
+		// null/string/record, а не GenericUnion, то есть any_cast даёт nullptr и это
+		// разыменование нулевого указателя. Поэтому узел схемы приходит параметром.
+		avro::NodePtr un = schemaNode;
+		if (un && un->type() != avro::AVRO_UNION)
+			un.reset();
+
+		const size_t nb = un ? un->leaves() : 0;
+		size_t chosen = nb; // sentinel "не найдено"
+
 		if (jsonValue.is_null())
 		{
-			// null - первая ветка union (обычно ["null", "type"])
-			datum.selectBranch(0);
-			return true;
+			for (size_t i = 0; i < nb; ++i)
+				if (un->leafAt(i)->type() == avro::AVRO_NULL) { chosen = i; break; }
 		}
-		// Не null - выбираем вторую ветку
-		datum.selectBranch(1);
+		else
+		{
+			for (size_t i = 0; i < nb; ++i)
+			{
+				bool match = false;
+				switch (un->leafAt(i)->type())
+				{
+				case avro::AVRO_STRING:
+				case avro::AVRO_ENUM:
+				case avro::AVRO_BYTES:
+				case avro::AVRO_FIXED:
+					match = jsonValue.is_string();
+					break;
+				case avro::AVRO_BOOL:
+					match = jsonValue.is_bool();
+					break;
+				case avro::AVRO_INT:
+				case avro::AVRO_LONG:
+					match = jsonValue.is_int64() || jsonValue.is_uint64();
+					break;
+				case avro::AVRO_FLOAT:
+				case avro::AVRO_DOUBLE:
+					match = jsonValue.is_double() || jsonValue.is_int64() || jsonValue.is_uint64();
+					break;
+				case avro::AVRO_RECORD:
+				case avro::AVRO_MAP:
+					match = jsonValue.is_object();
+					break;
+				case avro::AVRO_ARRAY:
+					match = jsonValue.is_array();
+					break;
+				case avro::AVRO_SYMBOLIC:
+					// Ссылка на именованный тип (рекурсивные схемы). Реальный тип без
+					// резолва неизвестен; объект — практически всегда record.
+					match = jsonValue.is_object();
+					break;
+				default:
+					break;
+				}
+				if (match) { chosen = i; break; }
+			}
+		}
+
+		if (nb == 0)
+		{
+			// Узел схемы не передан — прежнее поведение ([null, T]).
+			chosen = jsonValue.is_null() ? 0 : 1;
+		}
+		else if (chosen >= nb)
+		{
+			// Ничего не подошло — тоже прежнее поведение.
+			chosen = jsonValue.is_null() ? 0 : (nb > 1 ? 1 : 0);
+		}
+		datum.selectBranch(chosen);
+
+		if (jsonValue.is_null())
+			return true;
 	}
 
 	avro::LogicalType lt = datum.logicalType();
@@ -759,7 +840,9 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		return true;
 
 	case avro::AVRO_NULL:
-		datum.value<avro::null>() = avro::null();
+		// Ничего не присваиваем: у датума типа null внутренний std::any ПУСТОЙ
+		// (GenericDatum::init(): case AVRO_NULL: break;), поэтому value<avro::null>() —
+		// это разыменование nullptr. Значение null уже задано самим типом датума.
 		return true;
 
 	case avro::AVRO_BYTES:
@@ -874,15 +957,15 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 				avro::GenericDatum& fieldDatum = record.fieldAt(i);
 				if (fieldDatum.isUnion())
 				{
-					// Union с null - устанавливаем null
-					fieldDatum.selectBranch(0);
+					// Union с null — ветку ищем ПО СХЕМЕ: null не обязан быть первым
+					fieldDatum.selectBranch(avroNullBranch(schema->leafAt(i)));
 				}
 				// Иначе оставляем значение по умолчанию
 				continue;
 			}
 			avro::GenericDatum& fieldDatum = record.fieldAt(i);
 			std::string fieldPath = path.empty() ? fieldName : path + "." + fieldName;
-			if (!fillAvroFromJson(fieldDatum, it->value(), errMsg, fieldPath))
+			if (!fillAvroFromJson(fieldDatum, it->value(), errMsg, fieldPath, schema->leafAt(i)))
 			{
 				return false;
 			}
@@ -919,7 +1002,7 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		{
 			avro::GenericDatum elemDatum(schema->leafAt(0));
 			std::string elemPath = path + "[" + std::to_string(i) + "]";
-			if (!fillAvroFromJson(elemDatum, arr[i], errMsg, elemPath))
+			if (!fillAvroFromJson(elemDatum, arr[i], errMsg, elemPath, schema->leafAt(0)))
 			{
 				return false;
 			}
@@ -944,7 +1027,7 @@ static bool fillAvroFromJson(avro::GenericDatum& datum, const boost::json::value
 		{
 			avro::GenericDatum valueDatum(schema->leafAt(1));
 			std::string elemPath = path + "[\"" + std::string(kv.key()) + "\"]";
-			if (!fillAvroFromJson(valueDatum, kv.value(), errMsg, elemPath))
+			if (!fillAvroFromJson(valueDatum, kv.value(), errMsg, elemPath, schema->leafAt(1)))
 			{
 				return false;
 			}
@@ -1071,7 +1154,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 					}
 
 					avro::GenericDatum recordDatum(schema);
-					if (!fillAvroFromJson(recordDatum, boost::json::value(jsonRecord), msg_err))
+					if (!fillAvroFromJson(recordDatum, boost::json::value(jsonRecord), msg_err, "", schema.root()))
 					{
 						return false;
 					}
@@ -1081,7 +1164,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 			else
 			{
 				// Стандартный формат: одна запись как объект
-				if (!fillAvroFromJson(datum, jsonInput, msg_err))
+				if (!fillAvroFromJson(datum, jsonInput, msg_err, "", schema.root()))
 				{
 					return false;
 				}
@@ -1096,7 +1179,7 @@ bool SimpleKafka1C::convertToAvroFormat(const variant_t& msgJson, const variant_
 			{
 				avro::GenericDatum recordDatum(schema);
 				std::string recordPath = "[" + std::to_string(i) + "]";
-				if (!fillAvroFromJson(recordDatum, arr[i], msg_err, recordPath))
+				if (!fillAvroFromJson(recordDatum, arr[i], msg_err, recordPath, schema.root()))
 				{
 					return false;
 				}
@@ -1366,11 +1449,11 @@ static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 	}
 
 	case avro::AVRO_UNION:
-	{
-		const auto& unionDatum = datum.value<avro::GenericUnion>().datum();
-		oss << convertAvroDatumToJsonString(unionDatum);
+		// Недостижимо: GenericDatum::type() сам разворачивает union и никогда не
+		// возвращает AVRO_UNION. Обращаться здесь к value<GenericUnion>() нельзя —
+		// это разыменование nullptr (см. комментарий в fillAvroFromJson).
+		oss << "null";
 		break;
-	}
 
 	default:
 		oss << "null";
