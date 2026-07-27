@@ -115,6 +115,7 @@ private:
 
 	// avro
 	std::map<std::string, avro::ValidSchema> schemesMap;	// кеш для хранение компилированных схем Avro
+	std::map<std::string, std::string> schemaTexts;	// исходный текст схемы по имени — чтобы не компилировать неизменившуюся
 	std::vector<uint8_t> avroFile;		// формируемый avro
 
 	// protobuf - using forward declarations to avoid including protobuf headers in .h
