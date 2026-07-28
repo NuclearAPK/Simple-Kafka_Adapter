@@ -441,7 +441,11 @@ std::string SimpleKafka1C::consume()
 
 		jsonObj.put("partition", msg->partition());
 		jsonObj.put("offset", (long)msg->offset());
-		jsonObj.put("message", std::string(slice(payload, 0, msg->len())));
+		// Тело берём по паре (указатель, длина). Прежний slice(payload, 0, len)
+		// копировал байты [0..len] включительно и дописывал завершающий ноль,
+		// то есть читал payload[len] и писал payload[len+1] — за границу буфера
+		// librdkafka. Плюс лишний проход по телу и обрыв на первом нуле.
+		jsonObj.put("message", std::string(payload, msg->len()));
 		jsonObj.put("topic", msg->topic_name());
 		jsonObj.put("broker_id", msg->broker_id());
 		jsonObj.put("timestamp", ts.timestamp);
