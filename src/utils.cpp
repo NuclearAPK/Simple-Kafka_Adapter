@@ -7,15 +7,6 @@
 #include <regex>
 #include <boost/json.hpp>
 
-char* slice(char* s, size_t from, size_t to)
-{
-	size_t j = 0;
-	for (size_t i = from; i <= to; ++i)
-		s[j++] = s[i];
-	s[j] = 0;
-	return s;
-}
-
 std::string base64Encode(const uint8_t* data, size_t len)
 {
 	static constexpr char table[] =
