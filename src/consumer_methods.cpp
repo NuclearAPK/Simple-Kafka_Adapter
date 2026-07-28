@@ -16,6 +16,7 @@
 #include <sstream>
 #include <cmath>
 #include <limits>
+#include <memory>
 
 //================================== Consumer ==========================================
 
@@ -284,7 +285,10 @@ bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant
 	}
 
 	RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(assignTopic, assignPartition, assignOffset);
-	cl_rebalance_cb.offsets.push_back(ptr);
+	{
+		std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+		cl_rebalance_cb.offsets.push_back(ptr);
+	}
 	return true;
 }
 
@@ -384,10 +388,13 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions, co
 	}
 
 	// All entries valid - apply them
-	for (const auto& entry : entries)
 	{
-		RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(entry.topic, entry.partition, entry.offset);
-		cl_rebalance_cb.offsets.push_back(ptr);
+		std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+		for (const auto& entry : entries)
+		{
+			RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(entry.topic, entry.partition, entry.offset);
+			cl_rebalance_cb.offsets.push_back(ptr);
+		}
 	}
 
 	return true;
@@ -406,7 +413,7 @@ std::string SimpleKafka1C::consume()
 	std::ofstream eventFile{};
 	boost::property_tree::ptree jsonObj;
 	RdKafka::Headers* headers;
-	RdKafka::Message* msg = hConsumer->consume(waitMessageTimeout);
+	std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
 	RdKafka::ErrorCode resultConsume = msg->err();
 
 	openEventFile(consumerLogName, eventFile);
@@ -454,8 +461,6 @@ std::string SimpleKafka1C::consume()
 		{
 			jsonObj.put_child("headers", headersChildren);
 		}
-
-		delete msg;
 	}
 	else
 	{
@@ -466,7 +471,6 @@ std::string SimpleKafka1C::consume()
 				eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 			}
 		}
-		delete msg;
 		return EMPTYSTR;
 	}
 	boost::property_tree::write_json(s, jsonObj, true);
@@ -482,7 +486,7 @@ bool SimpleKafka1C::getMessage()
 		return false;
 	}
 
-	RdKafka::Message* msg = hConsumer->consume(waitMessageTimeout);
+	std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
 	RdKafka::ErrorCode resultConsume = msg->err();
 
 	std::ofstream eventFile;
@@ -493,9 +497,9 @@ bool SimpleKafka1C::getMessage()
 	{
 		this->messageLen = msg->len();
 
-		u_char* charBuf = (u_char*)msg->payload();
-		std::vector<char> binaryData(charBuf, charBuf + this->messageLen);
-		messageData = binaryData;
+		// Тело кладём сразу в messageData, без промежуточной копии вектора.
+		const char* charBuf = static_cast<const char*>(msg->payload());
+		messageData.assign(charBuf, charBuf + this->messageLen);
 
 		if (msg->key() && (*msg->key()).length() > 0)
 		{
@@ -527,8 +531,6 @@ bool SimpleKafka1C::getMessage()
 		// Обновляем метрики консьюмера
 		consumerMetrics.messagesConsumed++;
 		consumerMetrics.bytesConsumed += this->messageLen;
-
-		delete msg;
 	}
 	else
 	{
@@ -540,7 +542,6 @@ bool SimpleKafka1C::getMessage()
 			consumerMetrics.errorsCount++;
 			if (eventFile.is_open()) eventFile << currentDateTime() << " Error: " << msg_err << std::endl;
 		}
-		delete msg;
 		return false;
 	}
 
@@ -576,7 +577,7 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 		int32_t remainingWait = static_cast<int32_t>(maxWait - elapsed);
 		if (remainingWait <= 0) remainingWait = 1;
 
-		RdKafka::Message* msg = hConsumer->consume(waitMessageTimeout);
+		std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
 		if (!msg)
 		{
 			msg_err = "Consumer returned null message";
@@ -706,8 +707,6 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 			msg_err = msg->errstr();
 			consumerMetrics.errorsCount++;
 		}
-
-		delete msg;
 	}
 
 	boost::json::object result;
