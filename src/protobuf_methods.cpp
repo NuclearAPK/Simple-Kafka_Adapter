@@ -157,10 +157,47 @@ class SimpleKafka1C::ProtobufContext
 {
 public:
 	std::map<std::string, const google::protobuf::Descriptor*> descriptors;
+	std::map<std::string, std::string> schemaTexts;	// исходный текст .proto по имени схемы
 	google::protobuf::DescriptorPool pool;
 	google::protobuf::DynamicMessageFactory factory;
 
 	ProtobufContext() : factory(&pool) {}
+
+	// Разбирает текст .proto и регистрирует его в ЭТОМ пуле под именем name.
+	// Один пул — одна регистрация каждого символа, поэтому обновление схемы
+	// делается пересборкой контекста целиком (см. putProtoSchema).
+	bool build(const std::string& name, const std::string& schema, std::string& err)
+	{
+		google::protobuf::io::ArrayInputStream input(schema.data(), static_cast<int>(schema.size()));
+		google::protobuf::io::Tokenizer tokenizer(&input, nullptr);
+
+		google::protobuf::compiler::Parser parser;
+		google::protobuf::FileDescriptorProto fileDescProto;
+		fileDescProto.set_name(name + ".proto");
+
+		if (!parser.Parse(&tokenizer, &fileDescProto))
+		{
+			err = "Proto schema parsing error (schema '" + name + "')";
+			return false;
+		}
+
+		const google::protobuf::FileDescriptor* fileDesc = pool.BuildFile(fileDescProto);
+		if (!fileDesc)
+		{
+			err = "Failed to build descriptor from proto schema '" + name + "'";
+			return false;
+		}
+
+		if (fileDesc->message_type_count() == 0)
+		{
+			err = "Proto schema '" + name + "' contains no message definitions";
+			return false;
+		}
+
+		descriptors[name] = fileDesc->message_type(0);
+		schemaTexts[name] = schema;
+		return true;
+	}
 };
 
 bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t& protoSchema)
@@ -175,47 +212,32 @@ bool SimpleKafka1C::putProtoSchema(const variant_t& schemaName, const variant_t&
 		std::string name = std::get<std::string>(schemaName);
 		std::string schema = std::get<std::string>(protoSchema);
 
-		// Check if schema already exists
-		auto it = protoContext->descriptors.find(name);
-		if (it != protoContext->descriptors.end())
+		// Тот же текст — работать не нужно; изменившийся — применяем.
+		// Прежнее поведение (skip if exists) молча игнорировало обновление схемы.
+		auto known = protoContext->schemaTexts.find(name);
+		if (known != protoContext->schemaTexts.end())
 		{
-			// Schema already exists, skip
+			if (known->second == schema)
+				return true;
+
+			// DescriptorPool не допускает повторного объявления символа, поэтому
+			// обновление = чистый контекст со всеми известными схемами. Прежний
+			// контекст жив, пока на него кто-то ссылается, подмена безопасна.
+			auto texts = protoContext->schemaTexts;
+			texts[name] = schema;
+
+			auto fresh = std::make_shared<ProtobufContext>();
+			for (const auto& kv : texts)
+			{
+				if (!fresh->build(kv.first, kv.second, msg_err))
+					return false;
+			}
+			protoContext = fresh;
 			return true;
 		}
 
-		// Parse the .proto schema
-		google::protobuf::io::ArrayInputStream input(schema.data(), static_cast<int>(schema.size()));
-		google::protobuf::io::Tokenizer tokenizer(&input, nullptr);
-
-		google::protobuf::compiler::Parser parser;
-		google::protobuf::FileDescriptorProto fileDescProto;
-		fileDescProto.set_name(name + ".proto");
-
-		if (!parser.Parse(&tokenizer, &fileDescProto))
-		{
-			msg_err = "Proto schema parsing error";
+		if (!protoContext->build(name, schema, msg_err))
 			return false;
-		}
-
-		// Build descriptor from FileDescriptorProto
-		const google::protobuf::FileDescriptor* fileDesc = protoContext->pool.BuildFile(fileDescProto);
-		if (!fileDesc)
-		{
-			msg_err = "Failed to build descriptor from proto schema";
-			return false;
-		}
-
-		// Find the message type (assuming first message in file)
-		if (fileDesc->message_type_count() > 0)
-		{
-			const google::protobuf::Descriptor* descriptor = fileDesc->message_type(0);
-			protoContext->descriptors[name] = descriptor;
-		}
-		else
-		{
-			msg_err = "Proto schema contains no message definitions";
-			return false;
-		}
 	}
 	catch (std::exception const& ex)
 	{

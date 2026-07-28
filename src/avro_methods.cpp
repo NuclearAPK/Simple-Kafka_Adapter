@@ -603,15 +603,21 @@ bool SimpleKafka1C::putAvroSchema(const variant_t& schemaJsonName, const variant
 {
 	try
 	{
-		// Проверяем, существует ли схема с таким именем
-		auto it = schemesMap.find(std::get<std::string>(schemaJsonName));
+		const std::string& name = std::get<std::string>(schemaJsonName);
+		const std::string& json = std::get<std::string>(schemaJson);
 
-		if (it == schemesMap.end())
+		// Компилируем, если схемы с таким именем ещё нет ИЛИ её текст изменился.
+		// Прежнее поведение (register-once) молча игнорировало обновление схемы:
+		// в переиспользуемом экземпляре компоненты застревала первая версия.
+		// Кэш по тексту заодно бережёт CPU — 1С часто зовёт метод перед каждым сообщением.
+		auto known = schemaTexts.find(name);
+		if (known != schemaTexts.end() && known->second == json)
 		{
-			// Схема не существует, компилируем и добавляем ее в map
-			const avro::ValidSchema compiledScheme = avro::compileJsonSchemaFromString(std::get<std::string>(schemaJson));
-			schemesMap[std::get<std::string>(schemaJsonName)] = compiledScheme;
+			return true;	// тот же текст, схема уже скомпилирована
 		}
+
+		schemesMap[name] = avro::compileJsonSchemaFromString(json);
+		schemaTexts[name] = json;
 	}
 	catch (std::exception const& ex)
 	{
