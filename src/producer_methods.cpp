@@ -150,6 +150,22 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 		return -1;
 	}
 
+	// Проверяем типы параметров, чтобы вместо невнятного bad_variant_access
+	// вернуть в 1С понятный текст (тело допускается строкой или ДвоичнымиДанными).
+	if (!std::holds_alternative<std::string>(topicName) ||
+		!std::holds_alternative<int32_t>(partition) ||
+		!std::holds_alternative<std::string>(key) ||
+		!std::holds_alternative<std::string>(heads))
+	{
+		msg_err = "produce: topicName/key/headers must be strings and partition must be a number";
+		return -1;
+	}
+	if (!std::holds_alternative<std::string>(msg) && !std::holds_alternative<std::vector<char>>(msg))
+	{
+		msg_err = "produce: message must be a string or binary data";
+		return -1;
+	}
+
 	std::string tTopicName = std::get<std::string>(topicName);
 	auto currentPartition = std::get<int>(partition);
 

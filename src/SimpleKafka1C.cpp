@@ -587,7 +587,26 @@ SimpleKafka1C::~SimpleKafka1C()
 
 void SimpleKafka1C::setParameter(const variant_t& key, const variant_t& value)
 {
-	settings.push_back({ std::get<std::string>(key), std::get<std::string>(value) });
+	if (!std::holds_alternative<std::string>(key) || !std::holds_alternative<std::string>(value))
+	{
+		msg_err = "SetParameter: key and value must be strings";
+		return;
+	}
+	const std::string k = std::get<std::string>(key);
+	const std::string v = std::get<std::string>(value);
+
+	// Один ключ — одно значение. Иначе на переиспользуемом экземпляре компоненты
+	// настройки копятся дублями, а clientID() (берёт первое значение) и
+	// getSettingValue() (последнее) начинают расходиться.
+	for (auto& s : settings)
+	{
+		if (s.Key == k)
+		{
+			s.Value = v;
+			return;
+		}
+	}
+	settings.push_back({ k, v });
 }
 
 std::string SimpleKafka1C::getParameters()
@@ -630,8 +649,20 @@ bool SimpleKafka1C::setPartitioner(const variant_t& partitionerType)
 	}
 
 	partitionerStrategy = type;
-	// Устанавливаем параметр через setParameter для применения при инициализации продюсера
-	settings.push_back({ "partitioner", type });
+	// Применится при инициализации продюсера. Тоже upsert, чтобы повторные вызовы
+	// не плодили дубли "partitioner".
+	bool found = false;
+	for (auto& s : settings)
+	{
+		if (s.Key == "partitioner")
+		{
+			s.Value = type;
+			found = true;
+			break;
+		}
+	}
+	if (!found)
+		settings.push_back({ "partitioner", type });
 	return true;
 }
 
