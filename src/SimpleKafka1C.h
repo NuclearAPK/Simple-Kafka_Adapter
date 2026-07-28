@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.9.2";
+	static constexpr char Version[] = u8"1.9.3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
