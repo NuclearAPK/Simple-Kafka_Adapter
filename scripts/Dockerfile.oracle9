@@ -1,0 +1,40 @@
+FROM oraclelinux:9
+
+# 1. Включаем репозиторий EPEL (нужен для autoconf-archive)
+RUN dnf install -y oracle-epel-release-el9 || dnf install -y epel-release
+
+# 2. Устанавливаем зависимости + инструменты сборки для Kerberos/SASL
+RUN dnf install -y git cmake gcc gcc-c++ make tar zip unzip curl perl-IPC-Cmd perl-core python3 pkg-config wget kernel-headers autoconf autoconf-archive automake libtool
+
+# Build vcpkg
+RUN git clone https://github.com/microsoft/vcpkg.git /opt/vcpkg
+RUN /opt/vcpkg/bootstrap-vcpkg.sh
+RUN /opt/vcpkg/vcpkg integrate install
+
+# Custom static triplet for Oracle Linux 9
+COPY scripts/triplets /opt/vcpkg-custom-triplets
+ENV VCPKG_OVERLAY_TRIPLETS=/opt/vcpkg-custom-triplets
+
+# ==============================================================================
+# БРОНЕБОЙНОЕ КЭШИРОВАНИЕ
+# ==============================================================================
+RUN /opt/vcpkg/vcpkg install protobuf abseil utf8-range --triplet x64-linux-static
+RUN /opt/vcpkg/vcpkg install boost-property-tree boost-json boost-filesystem boost-iostreams --triplet x64-linux-static
+RUN /opt/vcpkg/vcpkg install boost-program-options boost-crc boost-math boost-format boost-test --triplet x64-linux-static
+
+# ВОТ ОНО: Собираем SASL статически! Утилиты для сборки теперь установлены.
+RUN /opt/vcpkg/vcpkg install snappy fmt curl cyrus-sasl --triplet x64-linux-static
+
+RUN /opt/vcpkg/vcpkg install librdkafka --triplet x64-linux-static
+RUN /opt/vcpkg/vcpkg install avro-cpp --triplet x64-linux-static
+
+# ==============================================================================
+# ШАГ 3: Системные пакеты (Оставляем только UUID для 1С COM-объектов)
+# ==============================================================================
+RUN dnf install -y libuuid-devel
+
+# Final build of the project (SimpleKafka1C)
+COPY . /src
+WORKDIR /src
+RUN cmake -B build -G "Unix Makefiles" -DCMAKE_TOOLCHAIN_FILE=/opt/vcpkg/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=x64-linux-static -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_STANDARD_LIBRARIES="-L/opt/vcpkg/installed/x64-linux-static/lib -lzstd -llzma -lbz2 -lsnappy" .
+RUN cmake --build build --config Release

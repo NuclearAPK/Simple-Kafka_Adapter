@@ -1,0 +1,16 @@
+# Keep the Docker build context small (the build does `COPY . /src`).
+.git
+build
+out
+lib
+pkg
+1C
+.idea
+.vscode
+.vs
+.claude
+debug_info
+book
+*.bak
+cmake-build-release-ubuntu-20-dev
+cmake-build-release-visual-studio
