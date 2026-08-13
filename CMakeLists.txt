@@ -119,7 +119,11 @@ find_package(ZLIB REQUIRED)
 if(NOT TARGET avro-cpp::avrocpp)
     add_library(avro-cpp::avrocpp INTERFACE IMPORTED)
 endif()
-find_package(avro-cpp CONFIG REQUIRED)
+# avro-cpp < 1.12.1 crashes (segfault / vector range_check) decoding deeply
+# nested recursive Avro schemas in production. Duplicated here (not only in
+# scripts/build_windows.bat / build_linux.sh) so a direct CMake configure —
+# e.g. from Visual Studio — fails fast instead of shipping a broken binary.
+find_package(avro-cpp 1.12.1 CONFIG REQUIRED)
 
 find_package(Boost REQUIRED COMPONENTS json container)
 
@@ -180,6 +184,17 @@ target_link_libraries(${TARGET} PRIVATE
 
 # Boost: keep compatibility with existing usage
 target_link_libraries(${TARGET} PRIVATE ${Boost_LIBRARIES})
+
+# avro-cpp 1.12.x <avro/Exception.hh> calls fmt::format() but only includes
+# fmt's base header. Since fmt >= 11 the fmt::format() free function lives in
+# <fmt/format.h>, so building against fmt 11/12 fails with
+# "'format' is not a member of 'fmt'". Force-include the full fmt header in
+# every TU (before the avro headers) to provide it.
+if (MSVC)
+    target_compile_options(${TARGET} PRIVATE /FI fmt/format.h)
+else()
+    target_compile_options(${TARGET} PRIVATE -include fmt/format.h)
+endif()
 
 # Windows system libraries required by static OpenSSL / librdkafka
 if(WIN32)

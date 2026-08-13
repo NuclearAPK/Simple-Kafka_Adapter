@@ -1,0 +1,21 @@
+# Keep the Docker build context small (the build does `COPY . /src`).
+.git
+build
+out
+# lib, pkg, 1C are not part of this repo — they are local dev-only
+# directories some contributors have in their working copy (packaged
+# zip staging, a local file-based 1C test base). Excluded defensively
+# so they never bloat the build context if present; harmless no-ops
+# for anyone who doesn't have them.
+lib
+pkg
+1C
+.idea
+.vscode
+.vs
+.claude
+debug_info
+book
+*.bak
+cmake-build-release-ubuntu-20-dev
+cmake-build-release-visual-studio
