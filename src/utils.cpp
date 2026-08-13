@@ -44,11 +44,19 @@ bool tryBase64Decode(const std::string& input, std::vector<char>& out)
 
 	std::vector<int> sextets;
 	sextets.reserve(input.size());
+	size_t padding = 0;
 	for (unsigned char c : input)
 	{
-		if (c == '=') break; // padding -> end of meaningful data
 		if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
 			continue; // skip whitespace / line breaks
+		if (c == '=')
+		{
+			if (++padding > 2)
+				return false; // at most two padding characters
+			continue;
+		}
+		if (padding != 0)
+			return false; // data after padding -> not valid base64
 		const int v = val(c);
 		if (v < 0)
 			return false; // not valid base64
@@ -57,6 +65,11 @@ bool tryBase64Decode(const std::string& input, std::vector<char>& out)
 
 	const size_t k = sextets.size();
 	if (k == 0 || (k % 4) == 1)
+		return false;
+	// Padding, when present, must complete the final group to a multiple of 4:
+	// k%4==3 -> exactly one '=', k%4==2 -> exactly two, k%4==0 -> none at all.
+	// Unpadded input stays acceptable.
+	if (padding != 0 && ((k + padding) % 4) != 0)
 		return false;
 
 	std::vector<char> result;
