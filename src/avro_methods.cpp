@@ -22,6 +22,7 @@
 #include <cmath>
 
 #include "SimpleKafka1C.h"
+#include "utils.h"
 
 //================================== Avro logical types: helpers ==================
 
@@ -1469,13 +1470,14 @@ static std::string convertAvroDatumToJsonString(const avro::GenericDatum& datum)
 	return oss.str();
 }
 
-variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const variant_t& schemaJsonName, const variant_t& asJson)
+variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const variant_t& schemaJsonName, const variant_t& asJson, const variant_t& isBase64)
 {
 	try
 	{
 		// Получаем бинарные данные
 		const std::vector<char>* dataPtr = nullptr;
 		size_t dataSize = 0;
+		std::vector<char> decodedBuf;
 
 		if (std::holds_alternative<std::vector<char>>(avroData))
 		{
@@ -1493,6 +1495,22 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 		{
 			msg_err = "Invalid data type for avroData. Expected string or binary data";
 			return std::string("");
+		}
+
+		// 1C can marshal ДвоичныеДанные into a native method as base64 text
+		// instead of raw bytes. IsBase64 lets the caller say so explicitly —
+		// no auto-detection: a raw payload could coincidentally consist
+		// entirely of base64-alphabet bytes, so guessing is unsafe.
+		if (std::holds_alternative<bool>(isBase64) && std::get<bool>(isBase64))
+		{
+			const std::string origStr(dataPtr->begin(), dataPtr->begin() + dataSize);
+			if (!tryBase64Decode(origStr, decodedBuf))
+			{
+				msg_err = "IsBase64=true, but input is not valid base64";
+				return std::string("");
+			}
+			dataPtr = &decodedBuf;
+			dataSize = decodedBuf.size();
 		}
 
 		if (dataSize == 0)
@@ -1682,13 +1700,14 @@ variant_t SimpleKafka1C::decodeAvroMessage(const variant_t& avroData, const vari
 	}
 }
 
-variant_t SimpleKafka1C::getAvroSchema(const variant_t& avroData)
+variant_t SimpleKafka1C::getAvroSchema(const variant_t& avroData, const variant_t& isBase64)
 {
 	try
 	{
 		// Получаем бинарные данные
 		const std::vector<char>* dataPtr = nullptr;
 		size_t dataSize = 0;
+		std::vector<char> decodedBuf;
 
 		if (std::holds_alternative<std::vector<char>>(avroData))
 		{
@@ -1706,6 +1725,19 @@ variant_t SimpleKafka1C::getAvroSchema(const variant_t& avroData)
 		{
 			msg_err = "Invalid data type for avroData. Expected string or binary data";
 			return std::string("");
+		}
+
+		// See decodeAvroMessage() for why this is an explicit flag, not a guess.
+		if (std::holds_alternative<bool>(isBase64) && std::get<bool>(isBase64))
+		{
+			const std::string origStr(dataPtr->begin(), dataPtr->begin() + dataSize);
+			if (!tryBase64Decode(origStr, decodedBuf))
+			{
+				msg_err = "IsBase64=true, but input is not valid base64";
+				return std::string("");
+			}
+			dataPtr = &decodedBuf;
+			dataSize = decodedBuf.size();
 		}
 
 		if (dataSize == 0)

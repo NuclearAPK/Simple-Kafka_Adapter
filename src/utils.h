@@ -2,11 +2,17 @@
 #define KAFKA_UTILS_H
 
 #include <string>
+#include <vector>
 #include <cstddef>
 #include <cstdint>
 
 // String utilities
 std::string base64Encode(const uint8_t* data, size_t len);
+// Decode a strictly-valid base64 string into raw bytes. Returns false (and
+// leaves out untouched) if the input is not pure, correctly-padded base64.
+// Tolerates both alphabets ('+/' and URL-safe '-_'), optional '=' padding,
+// and whitespace/line breaks anywhere in the input.
+bool tryBase64Decode(const std::string& input, std::vector<char>& out);
 bool isValidUtf8(const char* data, size_t len);
 
 // Date/time utilities

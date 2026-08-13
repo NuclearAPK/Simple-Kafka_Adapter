@@ -31,6 +31,69 @@ std::string base64Encode(const uint8_t* data, size_t len)
 	return out;
 }
 
+bool tryBase64Decode(const std::string& input, std::vector<char>& out)
+{
+	auto val = [](unsigned char c) -> int {
+		if (c >= 'A' && c <= 'Z') return c - 'A';
+		if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+		if (c >= '0' && c <= '9') return c - '0' + 52;
+		if (c == '+' || c == '-') return 62; // '-' = URL-safe
+		if (c == '/' || c == '_') return 63; // '_' = URL-safe
+		return -1;
+	};
+
+	std::vector<int> sextets;
+	sextets.reserve(input.size());
+	for (unsigned char c : input)
+	{
+		if (c == '=') break; // padding -> end of meaningful data
+		if (c == ' ' || c == '\t' || c == '\r' || c == '\n')
+			continue; // skip whitespace / line breaks
+		const int v = val(c);
+		if (v < 0)
+			return false; // not valid base64
+		sextets.push_back(v);
+	}
+
+	const size_t k = sextets.size();
+	if (k == 0 || (k % 4) == 1)
+		return false;
+
+	std::vector<char> result;
+	result.reserve((k / 4) * 3 + 2);
+
+	size_t i = 0;
+	for (; i + 4 <= k; i += 4)
+	{
+		const uint32_t t = (static_cast<uint32_t>(sextets[i]) << 18) |
+		                   (static_cast<uint32_t>(sextets[i + 1]) << 12) |
+		                   (static_cast<uint32_t>(sextets[i + 2]) << 6) |
+		                   static_cast<uint32_t>(sextets[i + 3]);
+		result.push_back(static_cast<char>((t >> 16) & 0xFF));
+		result.push_back(static_cast<char>((t >> 8) & 0xFF));
+		result.push_back(static_cast<char>(t & 0xFF));
+	}
+
+	const size_t rem = k - i;
+	if (rem == 2) // final group encodes 1 byte
+	{
+		const uint32_t t = (static_cast<uint32_t>(sextets[i]) << 18) |
+		                   (static_cast<uint32_t>(sextets[i + 1]) << 12);
+		result.push_back(static_cast<char>((t >> 16) & 0xFF));
+	}
+	else if (rem == 3) // final group encodes 2 bytes
+	{
+		const uint32_t t = (static_cast<uint32_t>(sextets[i]) << 18) |
+		                   (static_cast<uint32_t>(sextets[i + 1]) << 12) |
+		                   (static_cast<uint32_t>(sextets[i + 2]) << 6);
+		result.push_back(static_cast<char>((t >> 16) & 0xFF));
+		result.push_back(static_cast<char>((t >> 8) & 0xFF));
+	}
+
+	out = std::move(result);
+	return true;
+}
+
 bool isValidUtf8(const char* data, size_t len)
 {
 	size_t i = 0;

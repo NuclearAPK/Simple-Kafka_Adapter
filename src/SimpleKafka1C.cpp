@@ -520,8 +520,9 @@ SimpleKafka1C::SimpleKafka1C()
 		{ {1, -1}, {3, std::string("")}, {4, std::string("")} });
 	AddMethod(L"SaveAvroFile", L"СохранитьФайлAVRO", this, &SimpleKafka1C::saveAvroFile);
 	AddMethod(L"DecodeAvroMessage", L"ДекодироватьСообщениеAVRO", this, &SimpleKafka1C::decodeAvroMessage,
-		{ {1, std::string("")}, {2, true} });
-	AddMethod(L"GetAvroSchema", L"ПолучитьСхемуAVRO", this, &SimpleKafka1C::getAvroSchema);
+		{ {1, std::string("")}, {2, true}, {3, false} });
+	AddMethod(L"GetAvroSchema", L"ПолучитьСхемуAVRO", this, &SimpleKafka1C::getAvroSchema,
+		{ {1, false} });
 
 	// Protobuf
 	AddMethod(L"PutProtoSchema", L"СохранитьСхемуProtobuf", this, &SimpleKafka1C::putProtoSchema);
