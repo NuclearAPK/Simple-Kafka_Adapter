@@ -243,8 +243,16 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 	// независимо от LogDirectory и пакетного режима)
 	if (message.err() != RdKafka::ERR_NO_ERROR && asyncError)
 	{
+		// Причина отказа известна только здесь: без топика, партиции и кода
+		// вызывающая сторона в 1С может опереться лишь на лог librdkafka,
+		// который в промышленной среде обычно недоступен.
+		std::string detail = std::string("Delivery failed: ") + message.errstr()
+			+ " (topic=" + message.topic_name()
+			+ ", partition=" + std::to_string(message.partition())
+			+ ", code=" + std::to_string(static_cast<int>(message.err())) + ")";
+
 		std::lock_guard<std::mutex> lk(asyncError->mtx);
-		asyncError->lastError = std::string("Delivery failed: ") + message.errstr();
+		asyncError->lastError = detail;
 	}
 
 	if (!logDir.empty())

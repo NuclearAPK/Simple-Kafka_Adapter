@@ -244,12 +244,31 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 
 int32_t SimpleKafka1C::produceAndWaitResult(std::function<int32_t()> produceFn, const std::string& methodLogName)
 {
+	// Сбрасываем причину предыдущего отказа: иначе ошибка прошлой отправки
+	// была бы выдана за причину отказа текущей.
+	if (asyncErrorState)
+	{
+		std::lock_guard<std::mutex> lk(asyncErrorState->mtx);
+		asyncErrorState->lastError.clear();
+	}
+
 	if (produceFn() != -1)
 	{
 		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
+
+		// Причина отказа, собранная в dr_cb (код, топик, партиция). Пусто,
+		// если delivery report так и не пришёл.
+		std::string deliveryError;
+		if (asyncErrorState)
+		{
+			std::lock_guard<std::mutex> lk(asyncErrorState->mtx);
+			deliveryError = asyncErrorState->lastError;
+		}
+
 		if (hProducer->outq_len() > 0)
 		{
 			msg_err = "Messages not delivered: " + std::to_string(hProducer->outq_len());
+			msg_err += deliveryError.empty() ? " (no delivery report received)" : " - " + deliveryError;
 
 			std::ofstream eventFile{};
 			openEventFile(producerLogName, eventFile);
@@ -259,7 +278,7 @@ int32_t SimpleKafka1C::produceAndWaitResult(std::function<int32_t()> produceFn, 
 		}
 		else if (cl_dr_cb.delivered != RdKafka::Message::MSG_STATUS_PERSISTED)
 		{
-			msg_err = "Not delivered. See log for details";
+			msg_err = deliveryError.empty() ? "Not delivered: no delivery report received" : deliveryError;
 		}
 		return cl_dr_cb.delivered;
 	}

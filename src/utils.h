@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "Component.h"
+
 // String utilities
 std::string base64Encode(const uint8_t* data, size_t len);
 // Decode a strictly-valid base64 string into raw bytes. Returns false (and
@@ -16,6 +18,16 @@ std::string base64Encode(const uint8_t* data, size_t len);
 // and whitespace/line breaks anywhere in the input.
 bool tryBase64Decode(const std::string& input, std::vector<char>& out);
 bool isValidUtf8(const char* data, size_t len);
+
+// Number utilities
+
+// Converts a number coming from 1C into int64. Accepts int32 and double, since
+// 1C marshals values that do not fit into int32 as VTYPE_R8 (double) - variant_t
+// has no int64 alternative. Rejects non-numbers, NaN/infinity, fractional values
+// and magnitudes above 2^53, where double stops representing consecutive integers
+// exactly. Never throws: on failure returns false, fills errorMsg and leaves out
+// untouched.
+bool variantToInt64(const variant_t& value, int64_t& out, std::string& errorMsg);
 
 // Date/time utilities
 std::string currentDateTime();

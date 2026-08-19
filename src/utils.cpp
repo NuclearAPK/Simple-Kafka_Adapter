@@ -1,6 +1,7 @@
 #include "utils.h"
 
 #include <chrono>
+#include <cmath>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
@@ -430,4 +431,49 @@ bool isValidConsumerGroupId(const std::string& groupId, std::string& errorMsg)
 	}
 
 	return true;
+}
+
+//================================== Number utilities ==========================================
+
+bool variantToInt64(const variant_t& value, int64_t& out, std::string& errorMsg)
+{
+	// Largest magnitude for which a double still represents every integer exactly.
+	constexpr double exactIntegerLimit = 9007199254740992.0; // 2^53
+
+	if (std::holds_alternative<int32_t>(value))
+	{
+		out = static_cast<int64_t>(std::get<int32_t>(value));
+		return true;
+	}
+
+	if (std::holds_alternative<double>(value))
+	{
+		const double v = std::get<double>(value);
+
+		if (!std::isfinite(v))
+		{
+			errorMsg = "expected a finite number";
+			return false;
+		}
+
+		if (std::trunc(v) != v)
+		{
+			std::ostringstream oss;
+			oss << "expected a whole number, got " << v;
+			errorMsg = oss.str();
+			return false;
+		}
+
+		if (v > exactIntegerLimit || v < -exactIntegerLimit)
+		{
+			errorMsg = "number exceeds the exact integer range (2^53)";
+			return false;
+		}
+
+		out = static_cast<int64_t>(v);
+		return true;
+	}
+
+	errorMsg = "expected a number";
+	return false;
 }

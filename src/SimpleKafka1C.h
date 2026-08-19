@@ -208,7 +208,10 @@ private:
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
 	std::string getMessageKey();
 	std::string getMessageHeaders();
-	int32_t getMessageOffset();
+	// Returned as double: variant_t has no int64 alternative, and 1C receives
+	// VTYPE_R8 as a plain Number. Offsets are int64 in Kafka, so narrowing to
+	// int32 corrupted values above 2^31.
+	double getMessageOffset();
 	std::string getMessageTopicName();
 	int32_t getMessageBrokerID();
 	double getMessageTimestamp();

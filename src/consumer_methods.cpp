@@ -239,20 +239,29 @@ bool SimpleKafka1C::checkReadingPosition(RdKafka::Producer* producer,
 
 bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant_t& offset, const variant_t& partition, const variant_t& brokers)
 {
-	int32_t assignOffset;
+	int64_t assignOffset = 0;
 	std::string assignTopic;
 	int32_t assignPartition;
 	std::string explicitBrokers;
 
 	try
 	{
-		assignOffset = std::get<int32_t>(offset);
 		assignTopic = std::get<std::string>(topicName);
 		assignPartition = std::get<int32_t>(partition);
 	}
 	catch (const std::exception& e)
 	{
 		msg_err = std::string("Invalid argument type: ") + e.what();
+		return false;
+	}
+
+	// Offsets are int64 in Kafka; 1C passes values above int32 as double.
+	// Negative values are left as is: they are special librdkafka offsets
+	// (beginning/end/stored) and checkReadingPosition passes them through.
+	std::string convErr;
+	if (!variantToInt64(offset, assignOffset, convErr))
+	{
+		msg_err = "setReadingPosition: offset - " + convErr;
 		return false;
 	}
 
@@ -758,9 +767,9 @@ std::string SimpleKafka1C::getMessageHeaders()
 	return s.str();
 }
 
-int32_t SimpleKafka1C::getMessageOffset()
+double SimpleKafka1C::getMessageOffset()
 {
-	return (int32_t) this->offset;
+	return static_cast<double>(this->offset);
 }
 
 std::string SimpleKafka1C::getMessageTopicName()
@@ -810,11 +819,35 @@ std::string SimpleKafka1C::readMessageByOffset(const variant_t& brokers, const v
 {
 	std::string result;
 
+	// Type checks first: a bare std::get would surface as bad_variant_access
+	// instead of a readable message on the 1C side.
+	if (!std::holds_alternative<std::string>(brokers) ||
+		!std::holds_alternative<std::string>(topicName) ||
+		!std::holds_alternative<int32_t>(partition) ||
+		!std::holds_alternative<int32_t>(timeout))
+	{
+		msg_err = "readMessageByOffset: brokers/topicName must be strings, partition and timeout must be numbers";
+		return result;
+	}
+
 	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tPartition = std::get<int32_t>(partition);
-	int64_t tOffset = static_cast<int64_t>(std::get<int32_t>(offset));
 	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	// Offsets are int64 in Kafka; 1C passes values above int32 as double.
+	int64_t tOffset = 0;
+	std::string convErr;
+	if (!variantToInt64(offset, tOffset, convErr))
+	{
+		msg_err = "readMessageByOffset: offset - " + convErr;
+		return result;
+	}
+	if (tOffset < 0)
+	{
+		msg_err = "Offset must be >= 0";
+		return result;
+	}
 
 	if (!isValidBrokerList(tBrokers, msg_err))
 		return result;
@@ -954,11 +987,50 @@ std::string SimpleKafka1C::readMessageByOffset(const variant_t& brokers, const v
 
 bool SimpleKafka1C::commitOffset(const variant_t& topicName, const variant_t& offset, const variant_t& partition)
 {
-	std::vector<RdKafka::TopicPartition*> offsets;
-	std::int32_t tOffset = std::get<std::int32_t>(offset);
-	std::int32_t tPartition = std::get<std::int32_t>(partition);
-	std::string tTopicName = std::get<std::string>(topicName);
+	if (hConsumer == nullptr)
+	{
+		msg_err = "Consumer not initialized";
+		return false;
+	}
 
+	if (!std::holds_alternative<std::string>(topicName))
+	{
+		msg_err = "commitOffset: topic name must be a string";
+		return false;
+	}
+	std::string tTopicName = std::get<std::string>(topicName);
+	if (!isValidTopicName(tTopicName, msg_err))
+		return false;
+
+	if (!std::holds_alternative<std::int32_t>(partition))
+	{
+		msg_err = "commitOffset: partition must be a number";
+		return false;
+	}
+	std::int32_t tPartition = std::get<std::int32_t>(partition);
+	if (tPartition < 0)
+	{
+		msg_err = "Partition must be >= 0";
+		return false;
+	}
+
+	// Offsets are int64 in Kafka; 1C passes values above int32 as double.
+	std::int64_t tOffset = 0;
+	std::string convErr;
+	if (!variantToInt64(offset, tOffset, convErr))
+	{
+		msg_err = "commitOffset: offset - " + convErr;
+		return false;
+	}
+	if (tOffset < 0)
+	{
+		// Special positions are set by SeekToBeginning/SeekToEnd/SeekToTimestamp,
+		// committing a negative offset would store a meaningless position.
+		msg_err = "Offset must be >= 0";
+		return false;
+	}
+
+	std::vector<RdKafka::TopicPartition*> offsets;
 	RdKafka::TopicPartition* ptr = RdKafka::TopicPartition::create(tTopicName, tPartition, tOffset);
 	offsets.push_back(ptr);
 
