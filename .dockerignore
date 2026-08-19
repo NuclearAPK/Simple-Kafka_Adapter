@@ -1,0 +1,7 @@
+out/
+.git/
+.vs/
+avro-cpp-linux/
+docs/
+*.md
+!CMakeLists.txt

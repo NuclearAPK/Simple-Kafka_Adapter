@@ -1,0 +1,36 @@
+Build-time only patch, applied inside the container to the copied sources.
+
+CMakeLists.txt contains a workaround for an old vcpkg protobuf export bug: it
+pre-declares an imported protobuf::protoc target and overrides add_executable().
+Both halves break the build against current vcpkg:
+
+1. The pre-declaration makes protobuf-targets.cmake abort with
+   "Some (but not all) targets in this export set were already defined."
+
+2. The add_executable() override renames vcpkg's own add_executable() override
+   to _add_executable, which is the name vcpkg's version already calls, so
+   configuration dies with "Maximum recursion depth of 1000 exceeded".
+
+Current vcpkg protobuf exports protobuf::protoc correctly, so the whole
+workaround is dropped.
+
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -129,17 +129,4 @@
+     find_package(absl CONFIG REQUIRED)
+     find_package(utf8_range CONFIG REQUIRED)
+ endif()
+-# Work around a vcpkg protobuf export issue where protobuf::protoc is used in
+-# protobuf-targets-debug.cmake before it is declared, and then declared again.
+-if(UNIX AND NOT APPLE)
+-    if(NOT TARGET protobuf::protoc)
+-        add_executable(protobuf::protoc IMPORTED GLOBAL)
+-    endif()
+-    function(add_executable)
+-        if(ARGC GREATER 0 AND "${ARGV0}" STREQUAL "protobuf::protoc" AND TARGET protobuf::protoc)
+-            return()
+-        endif()
+-        _add_executable(${ARGV})
+-    endfunction()
+-endif()
+ find_package(Protobuf CONFIG REQUIRED)
