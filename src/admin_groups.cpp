@@ -588,29 +588,31 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 		return false;
 	}
 
-	// Используем DeleteConsumerGroupOffsets для удаления офсетов группы
-	// Если нужно удалить саму группу, она должна быть неактивной (без потребителей)
-	rd_kafka_DeleteConsumerGroupOffsets_t* del_groups[1];
-	del_groups[0] = rd_kafka_DeleteConsumerGroupOffsets_new(tGroupId.c_str(), NULL);
+	// Удаляем группу целиком через DeleteGroups (DeleteConsumerGroups в Java-клиенте).
+	// rd_kafka_DeleteConsumerGroupOffsets_new() здесь применять нельзя: он требует
+	// непустой список партиций (rd_assert(partitions) в rdkafka_admin.c) и при NULL
+	// аварийно завершает процесс. Группа должна быть неактивной (без участников).
+	rd_kafka_DeleteGroup_t* del_groups[1];
+	del_groups[0] = rd_kafka_DeleteGroup_new(tGroupId.c_str());
 
 	// опции для операции
-	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETECONSUMERGROUPOFFSETS);
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_DELETEGROUPS);
 	if (rd_kafka_AdminOptions_set_request_timeout(options, 10000, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
 		msg_err = errstr;
-		rd_kafka_DeleteConsumerGroupOffsets_destroy(del_groups[0]);
+		rd_kafka_DeleteGroup_destroy(del_groups[0]);
 		rd_kafka_AdminOptions_destroy(options);
 		return false;
 	}
 
 	// выполняем операцию удаления
-	rd_kafka_DeleteConsumerGroupOffsets(admin.get(), del_groups, 1, options, admin.queue());
+	rd_kafka_DeleteGroups(admin.get(), del_groups, 1, options, admin.queue());
 
 	// ожидаем результат
 	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), 12000);
 
 	// освобождаем ресурсы
-	rd_kafka_DeleteConsumerGroupOffsets_destroy(del_groups[0]);
+	rd_kafka_DeleteGroup_destroy(del_groups[0]);
 	rd_kafka_AdminOptions_destroy(options);
 
 	if (!rkev)
@@ -626,9 +628,40 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 		return false;
 	}
 
+	// разбираем результат по группе
+	bool success = false;
+	const rd_kafka_DeleteGroups_result_t* res = rd_kafka_event_DeleteGroups_result(rkev);
+	if (!res)
+	{
+		msg_err = "Unexpected result type for DeleteGroups";
+	}
+	else
+	{
+		size_t res_cnt = 0;
+		const rd_kafka_group_result_t** gres = rd_kafka_DeleteGroups_result_groups(res, &res_cnt);
+
+		if (res_cnt == 0 || !gres || !gres[0])
+		{
+			msg_err = "Empty result for DeleteGroups";
+		}
+		else
+		{
+			const rd_kafka_error_t* gerr = rd_kafka_group_result_error(gres[0]);
+			if (gerr && rd_kafka_error_code(gerr) != RD_KAFKA_RESP_ERR_NO_ERROR)
+			{
+				const char* errmsg = rd_kafka_error_string(gerr);
+				msg_err = errmsg ? errmsg : "Unknown error while deleting consumer group";
+			}
+			else
+			{
+				success = true;
+			}
+		}
+	}
+
 	rd_kafka_event_destroy(rkev);
 
-	return true;
+	return success;
 }
 
 bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const variant_t& groupId,

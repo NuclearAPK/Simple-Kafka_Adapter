@@ -5,6 +5,16 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.9.4] - 2026-09-08
+
+### Исправлено
+
+#### `УдалитьГруппуКонсьюмеров` — аварийное завершение компоненты ([#90](https://github.com/NuclearAPK/Simple-Kafka_Adapter/issues/90))
+Метод вызывал `rd_kafka_DeleteConsumerGroupOffsets_new(groupId, NULL)`. Эта функция librdkafka требует непустой список партиций и начинается с `rd_assert(partitions)`, поэтому при `NULL` процесс завершался аварийно (`rd_kafka_crash`) — в 1С это выглядело как «Аварийное завершение работы внешней компоненты». Сам выбор API был неверным и по смыслу: `DeleteConsumerGroupOffsets` удаляет офсеты по перечисленным партициям, а не группу. Метод переведён на `rd_kafka_DeleteGroups` (`RD_KAFKA_ADMIN_OP_DELETEGROUPS`, `DeleteConsumerGroups` в Java-клиенте): удаляется сама группа вместе с её офсетами. Результат по группе разбирается через `rd_kafka_DeleteGroups_result_groups` и `rd_kafka_group_result_error`, поэтому отказ брокера (например, `NON_EMPTY_GROUP` для группы с активными участниками) теперь возвращается как `Ложь` с текстом в `ПолучитьСообщениеОбОшибке`, а не как «успех».
+
+#### `ДекодироватьСообщениеProtobuf(..., Ложь)` возвращал Строку вместо ДвоичныеДанные ([#89](https://github.com/NuclearAPK/Simple-Kafka_Adapter/issues/89))
+В ветке двоичного результата возвращался `std::string`, а `variant_t` со `std::string` маршалится в 1С как `VTYPE_PWSTR` с конвертацией UTF-8 → UTF-16. Произвольные Protobuf-байты корректным UTF-8 не являются: в 1С приходила Строка с управляющими символами, байты искажались, а нулевые байты обрывали значение. Документация при этом обещала `ДвоичныеДанные`. Теперь возвращается `std::vector<char>` (`VTYPE_BLOB`) — как в аналогичной ветке `ДекодироватьСообщениеAVRO`. Поведение при `ВозвращатьJSON = Истина` не изменилось.
+
 ## [1.9.3] - 2026-07-28
 
 ### Добавлено
@@ -629,6 +639,7 @@ librdkafka поддерживает `AdminOptions_set_operation_timeout` тол�
 
 ---
 
+[1.9.4]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.3...v1.9.4
 [1.9.3]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.1...v1.9.2
 [1.9.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.0...v1.9.1

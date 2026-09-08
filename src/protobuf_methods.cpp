@@ -450,8 +450,10 @@ variant_t SimpleKafka1C::decodeProtobufMessage(const variant_t& protobufData, co
 		}
 		else
 		{
-			// Return binary data as is
-			return *dataPtr;
+			// Return binary data as BLOB (VTYPE_BLOB), not as a string.
+			// A std::string in variant_t is converted to VTYPE_PWSTR with UTF-8 -> UTF-16
+			// conversion, which corrupts arbitrary binary payloads.
+			return std::vector<char>(dataPtr->begin(), dataPtr->end());
 		}
 	}
 	catch (std::exception const& ex)
