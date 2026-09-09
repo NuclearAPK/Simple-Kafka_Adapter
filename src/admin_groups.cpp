@@ -11,6 +11,7 @@
 #include <boost/json.hpp>
 
 #include <sstream>
+#include <stdexcept>
 
 //================================== Consumer Lag and Group Info ==========================================
 
@@ -676,17 +677,96 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 	try
 	{
 		std::string tTopicName = std::get<std::string>(topicName);
-		std::string tResetTo = std::get<std::string>(resetTo);
+		std::string tGroupId = std::get<std::string>(groupId);
+		std::string tBrokers;
+		if (std::holds_alternative<std::string>(brokers))
+			tBrokers = std::get<std::string>(brokers);
+
+		// resetTo is documented as a string, but 1C may also pass a number for
+		// the timestamp form, so both are accepted here.
+		std::string tResetTo;
+		int64_t tTimestamp = 0;
+		bool byTimestamp = false;
+
+		if (std::holds_alternative<std::string>(resetTo))
+		{
+			tResetTo = std::get<std::string>(resetTo);
+		}
+		else
+		{
+			std::string convErr;
+			if (!variantToInt64(resetTo, tTimestamp, convErr))
+			{
+				msg_err = "resetConsumerGroupOffsets: resetTo - " + convErr;
+				return false;
+			}
+			byTimestamp = true;
+		}
+
+		if (!byTimestamp && tResetTo != "earliest" && tResetTo != "latest")
+		{
+			// Numeric value: a timestamp in milliseconds since epoch, not an offset
+			try
+			{
+				size_t parsedTo = 0;
+				tTimestamp = std::stoll(tResetTo, &parsedTo);
+				if (parsedTo != tResetTo.size())
+					throw std::invalid_argument("trailing characters");
+			}
+			catch (...)
+			{
+				msg_err = "Invalid resetTo value. Use 'earliest', 'latest', or a timestamp in milliseconds";
+				return false;
+			}
+			byTimestamp = true;
+		}
+
+		if (byTimestamp && tTimestamp < 0)
+		{
+			msg_err = "Timestamp must be a non-negative number of milliseconds since epoch";
+			return false;
+		}
+
+		// Argument validation
+		if (!tBrokers.empty() && !isValidBrokerList(tBrokers, msg_err))
+			return false;
+		if (!isValidConsumerGroupId(tGroupId, msg_err))
+			return false;
+		if (!isValidTopicName(tTopicName, msg_err))
+			return false;
+
+		// The offsets are committed by the initialized consumer, so only its own
+		// group can be reset.
+		const std::string configuredGroup = getSettingValue("group.id");
+		if (!configuredGroup.empty() && configuredGroup != tGroupId)
+		{
+			msg_err = "Consumer group mismatch: the offsets are committed by the initialized consumer, whose group.id is '"
+				+ configuredGroup + "', not '" + tGroupId
+				+ "'. Set group.id via SetParameter before InitializeConsumer.";
+			return false;
+		}
+
+		const int timeout = adminOperationTimeout;
 
 		// Получаем метаданные топика для определения количества партиций
-		RdKafka::Metadata* metadata = nullptr;
-		RdKafka::ErrorCode err = hConsumer->metadata(false, nullptr, &metadata, 5000);
+		std::string handleErr;
+		std::unique_ptr<RdKafka::Topic> topicHandle(RdKafka::Topic::create(hConsumer, tTopicName, nullptr, handleErr));
+		if (!topicHandle)
+		{
+			msg_err = "Topic handle creation error: " + handleErr;
+			return false;
+		}
+
+		RdKafka::Metadata* rawMetadata = nullptr;
+		RdKafka::ErrorCode err = hConsumer->metadata(false, topicHandle.get(), &rawMetadata, timeout);
 
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
 			msg_err = RdKafka::err2str(err);
 			return false;
 		}
+
+		std::unique_ptr<RdKafka::Metadata> metadata(rawMetadata);
 
 		// Находим топик в метаданных
 		const RdKafka::Metadata::TopicMetadataVector* topics = metadata->topics();
@@ -696,12 +776,15 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 		{
 			if ((*it)->topic() == tTopicName)
 			{
+				if ((*it)->err() != RdKafka::ERR_NO_ERROR)
+				{
+					msg_err = RdKafka::err2str((*it)->err());
+					return false;
+				}
 				partition_cnt = static_cast<int>((*it)->partitions()->size());
 				break;
 			}
 		}
-
-		delete metadata;
 
 		if (partition_cnt == 0)
 		{
@@ -710,46 +793,80 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 		}
 
 		// Создаем список партиций для сброса офсетов
+		std::vector<std::unique_ptr<RdKafka::TopicPartition>> owned;
 		std::vector<RdKafka::TopicPartition*> partitions;
+
+		owned.reserve(partition_cnt);
+		partitions.reserve(partition_cnt);
 
 		for (int i = 0; i < partition_cnt; i++)
 		{
-			int64_t offset;
+			owned.emplace_back(RdKafka::TopicPartition::create(tTopicName, i));
+			partitions.push_back(owned.back().get());
+		}
 
-			if (tResetTo == "earliest")
+		if (byTimestamp)
+		{
+			// offsetsForTimes takes the timestamp in the offset field on input and
+			// returns there the first offset with a timestamp at or after it
+			for (auto* tp : partitions)
+				tp->set_offset(tTimestamp);
+
+			err = hConsumer->offsetsForTimes(partitions, timeout);
+
+			if (err != RdKafka::ERR_NO_ERROR)
 			{
-				offset = RdKafka::Topic::OFFSET_BEGINNING;
+				msg_err = RdKafka::err2str(err);
+				return false;
 			}
-			else if (tResetTo == "latest")
+
+			for (auto* tp : partitions)
 			{
-				offset = RdKafka::Topic::OFFSET_END;
-			}
-			else
-			{
-				// Пытаемся преобразовать в timestamp
-				try
+				if (tp->err() != RdKafka::ERR_NO_ERROR)
 				{
-					offset = std::stoll(tResetTo);
-				}
-				catch (...)
-				{
-					msg_err = "Invalid resetTo value. Use 'earliest', 'latest', or timestamp";
+					msg_err = "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(tp->err());
 					return false;
 				}
-			}
 
-			RdKafka::TopicPartition* tp = RdKafka::TopicPartition::create(tTopicName, i, offset);
-			partitions.push_back(tp);
+				if (tp->offset() < 0)
+				{
+					// No message at or after the timestamp: fall back to the end of the
+					// partition, the same way kafka-consumer-groups --to-datetime does
+					int64_t low = 0, high = 0;
+					err = hConsumer->query_watermark_offsets(tTopicName, tp->partition(), &low, &high, timeout);
+
+					if (err != RdKafka::ERR_NO_ERROR)
+					{
+						msg_err = "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err);
+						return false;
+					}
+
+					tp->set_offset(high);
+				}
+			}
+		}
+		else
+		{
+			// commitSync needs absolute offsets: it skips the logical OFFSET_BEGINNING
+			// and OFFSET_END and returns ERR__NO_OFFSET, so the real partition bounds
+			// are queried from the broker
+			for (auto* tp : partitions)
+			{
+				int64_t low = 0, high = 0;
+				err = hConsumer->query_watermark_offsets(tTopicName, tp->partition(), &low, &high, timeout);
+
+				if (err != RdKafka::ERR_NO_ERROR)
+				{
+					msg_err = "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err);
+					return false;
+				}
+
+				tp->set_offset(tResetTo == "earliest" ? low : high);
+			}
 		}
 
 		// Фиксируем офсеты
 		err = hConsumer->commitSync(partitions);
-
-		// Освобождаем память
-		for (auto* tp : partitions)
-		{
-			delete tp;
-		}
 
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
@@ -850,7 +967,31 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 	{
 		std::string tTopicName = std::get<std::string>(topicName);
 		int32_t tPartition = std::get<int32_t>(partition);
-		int64_t tTimestamp = std::get<int32_t>(timestamp); // timestamp в миллисекундах
+
+		// Timestamps are milliseconds since epoch and do not fit into int32,
+		// so 1C marshals them as VTYPE_R8 (double) - see variantToInt64().
+		int64_t tTimestamp = 0;
+		std::string convErr;
+		if (!variantToInt64(timestamp, tTimestamp, convErr))
+		{
+			msg_err = "seekToTimestamp: timestamp - " + convErr;
+			return false;
+		}
+
+		if (!isValidTopicName(tTopicName, msg_err))
+			return false;
+
+		if (tPartition < 0)
+		{
+			msg_err = "Partition number must be non-negative";
+			return false;
+		}
+
+		if (tTimestamp < 0)
+		{
+			msg_err = "Timestamp must be a non-negative number of milliseconds since epoch";
+			return false;
+		}
 
 		// Создаем TopicPartition для поиска по timestamp
 		std::unique_ptr<RdKafka::TopicPartition> tp(RdKafka::TopicPartition::create(tTopicName, tPartition));
@@ -869,12 +1010,19 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 			return false;
 		}
 
+		// offsetsForTimes reports part of the errors per partition
+		if (tp->err() != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = RdKafka::err2str(tp->err());
+			return false;
+		}
+
 		// Получаем найденный офсет
 		int64_t foundOffset = tp->offset();
 
 		if (foundOffset < 0)
 		{
-			msg_err = "No offset found for the specified timestamp";
+			msg_err = "No offset found for the specified timestamp: the partition has no message with a timestamp at or after the given one";
 			return false;
 		}
 
