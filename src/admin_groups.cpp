@@ -695,7 +695,7 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 		else
 		{
 			std::string convErr;
-			if (!variantToInt64(resetTo, tTimestamp, convErr))
+			if (!variantToTimestampMs(resetTo, tTimestamp, convErr))
 			{
 				msg_err = "resetConsumerGroupOffsets: resetTo - " + convErr;
 				return false;
@@ -968,11 +968,12 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 		std::string tTopicName = std::get<std::string>(topicName);
 		int32_t tPartition = std::get<int32_t>(partition);
 
-		// Timestamps are milliseconds since epoch and do not fit into int32,
-		// so 1C marshals them as VTYPE_R8 (double) - see variantToInt64().
+		// Timestamps are milliseconds since epoch and do not fit into int32.
+		// A String always survives the transfer from 1C intact, a Number only
+		// while the platform marshals it as VTYPE_R8 - see variantToTimestampMs().
 		int64_t tTimestamp = 0;
 		std::string convErr;
-		if (!variantToInt64(timestamp, tTimestamp, convErr))
+		if (!variantToTimestampMs(timestamp, tTimestamp, convErr))
 		{
 			msg_err = "seekToTimestamp: timestamp - " + convErr;
 			return false;
@@ -984,12 +985,6 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 		if (tPartition < 0)
 		{
 			msg_err = "Partition number must be non-negative";
-			return false;
-		}
-
-		if (tTimestamp < 0)
-		{
-			msg_err = "Timestamp must be a non-negative number of milliseconds since epoch";
 			return false;
 		}
 

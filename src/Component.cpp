@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <codecvt>
+#include <cstdint>
 #include <cwctype>
 #include <locale>
 
@@ -348,14 +349,52 @@ void Component::AddProperty(const std::wstring &alias, const std::wstring &alias
 
 }
 
+namespace {
+
+// Narrows a 64-bit integer coming from the platform to the variant_t alternative
+// that carries it without loss: int32_t while it fits, double otherwise.
+variant_t fromWideInteger(int64_t value) {
+    if (value >= INT32_MIN && value <= INT32_MAX)
+        return static_cast<int32_t>(value);
+
+    return static_cast<double>(value);
+}
+
+} // namespace
+
 variant_t Component::toStlVariant(tVariant src) {
     switch (src.vt) {
         case VTYPE_EMPTY:
             return UNDEFINED;
         case VTYPE_I4: //int32_t
             return src.lVal;
-        // case VTYPE_I8: //int64_t
-        //      return src.llVal;
+        // Wide integer types are kept as int32_t while they fit, so that the
+        // existing std::get<int32_t>() call sites keep working, and are widened
+        // to double otherwise: variant_t has no int64_t alternative, and double
+        // represents every integer exactly below 2^53 - far above any Kafka
+        // offset or millisecond timestamp.
+        case VTYPE_I8: //int64_t
+            return fromWideInteger(src.llVal);
+        case VTYPE_UI8: //uint64_t
+            if (src.ullVal > static_cast<uint64_t>(INT64_MAX))
+                return static_cast<double>(src.ullVal);
+            return fromWideInteger(static_cast<int64_t>(src.ullVal));
+        case VTYPE_UI4: //uint32_t
+            return fromWideInteger(static_cast<int64_t>(src.ulVal));
+        case VTYPE_INT: //int, depends on architecture
+            return fromWideInteger(static_cast<int64_t>(src.intVal));
+        case VTYPE_UINT: //unsigned int, depends on architecture
+            return fromWideInteger(static_cast<int64_t>(src.uintVal));
+        case VTYPE_I2: //int16_t
+            return static_cast<int32_t>(src.shortVal);
+        case VTYPE_UI2: //uint16_t
+            return static_cast<int32_t>(src.ushortVal);
+        case VTYPE_I1: //int8_t
+            return static_cast<int32_t>(src.i8Val);
+        case VTYPE_UI1: //uint8_t
+            return static_cast<int32_t>(src.ui8Val);
+        case VTYPE_R4: //float
+            return static_cast<double>(src.fltVal);
         case VTYPE_R8: //double
             return src.dblVal;
         case VTYPE_PWSTR: { //std::string

@@ -477,3 +477,54 @@ bool variantToInt64(const variant_t& value, int64_t& out, std::string& errorMsg)
 	errorMsg = "expected a number";
 	return false;
 }
+
+bool variantToTimestampMs(const variant_t& value, int64_t& out, std::string& errorMsg)
+{
+	int64_t parsed = 0;
+
+	if (std::holds_alternative<std::string>(value))
+	{
+		const std::string& raw = std::get<std::string>(value);
+
+		try
+		{
+			size_t consumed = 0;
+			parsed = std::stoll(raw, &consumed);
+			if (consumed != raw.size())
+				throw std::invalid_argument("trailing characters");
+		}
+		catch (...)
+		{
+			errorMsg = "expected a whole number of milliseconds since epoch, got \"" + raw + "\"";
+			return false;
+		}
+	}
+	else if (std::holds_alternative<int32_t>(value))
+	{
+		// A millisecond timestamp does not fit into int32 for any date after
+		// 1970-01-25, so an int32 here means the value was narrowed on its way
+		// from 1C and the original number cannot be restored. Refusing it keeps
+		// the component from silently seeking to a wrong position.
+		errorMsg = "the number arrived from 1C as int32 and no longer holds a millisecond "
+			"timestamp. Pass the timestamp as a String, for example \"1788972117044\"";
+		return false;
+	}
+	else
+	{
+		std::string convErr;
+		if (!variantToInt64(value, parsed, convErr))
+		{
+			errorMsg = convErr;
+			return false;
+		}
+	}
+
+	if (parsed < 0)
+	{
+		errorMsg = "timestamp must be a non-negative number of milliseconds since epoch";
+		return false;
+	}
+
+	out = parsed;
+	return true;
+}

@@ -29,6 +29,14 @@ bool isValidUtf8(const char* data, size_t len);
 // untouched.
 bool variantToInt64(const variant_t& value, int64_t& out, std::string& errorMsg);
 
+// Converts a millisecond Unix timestamp coming from 1C into int64. Accepts a
+// String (parsed as a whole number, the only form that always survives the
+// transfer intact) and a double. Rejects int32: no real millisecond timestamp
+// fits into int32, so such a value means the number was narrowed on its way
+// from 1C and cannot be restored. Rejects negative values. Never throws: on
+// failure returns false, fills errorMsg and leaves out untouched.
+bool variantToTimestampMs(const variant_t& value, int64_t& out, std::string& errorMsg);
+
 // Date/time utilities
 std::string currentDateTime();
 std::string currentDateTime(const char* format);
