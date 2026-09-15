@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.9.5] - 2026-09-15
+
+### Изменено
+
+#### `ПолучитьСписокТопиков` — таймаут ожидания метаданных стал параметром
+Таймаут запроса метаданных был зашит в реализации: `producer->metadata(true, topicKafka, &metadata, 5000)`. Значение нельзя было изменить ни параметром метода, ни через `УстановитьТаймаутAdminОперации` — на медленном канале или кластере с большим количеством топиков метод возвращал пустую строку с `Local: Broker transport failure`, и увеличить время ожидания было нечем.
+
+Добавлен необязательный параметр `Таймаут` со значением по умолчанию 5000 мс, то есть поведение существующих вызовов не меняется: `ПолучитьСписокТопиков("localhost:9092", 15000)`. Сигнатура согласована с `ПолучитьМетаданныеТопика`, `ПроверитьДоступностьБрокера` и `ПолучитьРазмерТопика`, где таймаут уже принимался параметром.
+
 ## [1.9.4] - 2026-09-09
 
 ### Исправлено
@@ -658,6 +667,7 @@ librdkafka поддерживает `AdminOptions_set_operation_timeout` тол�
 
 ---
 
+[1.9.5]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.4...v1.9.5
 [1.9.4]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.3...v1.9.4
 [1.9.3]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.2...v1.9.3
 [1.9.2]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.1...v1.9.2

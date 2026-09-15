@@ -67,7 +67,7 @@ SimpleKafka1C::AdminClientScope::~AdminClientScope()
 
 //================================== Topic List =========================================
 
-std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
+std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers, const variant_t& timeout)
 {
 	std::string result;
 	std::stringstream s{};
@@ -77,6 +77,7 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	std::string tBrokers = std::get<std::string>(brokers);
+	int32_t tTimeout = std::get<int32_t>(timeout);
 
 	if (!applyKafkaSettings(conf.get(), msg_err))
 	{
@@ -99,7 +100,7 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers)
 
 	RdKafka::Topic* topicKafka = nullptr;
 	class RdKafka::Metadata* metadata;
-	RdKafka::ErrorCode err = producer->metadata(true, topicKafka, &metadata, 5000);
+	RdKafka::ErrorCode err = producer->metadata(true, topicKafka, &metadata, tTimeout);
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
 		msg_err = RdKafka::err2str(err);

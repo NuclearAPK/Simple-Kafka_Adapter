@@ -28,7 +28,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.9.4";
+	static constexpr char Version[] = u8"1.9.5";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -234,7 +234,7 @@ private:
 	bool unassign();
 
 	// admin
-	std::string getListOfTopics(const variant_t& brokers);
+	std::string getListOfTopics(const variant_t& brokers, const variant_t& timeout);
 	std::string getTopicMetadata(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 	std::string getConsumerCurrentGroupOffset(const variant_t& times, const variant_t& timeout);
 	std::string getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);

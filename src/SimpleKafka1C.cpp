@@ -454,7 +454,7 @@ SimpleKafka1C::SimpleKafka1C()
 	// - modern methods
 
 	// + admin api
-	AddMethod(L"GetTopics", L"ПолучитьСписокТопиков", this, &SimpleKafka1C::getListOfTopics);
+	AddMethod(L"GetTopics", L"ПолучитьСписокТопиков", this, &SimpleKafka1C::getListOfTopics, { {1, 5000} });
 	AddMethod(L"GetTopicMetadata", L"ПолучитьМетаданныеТопика", this, &SimpleKafka1C::getTopicMetadata, { {2, 5000} });
 	AddMethod(L"getConsumerCurrentGroupOffset", L"ПолучитьСмещенияТекущегоКонсьюмера", this, &SimpleKafka1C::getConsumerCurrentGroupOffset, { {0, std::string("")}, {1, 5000}});
 	AddMethod(L"getConsumerGroupOffsets", L"ПолучитьСмещенияГруппыКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupOffsets, { {1, std::string("")}, {2, 5000}});
