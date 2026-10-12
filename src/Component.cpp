@@ -316,6 +316,20 @@ bool Component::ExternalEvent(const std::string &src, const std::string &msg, co
     return success;
 }
 
+bool Component::ExternalEventFromThread(const std::string &src, const std::string &msg, const std::string &data) {
+    std::u16string wSource = utf8ToUtf16Lenient(src);
+    std::u16string wMessage = utf8ToUtf16Lenient(msg);
+    std::u16string wData = utf8ToUtf16Lenient(data);
+
+    std::lock_guard<std::mutex> lock(external_event_mutex);
+    if (!connection) {
+        return false;
+    }
+    return connection->ExternalEvent(reinterpret_cast<WCHAR_T *>(wSource.data()),
+                                     reinterpret_cast<WCHAR_T *>(wMessage.data()),
+                                     reinterpret_cast<WCHAR_T *>(wData.data()));
+}
+
 bool Component::SetEventBufferDepth(long depth) {
     return connection->SetEventBufferDepth(depth);
 }
@@ -542,6 +556,68 @@ std::u16string Component::toUTF16String(std::string_view src) {
     // strings with embedded NULs and over-reads non-terminated string_views.
     return conv16.from_bytes(src.data(), src.data() + src.size());
 #endif
+}
+
+std::u16string Component::utf8ToUtf16Lenient(std::string_view src) {
+    static_assert(sizeof(WCHAR_T) == sizeof(char16_t), "WCHAR_T must be 2 bytes");
+
+    constexpr char16_t replacement = 0xFFFD;
+    std::u16string result;
+    result.reserve(src.size());
+
+    const auto *p = reinterpret_cast<const unsigned char *>(src.data());
+    const size_t n = src.size();
+    size_t i = 0;
+    while (i < n) {
+        const unsigned char c = p[i];
+        uint32_t cp = 0;
+        size_t len = 0;
+        uint32_t min_cp = 0;
+        if (c < 0x80) {
+            cp = c; len = 1;
+        } else if ((c & 0xE0) == 0xC0) {
+            cp = c & 0x1F; len = 2; min_cp = 0x80;
+        } else if ((c & 0xF0) == 0xE0) {
+            cp = c & 0x0F; len = 3; min_cp = 0x800;
+        } else if ((c & 0xF8) == 0xF0) {
+            cp = c & 0x07; len = 4; min_cp = 0x10000;
+        } else {
+            result.push_back(replacement);
+            ++i;
+            continue;
+        }
+
+        if (i + len > n) {
+            result.push_back(replacement);
+            ++i;
+            continue;
+        }
+
+        bool valid = true;
+        for (size_t k = 1; k < len; ++k) {
+            const unsigned char cc = p[i + k];
+            if ((cc & 0xC0) != 0x80) {
+                valid = false;
+                break;
+            }
+            cp = (cp << 6) | (cc & 0x3F);
+        }
+        if (!valid || cp < min_cp || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+            result.push_back(replacement);
+            ++i;
+            continue;
+        }
+
+        if (cp >= 0x10000) {
+            cp -= 0x10000;
+            result.push_back(static_cast<char16_t>(0xD800 + (cp >> 10)));
+            result.push_back(static_cast<char16_t>(0xDC00 + (cp & 0x3FF)));
+        } else {
+            result.push_back(static_cast<char16_t>(cp));
+        }
+        i += len;
+    }
+    return result;
 }
 
 std::u16string Component::toUTF16String(std::wstring_view src) {

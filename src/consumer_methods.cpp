@@ -30,6 +30,9 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 		asyncErrorState->fatal = false;
 	}
 
+	// Фоновое чтение использует текущий консьюмер — останавливаем его до пересоздания
+	stopPushConsumer();
+
 	// Освобождаем предыдущий экземпляр консьюмера, если он существует
 	if (hConsumer != nullptr)
 	{
@@ -97,6 +100,11 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 
 bool SimpleKafka1C::subscribe(const variant_t& topic)
 {
+	if (pushConsumerActive())
+	{
+		return false;
+	}
+
 	std::ofstream eventFile{};
 	openEventFile(consumerLogName, eventFile);
 	if (hConsumer == nullptr)
@@ -411,6 +419,11 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions, co
 
 std::string SimpleKafka1C::consume()
 {
+	if (pushConsumerActive())
+	{
+		return "";
+	}
+
 	if (hConsumer == nullptr)
 	{
 		msg_err = "Consumer not initialized";
@@ -489,6 +502,11 @@ std::string SimpleKafka1C::consume()
 
 bool SimpleKafka1C::getMessage()
 {
+	if (pushConsumerActive())
+	{
+		return false;
+	}
+
 	if (hConsumer == nullptr)
 	{
 		msg_err = "Consumer not initialized";
@@ -557,8 +575,104 @@ bool SimpleKafka1C::getMessage()
 	return true;
 }
 
+boost::json::object SimpleKafka1C::messageToJson(RdKafka::Message& msg, bool asBase64)
+{
+	boost::json::object msgObj;
+	auto putUtf8OrBase64 = [](boost::json::object& obj,
+		const char* fieldName,
+		const char* data,
+		size_t size,
+		const char* encodingFieldName)
+	{
+		if (!data || size == 0)
+		{
+			obj[fieldName] = "";
+			return;
+		}
+
+		if (isValidUtf8(data, size))
+		{
+			obj[fieldName] = std::string(data, size);
+		}
+		else
+		{
+			obj[fieldName] = base64Encode(reinterpret_cast<const uint8_t*>(data), size);
+			if (encodingFieldName && encodingFieldName[0] != '\0')
+			{
+				obj[encodingFieldName] = "base64";
+			}
+		}
+	};
+
+	// Данные сообщения
+	const void* payloadRaw = msg.payload();
+	const size_t payloadSize = msg.len();
+	if (!payloadRaw || payloadSize == 0)
+	{
+		msgObj["message"] = "";
+	}
+	else if (asBase64)
+	{
+		msgObj["message"] = base64Encode(static_cast<const uint8_t*>(payloadRaw), payloadSize);
+	}
+	else
+	{
+		putUtf8OrBase64(msgObj, "message", static_cast<const char*>(payloadRaw), payloadSize, "message_encoding");
+	}
+
+	// Ключ
+	if (msg.key() && !msg.key()->empty())
+	{
+		const std::string& keyValue = *msg.key();
+		putUtf8OrBase64(msgObj, "key", keyValue.data(), keyValue.size(), "key_encoding");
+	}
+
+	// Метаданные
+	const std::string topicName = msg.topic_name();
+	putUtf8OrBase64(msgObj, "topic", topicName.data(), topicName.size(), "topic_encoding");
+	msgObj["partition"] = msg.partition();
+	msgObj["offset"] = msg.offset();
+	msgObj["broker_id"] = msg.broker_id();
+
+	RdKafka::MessageTimestamp ts = msg.timestamp();
+	msgObj["timestamp"] = ts.timestamp;
+
+	// Заголовки
+	RdKafka::Headers* headers = msg.headers();
+	if (headers)
+	{
+		boost::json::array headersArray;
+		std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
+		for (const auto& hdr : hdrs)
+		{
+			boost::json::object headerObj;
+			const std::string headerKey = hdr.key();
+			putUtf8OrBase64(headerObj, "key", headerKey.data(), headerKey.size(), "key_encoding");
+			const void* headerValue = hdr.value();
+			const size_t headerSize = hdr.value_size();
+			if (headerValue && headerSize > 0)
+			{
+				putUtf8OrBase64(headerObj, "value", static_cast<const char*>(headerValue), headerSize, "encoding");
+			}
+			else
+			{
+				headerObj["value"] = "";
+			}
+			headersArray.push_back(headerObj);
+		}
+		msgObj["headers"] = headersArray;
+	}
+
+	return msgObj;
+}
+
 std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const variant_t& maxWaitMs, const variant_t& asBase64)
 {
+	if (pushConsumerActive())
+	{
+		return "";
+	}
+
 	if (hConsumer == nullptr)
 	{
 		msg_err = "Consumer not initialized";
@@ -600,92 +714,7 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 		{
 			try
 			{
-				boost::json::object msgObj;
-				auto putUtf8OrBase64 = [](boost::json::object& obj,
-					const char* fieldName,
-					const char* data,
-					size_t size,
-					const char* encodingFieldName)
-				{
-					if (!data || size == 0)
-					{
-						obj[fieldName] = "";
-						return;
-					}
-
-					if (isValidUtf8(data, size))
-					{
-						obj[fieldName] = std::string(data, size);
-					}
-					else
-					{
-						obj[fieldName] = base64Encode(reinterpret_cast<const uint8_t*>(data), size);
-						if (encodingFieldName && encodingFieldName[0] != '\0')
-						{
-							obj[encodingFieldName] = "base64";
-						}
-					}
-				};
-
-				// Данные сообщения
-				const void* payloadRaw = msg->payload();
-				const size_t payloadSize = msg->len();
-				if (!payloadRaw || payloadSize == 0)
-				{
-					msgObj["message"] = "";
-				}
-				else if (encodeAsBase64)
-				{
-					msgObj["message"] = base64Encode(static_cast<const uint8_t*>(payloadRaw), payloadSize);
-				}
-				else
-				{
-					putUtf8OrBase64(msgObj, "message", static_cast<const char*>(payloadRaw), payloadSize, "message_encoding");
-				}
-
-				// Ключ
-				if (msg->key() && !msg->key()->empty())
-				{
-					const std::string& keyValue = *msg->key();
-					putUtf8OrBase64(msgObj, "key", keyValue.data(), keyValue.size(), "key_encoding");
-				}
-
-				// Метаданные
-				const std::string topicName = msg->topic_name();
-				putUtf8OrBase64(msgObj, "topic", topicName.data(), topicName.size(), "topic_encoding");
-				msgObj["partition"] = msg->partition();
-				msgObj["offset"] = msg->offset();
-				msgObj["broker_id"] = msg->broker_id();
-
-				RdKafka::MessageTimestamp ts = msg->timestamp();
-				msgObj["timestamp"] = ts.timestamp;
-
-				// Заголовки
-				RdKafka::Headers* headers = msg->headers();
-				if (headers)
-				{
-					boost::json::array headersArray;
-					std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
-					for (const auto& hdr : hdrs)
-					{
-						boost::json::object headerObj;
-						const std::string headerKey = hdr.key();
-						putUtf8OrBase64(headerObj, "key", headerKey.data(), headerKey.size(), "key_encoding");
-						const void* headerValue = hdr.value();
-						const size_t headerSize = hdr.value_size();
-						if (headerValue && headerSize > 0)
-						{
-							putUtf8OrBase64(headerObj, "value", static_cast<const char*>(headerValue), headerSize, "encoding");
-						}
-						else
-						{
-							headerObj["value"] = "";
-						}
-						headersArray.push_back(headerObj);
-					}
-					msgObj["headers"] = headersArray;
-				}
-
+				boost::json::object msgObj = messageToJson(*msg, encodeAsBase64);
 				messagesArray.push_back(msgObj);
 				messagesRead++;
 
@@ -1051,6 +1080,9 @@ bool SimpleKafka1C::commitOffset(const variant_t& topicName, const variant_t& of
 
 bool SimpleKafka1C::stopConsumer()
 {
+	// Фоновый поток должен завершиться до закрытия консьюмера
+	stopPushConsumer();
+
 	if (hConsumer != nullptr)
 	{
 		RdKafka::ErrorCode closeErr = hConsumer->close();

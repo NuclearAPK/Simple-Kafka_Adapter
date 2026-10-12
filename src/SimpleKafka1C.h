@@ -7,12 +7,15 @@
 #include <avro/Stream.hh>
 #include <avro/LogicalType.hh>
 #include <curl/curl.h>
+#include <boost/json/fwd.hpp>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <string_view>
+#include <thread>
 #include "Component.h"
 
 #ifdef SIMPLEKAFKA_HAS_OPENSSL
@@ -32,6 +35,10 @@ public:
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
+
+	// 1C calls Done() before releasing the object; connection is invalid afterwards,
+	// so the push consumer thread must be stopped here.
+	void ADDIN_API Done() override;
 
 private:
 	static constexpr char EMPTYSTR[] = u8"";
@@ -205,6 +212,8 @@ private:
 	std::string consume();	// устарела. рекомендуется использовать getMessage + getMessageMetadata + getMessageData
 	bool getMessage();	// чтение с подтверждением
 	std::string consumeBatch(const variant_t &maxMessages, const variant_t &maxWaitMs, const variant_t &asBase64);	// пакетное чтение
+	// Serializes a consumed message to the ConsumeBatch JSON element. Thread-safe (no member state).
+	static boost::json::object messageToJson(RdKafka::Message& msg, bool asBase64);
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
 	std::string getMessageKey();
 	std::string getMessageHeaders();
@@ -227,6 +236,31 @@ private:
 	bool setProducerFlushTimeout(const variant_t &timeout);
 	bool setConsumerCloseTimeout(const variant_t &timeout);
 	bool setAdminOperationTimeout(const variant_t &timeout);
+
+	// push consumer: background thread delivers messages via ExternalEvent
+	struct PushConsumerState
+	{
+		std::thread worker;
+		std::atomic<bool> stopRequested{false};
+		std::atomic<bool> running{false};
+		std::mutex mtx;					// guards cv waits
+		std::condition_variable cv;		// wakes the worker on stop
+		int32_t maxMessages = 100;
+		int32_t maxWaitMs = 1000;
+		bool asBase64 = false;
+		// log settings snapshot: cl_event_cb fields may be rewritten by the 1C thread
+		std::string logDir;
+		std::string logFormat;
+		std::string clientId;
+	};
+	PushConsumerState pushState;
+
+	bool startPushConsumer(const variant_t& maxMessages, const variant_t& maxWaitMs, const variant_t& asBase64, const variant_t& bufferDepth);
+	bool stopPushConsumer();
+	bool isPushConsumerRunning();
+	void pushConsumerLoop();
+	// Returns true and sets msg_err if the push consumer owns the consumer.
+	bool pushConsumerActive();
 
 	// consumer assignment (manual partition assignment)
 	bool assign(const variant_t& jsonTopicPartitions);

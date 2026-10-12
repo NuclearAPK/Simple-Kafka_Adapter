@@ -442,6 +442,10 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"ReadMessage", L"ПрочитатьСообщение", this, &SimpleKafka1C::getMessage);
 	AddMethod(L"ConsumeBatch", L"ЧитатьПакетСообщений", this, &SimpleKafka1C::consumeBatch,
 		{ {0, 100}, {1, 1000}, {2, false} });
+	AddMethod(L"StartPushConsumer", L"ЗапуститьФоновоеЧтение", this, &SimpleKafka1C::startPushConsumer,
+		{ {0, 100}, {1, 1000}, {2, false}, {3, 100} });
+	AddMethod(L"StopPushConsumer", L"ОстановитьФоновоеЧтение", this, &SimpleKafka1C::stopPushConsumer);
+	AddMethod(L"IsPushConsumerRunning", L"ФоновоеЧтениеЗапущено", this, &SimpleKafka1C::isPushConsumerRunning);
 	AddMethod(L"GetMessageData", L"ПолучитьДанныеСообщения", this, &SimpleKafka1C::getMessageData, { {0, false} });
 	AddMethod(L"GetMessageKey", L"ПолучитьКлючСообщения", this, &SimpleKafka1C::getMessageKey);
 	AddMethod(L"GetMessageHeaders", L"ПолучитьЗаголовкиСообщения", this, &SimpleKafka1C::getMessageHeaders);
@@ -559,10 +563,17 @@ SimpleKafka1C::SimpleKafka1C()
 #endif
 }
 
+void SimpleKafka1C::Done()
+{
+	stopPushConsumer();
+}
+
 SimpleKafka1C::~SimpleKafka1C()
 {
 	clearMessageMetadata();
 
+	// Must finish before the consumer is closed: the worker thread uses hConsumer.
+	stopPushConsumer();
 	stopConsumer();
 	stopProducer();
 

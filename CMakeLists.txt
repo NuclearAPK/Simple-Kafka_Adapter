@@ -38,6 +38,7 @@ set(SOURCE_FILES
     src/utils.h
     src/producer_methods.cpp
     src/consumer_methods.cpp
+    src/push_consumer.cpp
     src/admin_topics.cpp
     src/admin_metadata.cpp
     src/admin_groups.cpp

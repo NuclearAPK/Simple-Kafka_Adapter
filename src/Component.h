@@ -24,6 +24,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <variant>
 #include <vector>
@@ -94,6 +95,10 @@ protected:
 
     bool ExternalEvent(const std::string &src, const std::string &msg, const std::string &data);
 
+    // Thread-safe variant for worker threads: converts strings without shared static
+    // state and passes stack buffers instead of IMemoryManager allocations.
+    bool ExternalEventFromThread(const std::string &src, const std::string &msg, const std::string &data);
+
     bool SetEventBufferDepth(long depth);
 
     long GetEventBufferDepth();
@@ -128,6 +133,10 @@ private:
 
     static std::u16string toUTF16String(std::wstring_view src);
 
+    // Stateless UTF-8 -> UTF-16 decoder, safe to call from any thread.
+    // Invalid sequences are replaced with U+FFFD.
+    static std::u16string utf8ToUtf16Lenient(std::string_view src);
+
     void storeVariable(const std::string &src, tVariant &dst);
 
     void storeVariable(const std::string &src, WCHAR_T **dst);
@@ -147,6 +156,7 @@ private:
     std::u16string m_userLang;
     IAddInDefBase *connection;
     IMemoryManager *memory_manager;
+    std::mutex external_event_mutex;
     std::vector<PropertyMeta> properties_meta;
     std::vector<MethodMeta> methods_meta;
 

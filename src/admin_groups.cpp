@@ -1043,6 +1043,11 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 
 bool SimpleKafka1C::assign(const variant_t& jsonTopicPartitions)
 {
+	if (pushConsumerActive())
+	{
+		return false;
+	}
+
 	if (!hConsumer)
 	{
 		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
@@ -1186,6 +1191,11 @@ std::string SimpleKafka1C::getAssignment()
 
 bool SimpleKafka1C::unassign()
 {
+	if (pushConsumerActive())
+	{
+		return false;
+	}
+
 	if (!hConsumer)
 	{
 		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
