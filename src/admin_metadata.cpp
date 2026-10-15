@@ -67,7 +67,10 @@ std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 		boost::property_tree::ptree jsonObj;
 		boost::property_tree::ptree brokersChildren;
 
-		jsonObj.put("cluster_id", metadata->orig_broker_id());
+		// Real cluster id (cached by the metadata request above); empty if the broker
+		// did not return one. orig_broker_id is the broker that answered the request.
+		jsonObj.put("cluster_id", producer->clusterid(5000));
+		jsonObj.put("orig_broker_id", metadata->orig_broker_id());
 		jsonObj.put("brokers_count", metadata->brokers()->size());
 		jsonObj.put("topics_count", metadata->topics()->size());
 

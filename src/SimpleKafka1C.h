@@ -32,7 +32,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.10.0";
+	static constexpr char Version[] = u8"1.10.1";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -238,6 +238,9 @@ private:
 	bool setReadingPosition(const variant_t &topicName, const variant_t &offset, const variant_t &partition, const variant_t &brokers);
 	bool setReadingPositions(const variant_t& jsonTopicPartitions, const variant_t& brokers);
 	bool stopConsumer();
+	bool pauseConsumption(const variant_t& topicName, const variant_t& partition);
+	bool resumeConsumption(const variant_t& topicName, const variant_t& partition);
+	bool setConsumptionPaused(const std::string& topic, int32_t partition, bool pause);
 	bool setWaitingTimeout(const variant_t &timeout);
 	bool setProducerFlushTimeout(const variant_t &timeout);
 	bool setConsumerCloseTimeout(const variant_t &timeout);
@@ -337,6 +340,7 @@ private:
 	std::string getConsumerGroupOffsets(const variant_t& brokers, const variant_t& times, const variant_t& timeout);
 	bool createTopic(const variant_t& brokers, const variant_t& topicName, const variant_t& partition, const variant_t& replication_factor);
 	bool deleteTopic(const variant_t& brokers, const variant_t& topicName);
+	bool createPartitions(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionCount, const variant_t& timeout);
 	bool deleteRecords(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionsJson, const variant_t& timeout);
 	std::string getTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& timeout);
 	bool setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout);
@@ -490,10 +494,18 @@ private:
 		// деструктор компоненты) и фоновый поток librdkafka (rebalance_cb). Без защиты
 		// возможны гонка на векторе и двойное освобождение TopicPartition.
 		std::mutex offsetsMtx;
+		// Partitions paused by PauseConsumption (topic, partition), also guarded by offsetsMtx.
+		// Re-paused after every assignment, so the pause survives a rebalance.
+		std::set<std::pair<std::string, int32_t>> paused;
+		// Log file settings and async error slot of the owner (errors of assign/unassign)
+		const clEventCb* events = nullptr;
 
 		void rebalance_cb(RdKafka::KafkaConsumer* consumer,
 			RdKafka::ErrorCode err,
 			std::vector<RdKafka::TopicPartition *> &partitions);
+
+	private:
+		void reportError(const std::string& error) const;
 	};
 
 		std::vector<KafkaSettings> settings;

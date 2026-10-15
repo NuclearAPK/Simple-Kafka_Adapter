@@ -236,6 +236,99 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	return success;
 }
 
+bool SimpleKafka1C::createPartitions(const variant_t& brokers, const variant_t& topicName, const variant_t& partitionCount, const variant_t& timeout)
+{
+	char errstr[512];
+
+	std::string tBrokers = std::get<std::string>(brokers);
+	std::string tTopicName = std::get<std::string>(topicName);
+	int32_t tCount = std::get<int32_t>(partitionCount);
+	int32_t tTimeout = std::get<int32_t>(timeout);
+
+	if (!isValidBrokerList(tBrokers, msg_err))
+		return false;
+	if (!isValidTopicName(tTopicName, msg_err))
+		return false;
+	if (tCount < 1)
+	{
+		msg_err = "Partition count must be greater than 0 (new total number of partitions)";
+		return false;
+	}
+
+	AdminClientScope admin(this, tBrokers, settings, RD_KAFKA_PRODUCER);
+	if (!admin.isValid())
+	{
+		msg_err = admin.error();
+		return false;
+	}
+
+	// new_total_cnt is the resulting number of partitions, not the increment
+	rd_kafka_NewPartitions_t* newp = rd_kafka_NewPartitions_new(tTopicName.c_str(),
+		static_cast<size_t>(tCount), errstr, sizeof(errstr));
+	if (!newp)
+	{
+		msg_err = "Partitions description creation error: " + std::string(errstr);
+		return false;
+	}
+
+	// CreatePartitions supports operation_timeout: the broker waits for the partitions to be created
+	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_CREATEPARTITIONS);
+	if (rd_kafka_AdminOptions_set_operation_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR ||
+		rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+	{
+		msg_err = errstr;
+		rd_kafka_AdminOptions_destroy(options);
+		rd_kafka_NewPartitions_destroy(newp);
+		return false;
+	}
+
+	rd_kafka_NewPartitions_t* newp_arr[1] = { newp };
+	rd_kafka_CreatePartitions(admin.get(), newp_arr, 1, options, admin.queue());
+
+	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+
+	bool success = false;
+	if (rkev)
+	{
+		if (rd_kafka_event_error(rkev))
+		{
+			msg_err = rd_kafka_event_error_string(rkev);
+		}
+		else
+		{
+			const rd_kafka_CreatePartitions_result_t* res = rd_kafka_event_CreatePartitions_result(rkev);
+			size_t res_cnt = 0;
+			const rd_kafka_topic_result_t** terr = res ? rd_kafka_CreatePartitions_result_topics(res, &res_cnt) : nullptr;
+
+			if (res_cnt > 0 && terr[0])
+			{
+				if (rd_kafka_topic_result_error(terr[0]) != RD_KAFKA_RESP_ERR_NO_ERROR)
+				{
+					const char* text = rd_kafka_topic_result_error_string(terr[0]);
+					msg_err = text ? text : rd_kafka_err2str(rd_kafka_topic_result_error(terr[0]));
+				}
+				else
+				{
+					success = true;
+				}
+			}
+			else
+			{
+				msg_err = "Empty CreatePartitions result";
+			}
+		}
+		rd_kafka_event_destroy(rkev);
+	}
+	else
+	{
+		msg_err = "Response timeout";
+	}
+
+	rd_kafka_AdminOptions_destroy(options);
+	rd_kafka_NewPartitions_destroy(newp);
+	return success;
+}
+
 bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topicName)
 {
 	char errstr[512];
@@ -616,10 +709,133 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 	return result;
 }
 
+namespace
+{
+	// Fills the resource with incremental operations from a JSON object:
+	// a scalar value is SET, null is DELETE (revert to the broker default).
+	// Keys missing from the JSON are left unchanged by the broker.
+	bool addIncrementalConfigs(rd_kafka_ConfigResource_t* resource, const std::string& configJson, std::string& error)
+	{
+		try
+		{
+			const boost::json::value parsed = boost::json::parse(configJson);
+			if (!parsed.is_object())
+			{
+				error = "Config JSON must be an object";
+				return false;
+			}
+
+			for (const auto& kv : parsed.as_object())
+			{
+				const std::string key(kv.key());
+				const boost::json::value& v = kv.value();
+				rd_kafka_AlterConfigOpType_t op = RD_KAFKA_ALTER_CONFIG_OP_TYPE_SET;
+				std::string value;
+
+				if (v.is_null())
+					op = RD_KAFKA_ALTER_CONFIG_OP_TYPE_DELETE;
+				else if (v.is_string())
+					value = v.as_string().c_str();
+				else if (v.is_int64())
+					value = std::to_string(v.as_int64());
+				else if (v.is_uint64())
+					value = std::to_string(v.as_uint64());
+				else if (v.is_bool())
+					value = v.as_bool() ? "true" : "false";
+				else if (v.is_double())
+					value = std::to_string(v.as_double());
+				else
+				{
+					error = "Unsupported value type for config \"" + key +
+						"\": expected string, number, boolean or null";
+					return false;
+				}
+
+				rd_kafka_error_t* err = rd_kafka_ConfigResource_add_incremental_config(
+					resource, key.c_str(), op, op == RD_KAFKA_ALTER_CONFIG_OP_TYPE_DELETE ? nullptr : value.c_str());
+				if (err)
+				{
+					error = "Config \"" + key + "\": " + rd_kafka_error_string(err);
+					rd_kafka_error_destroy(err);
+					return false;
+				}
+			}
+		}
+		catch (std::exception const& ex)
+		{
+			error = "JSON parsing error: " + std::string(ex.what());
+			return false;
+		}
+		return true;
+	}
+
+	// Sends one resource to IncrementalAlterConfigs and waits for its result.
+	bool incrementalAlterConfigs(rd_kafka_t* rk, rd_kafka_queue_t* queue, rd_kafka_ConfigResource_t* resource,
+		int32_t timeoutMs, std::string& error)
+	{
+		char errstr[512];
+
+		rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(rk, RD_KAFKA_ADMIN_OP_INCREMENTALALTERCONFIGS);
+		// IncrementalAlterConfigs supports only request_timeout (operation_timeout is disabled for this API)
+		if (rd_kafka_AdminOptions_set_request_timeout(options, timeoutMs, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
+		{
+			error = errstr;
+			rd_kafka_AdminOptions_destroy(options);
+			return false;
+		}
+
+		rd_kafka_ConfigResource_t* config_arr[1] = { resource };
+		rd_kafka_IncrementalAlterConfigs(rk, config_arr, 1, options, queue);
+
+		rd_kafka_event_t* rkev = rd_kafka_queue_poll(queue, timeoutMs + 2000);
+
+		bool success = false;
+		if (rkev)
+		{
+			if (rd_kafka_event_error(rkev))
+			{
+				error = rd_kafka_event_error_string(rkev);
+			}
+			else
+			{
+				const rd_kafka_IncrementalAlterConfigs_result_t* res = rd_kafka_event_IncrementalAlterConfigs_result(rkev);
+				if (res)
+				{
+					size_t res_cnt = 0;
+					const rd_kafka_ConfigResource_t** resources =
+						rd_kafka_IncrementalAlterConfigs_result_resources(res, &res_cnt);
+
+					if (res_cnt > 0)
+					{
+						if (rd_kafka_ConfigResource_error(resources[0]) != RD_KAFKA_RESP_ERR_NO_ERROR)
+							error = rd_kafka_ConfigResource_error_string(resources[0]);
+						else
+							success = true;
+					}
+					else
+					{
+						error = "Empty IncrementalAlterConfigs result";
+					}
+				}
+				else
+				{
+					error = "Unexpected admin event: " + std::string(rd_kafka_event_name(rkev));
+				}
+			}
+			rd_kafka_event_destroy(rkev);
+		}
+		else
+		{
+			error = "Response timeout";
+		}
+
+		rd_kafka_AdminOptions_destroy(options);
+		return success;
+	}
+}
+
 bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& topicName, const variant_t& configJson, const variant_t& timeout)
 {
-	char errstr[512];
-
 	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	std::string tConfigJson = std::get<std::string>(configJson);
@@ -647,111 +863,15 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 		return false;
 	}
 
-	// создаем ресурс конфигурации для топика
+	// Incremental update: only the keys from the JSON change, null reverts a key to the default
+	// Format: {"retention.ms": "86400000", "max.message.bytes": null}
 	rd_kafka_ConfigResource_t* config_resource = rd_kafka_ConfigResource_new(
 		RD_KAFKA_RESOURCE_TOPIC, tTopicName.c_str());
 
-	// парсим JSON с настройками
-	// Формат: {"retention.ms": "86400000", "cleanup.policy": "delete"}
-	try
-	{
-		boost::json::value parsed = boost::json::parse(tConfigJson);
-		boost::json::object obj = parsed.as_object();
+	bool success = addIncrementalConfigs(config_resource, tConfigJson, msg_err)
+		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err);
 
-		for (auto& kv : obj)
-		{
-			std::string key = kv.key();
-			std::string value;
-
-			if (kv.value().is_string())
-			{
-				value = kv.value().as_string();
-			}
-			else if (kv.value().is_int64())
-			{
-				value = std::to_string(kv.value().as_int64());
-			}
-			else if (kv.value().is_bool())
-			{
-				value = kv.value().as_bool() ? "true" : "false";
-			}
-			else if (kv.value().is_double())
-			{
-				value = std::to_string(kv.value().as_double());
-			}
-			else
-			{
-				continue;
-			}
-
-			rd_kafka_ConfigResource_set_config(config_resource, key.c_str(), value.c_str());
-		}
-	}
-	catch (std::exception const& ex)
-	{
-		msg_err = "JSON parsing error: " + std::string(ex.what());
-		rd_kafka_ConfigResource_destroy(config_resource);
-		return false;
-	}
-
-	// опции операции
-	rd_kafka_AdminOptions_t* options = rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	// AlterConfigs supports only request_timeout (operation_timeout is disabled for this API)
-	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
-	{
-		msg_err = errstr;
-		rd_kafka_AdminOptions_destroy(options);
-		rd_kafka_ConfigResource_destroy(config_resource);
-		return false;
-	}
-
-	// выполняем изменение конфигурации
-	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
-	rd_kafka_AlterConfigs(admin.get(), config_arr, 1, options, admin.queue());
-
-	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
-
-	bool success = false;
-	if (rkev)
-	{
-		if (rd_kafka_event_error(rkev))
-		{
-			msg_err = rd_kafka_event_error_string(rkev);
-		}
-		else
-		{
-			const rd_kafka_AlterConfigs_result_t* res = rd_kafka_event_AlterConfigs_result(rkev);
-			if (res)
-			{
-				size_t res_cnt;
-				const rd_kafka_ConfigResource_t** resources = rd_kafka_AlterConfigs_result_resources(res, &res_cnt);
-
-				if (res_cnt > 0)
-				{
-					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
-					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
-					{
-						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
-					}
-					else
-					{
-						success = true;
-					}
-				}
-			}
-		}
-		rd_kafka_event_destroy(rkev);
-	}
-	else
-	{
-		msg_err = "Response timeout";
-	}
-
-	// очистка ресурсов
-	rd_kafka_AdminOptions_destroy(options);
 	rd_kafka_ConfigResource_destroy(config_resource);
-
 	return success;
 }
 
@@ -885,8 +1005,6 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 
 bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& brokerId, const variant_t& configJson, const variant_t& timeout)
 {
-	char errstr[512];
-
 	std::string tBrokers = std::get<std::string>(brokers);
 	int32_t tBrokerId = std::get<int32_t>(brokerId);
 	std::string tConfigJson = std::get<std::string>(configJson);
@@ -909,87 +1027,9 @@ bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& b
 	rd_kafka_ConfigResource_t* config_resource =
 		rd_kafka_ConfigResource_new(RD_KAFKA_RESOURCE_BROKER, brokerIdStr.c_str());
 
-	try
-	{
-		boost::json::value parsed = boost::json::parse(tConfigJson);
-		boost::json::object obj = parsed.as_object();
+	bool success = addIncrementalConfigs(config_resource, tConfigJson, msg_err)
+		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err);
 
-		for (auto& kv : obj)
-		{
-			std::string key = kv.key();
-			std::string value;
-
-			if (kv.value().is_string())
-				value = kv.value().as_string();
-			else if (kv.value().is_int64())
-				value = std::to_string(kv.value().as_int64());
-			else if (kv.value().is_bool())
-				value = kv.value().as_bool() ? "true" : "false";
-			else if (kv.value().is_double())
-				value = std::to_string(kv.value().as_double());
-			else
-				continue;
-
-			rd_kafka_ConfigResource_set_config(config_resource, key.c_str(), value.c_str());
-		}
-	}
-	catch (std::exception const& ex)
-	{
-		msg_err = "JSON parsing error: " + std::string(ex.what());
-		rd_kafka_ConfigResource_destroy(config_resource);
-		return false;
-	}
-
-	rd_kafka_AdminOptions_t* options =
-		rd_kafka_AdminOptions_new(admin.get(), RD_KAFKA_ADMIN_OP_ALTERCONFIGS);
-	// AlterConfigs supports only request_timeout (operation_timeout is disabled for this API)
-	if (rd_kafka_AdminOptions_set_request_timeout(options, tTimeout, errstr, sizeof(errstr)) != RD_KAFKA_RESP_ERR_NO_ERROR)
-	{
-		msg_err = errstr;
-		rd_kafka_AdminOptions_destroy(options);
-		rd_kafka_ConfigResource_destroy(config_resource);
-		return false;
-	}
-
-	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
-	rd_kafka_AlterConfigs(admin.get(), config_arr, 1, options, admin.queue());
-
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
-
-	bool success = false;
-	if (rkev)
-	{
-		if (rd_kafka_event_error(rkev))
-		{
-			msg_err = rd_kafka_event_error_string(rkev);
-		}
-		else
-		{
-			const rd_kafka_AlterConfigs_result_t* res = rd_kafka_event_AlterConfigs_result(rkev);
-			if (res)
-			{
-				size_t res_cnt;
-				const rd_kafka_ConfigResource_t** resources =
-					rd_kafka_AlterConfigs_result_resources(res, &res_cnt);
-
-				if (res_cnt > 0)
-				{
-					rd_kafka_resp_err_t err = rd_kafka_ConfigResource_error(resources[0]);
-					if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
-						msg_err = rd_kafka_ConfigResource_error_string(resources[0]);
-					else
-						success = true;
-				}
-			}
-		}
-		rd_kafka_event_destroy(rkev);
-	}
-	else
-	{
-		msg_err = "Response timeout";
-	}
-
-	rd_kafka_AdminOptions_destroy(options);
 	rd_kafka_ConfigResource_destroy(config_resource);
 	return success;
 }

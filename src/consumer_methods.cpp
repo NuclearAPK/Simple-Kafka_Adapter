@@ -77,10 +77,10 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	// обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
 	conf->set("event_cb", &cl_event_cb, msg_err);
 
-	if (cl_rebalance_cb.offsets.size() > 0)
-	{
-		conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
-	}
+	// The handler is always installed: it applies reading positions, and with
+	// cooperative-sticky librdkafka 2.16.0 skips LeaveGroup on close() when the
+	// application has no rebalance_cb (partitions then idle until session.timeout.ms)
+	conf->set("rebalance_cb", &cl_rebalance_cb, msg_err);
 
 	if (eventFile.is_open()) eventFile << currentDateTime() << " Info: initConsumer. brokers-" << tBrokers << std::endl;
 
@@ -1092,6 +1092,11 @@ bool SimpleKafka1C::stopConsumer()
 		delete hConsumer;
 		hConsumer = nullptr;
 
+		{
+			std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+			cl_rebalance_cb.paused.clear();
+		}
+
 		if (closeErr != RdKafka::ERR_NO_ERROR)
 		{
 			msg_err = "Consumer close error: " + RdKafka::err2str(closeErr);
@@ -1099,6 +1104,110 @@ bool SimpleKafka1C::stopConsumer()
 		}
 	}
 	return true;
+}
+
+bool SimpleKafka1C::pauseConsumption(const variant_t& topicName, const variant_t& partition)
+{
+	return setConsumptionPaused(std::get<std::string>(topicName), std::get<int32_t>(partition), true);
+}
+
+bool SimpleKafka1C::resumeConsumption(const variant_t& topicName, const variant_t& partition)
+{
+	return setConsumptionPaused(std::get<std::string>(topicName), std::get<int32_t>(partition), false);
+}
+
+// Pauses or resumes the assigned partitions in scope: all ("" topic), all of a topic
+// (partition -1) or one partition. The consumer stays in the group; librdkafka drops
+// messages of a paused partition that were already fetched and refetches them on resume.
+bool SimpleKafka1C::setConsumptionPaused(const std::string& topic, int32_t partition, bool pause)
+{
+	if (hConsumer == nullptr)
+	{
+		msg_err = "Consumer is not initialized";
+		return false;
+	}
+	if (topic.empty() && partition >= 0)
+	{
+		msg_err = "Topic is required when a partition is specified";
+		return false;
+	}
+
+	std::vector<RdKafka::TopicPartition*> assignment;
+	RdKafka::ErrorCode err = hConsumer->assignment(assignment);
+	if (err != RdKafka::ERR_NO_ERROR)
+	{
+		msg_err = "Cannot get the consumer assignment: " + RdKafka::err2str(err);
+		RdKafka::TopicPartition::destroy(assignment);
+		return false;
+	}
+
+	std::vector<RdKafka::TopicPartition*> scope;
+	for (auto* tp : assignment)
+	{
+		if ((topic.empty() || tp->topic() == topic) && (partition < 0 || tp->partition() == partition))
+			scope.push_back(tp);
+	}
+
+	bool success = false;
+	if (scope.empty())
+	{
+		if (partition >= 0)
+			msg_err = "Partition " + topic + " [" + std::to_string(partition) + "] is not assigned to this consumer";
+		else if (!topic.empty())
+			msg_err = "No partitions of topic " + topic + " are assigned to this consumer";
+		else
+			msg_err = "No partitions are assigned to this consumer";
+	}
+	else
+	{
+		// Held across the call so a concurrent rebalance sees a consistent paused set
+		std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+
+		err = pause ? hConsumer->pause(scope) : hConsumer->resume(scope);
+		if (err != RdKafka::ERR_NO_ERROR)
+		{
+			msg_err = std::string(pause ? "Pause" : "Resume") + " failed: " + RdKafka::err2str(err);
+		}
+		else
+		{
+			std::string errors;
+			for (auto* tp : scope)
+			{
+				if (tp->err() != RdKafka::ERR_NO_ERROR)
+				{
+					errors += (errors.empty() ? "" : "; ") + tp->topic() + " [" + std::to_string(tp->partition()) + "]: "
+						+ RdKafka::err2str(tp->err());
+					continue;
+				}
+				if (pause)
+					cl_rebalance_cb.paused.insert({ tp->topic(), tp->partition() });
+				else
+					cl_rebalance_cb.paused.erase({ tp->topic(), tp->partition() });
+			}
+
+			if (errors.empty())
+				success = true;
+			else
+				msg_err = std::string(pause ? "Pause" : "Resume") + " failed for " + errors;
+		}
+	}
+
+	// Resume of a whole scope also forgets paused partitions that are not assigned right now
+	if (!pause && partition < 0)
+	{
+		std::lock_guard<std::mutex> lk(cl_rebalance_cb.offsetsMtx);
+		auto& pausedSet = cl_rebalance_cb.paused;
+		for (auto it = pausedSet.begin(); it != pausedSet.end();)
+		{
+			if (topic.empty() || it->first == topic)
+				it = pausedSet.erase(it);
+			else
+				++it;
+		}
+	}
+
+	RdKafka::TopicPartition::destroy(assignment);
+	return success;
 }
 
 void SimpleKafka1C::clearMessageMetadata()

@@ -320,45 +320,123 @@ void SimpleKafka1C::clDeliveryReportCb::dr_cb(RdKafka::Message& message)
 
 void SimpleKafka1C::clRebalanceCb::rebalance_cb(RdKafka::KafkaConsumer* consumer,
 	RdKafka::ErrorCode err,
-	std::vector<RdKafka::TopicPartition*>& partitions) 
-	{
+	std::vector<RdKafka::TopicPartition*>& partitions)
+{
 	std::lock_guard<std::mutex> lk(offsetsMtx);
-	if (err == RdKafka::ERR__ASSIGN_PARTITIONS) 
+
+	// With a rebalance_cb the application must apply every assignment change itself.
+	// COOPERATIVE (cooperative-sticky, group.protocol=consumer) passes only the delta
+	// and requires incremental_assign/incremental_unassign; EAGER requires assign/unassign.
+	const bool cooperative = consumer->rebalance_protocol() == "COOPERATIVE";
+
+	if (err == RdKafka::ERR__ASSIGN_PARTITIONS)
 	{
-		if (offsets.size()) 
+		// Reading positions are applied once, on the first non-empty assignment
+		if (!offsets.empty() && !partitions.empty())
 		{
-
-			for (unsigned int i = 0; i < partitions.size(); i++) 
+			for (auto* partition : partitions)
 			{
-				for (unsigned int j = 0; j < offsets.size(); j++)
+				for (auto* offset : offsets)
 				{
-					if (partitions[i]->topic() == offsets[j]->topic() &&
-						partitions[i]->partition() == offsets[j]->partition()) {
-
-						partitions[i]->set_offset(offsets[j]->offset());
+					if (partition->topic() == offset->topic() &&
+						partition->partition() == offset->partition())
+					{
+						partition->set_offset(offset->offset());
 						break;
 					}
 				}
 			}
 
-			consumer->assign(partitions);
-
-			for (auto offset : offsets)
+			for (auto* offset : offsets)
 			{
 				delete offset;
 			}
-
 			offsets.clear();
 		}
-	}
-	else {
-		consumer->unassign();
 
-		for (auto offset : offsets)
+		bool assigned = true;
+		if (cooperative)
 		{
-			delete offset;
+			if (RdKafka::Error* error = consumer->incremental_assign(partitions))
+			{
+				reportError("Rebalance incremental_assign failed: " + error->str());
+				delete error;
+				assigned = false;
+			}
 		}
-		offsets.clear();
+		else
+		{
+			RdKafka::ErrorCode assignErr = consumer->assign(partitions);
+			if (assignErr != RdKafka::ERR_NO_ERROR)
+			{
+				reportError("Rebalance assign failed: " + RdKafka::err2str(assignErr));
+				assigned = false;
+			}
+		}
+
+		// Keep the application pause on partitions that came (back) to this consumer
+		if (assigned && !paused.empty())
+		{
+			std::vector<RdKafka::TopicPartition*> toPause;
+			for (auto* partition : partitions)
+			{
+				if (paused.count({ partition->topic(), partition->partition() }))
+					toPause.push_back(partition);
+			}
+			if (!toPause.empty())
+			{
+				RdKafka::ErrorCode pauseErr = consumer->pause(toPause);
+				if (pauseErr != RdKafka::ERR_NO_ERROR)
+					reportError("Rebalance pause failed: " + RdKafka::err2str(pauseErr));
+			}
+		}
+	}
+	else
+	{
+		// ERR__REVOKE_PARTITIONS or a rebalance error: drop the partitions
+		if (err != RdKafka::ERR__REVOKE_PARTITIONS)
+			reportError("Rebalance error: " + RdKafka::err2str(err));
+
+		if (cooperative)
+		{
+			if (RdKafka::Error* error = consumer->incremental_unassign(partitions))
+			{
+				reportError("Rebalance incremental_unassign failed: " + error->str());
+				delete error;
+			}
+		}
+		else
+		{
+			RdKafka::ErrorCode unassignErr = consumer->unassign();
+			if (unassignErr != RdKafka::ERR_NO_ERROR)
+				reportError("Rebalance unassign failed: " + RdKafka::err2str(unassignErr));
+		}
+	}
+}
+
+void SimpleKafka1C::clRebalanceCb::reportError(const std::string& error) const
+{
+	if (!events)
+		return;
+
+	if (events->asyncError)
+	{
+		std::lock_guard<std::mutex> lk(events->asyncError->mtx);
+		events->asyncError->lastError = error;
+	}
+
+	if (!events->logDir.empty())
+	{
+		std::string bufname = events->consumerLogName;
+		if (!events->clientid.empty())
+		{
+			bufname = bufname + events->clientid + "_";
+		}
+
+		std::ofstream eventFile(events->logDir + bufname + std::to_string(events->pid) + "_" +
+			currentDateTime(events->formatLogFiles.c_str()) + ".log", std::ios_base::app);
+		if (eventFile.is_open())
+			eventFile << currentDateTime() << "ERROR: " << error << std::endl;
 	}
 }
 
@@ -393,6 +471,7 @@ SimpleKafka1C::SimpleKafka1C()
 	// Подключаем общий потокобезопасный слот асинхронных ошибок к колбэкам
 	cl_event_cb.asyncError = asyncErrorState;
 	cl_dr_cb.asyncError = asyncErrorState;
+	cl_rebalance_cb.events = &cl_event_cb;
 
 	clearMessageMetadata();
 
@@ -434,6 +513,8 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"SetReadingPosition", L"УстановитьПозициюЧтения", this, &SimpleKafka1C::setReadingPosition, { {2, 0}, {3, std::string("")} });
 	AddMethod(L"SetReadingPositions", L"УстановитьПозицииЧтения", this, &SimpleKafka1C::setReadingPositions, { {1, std::string("")} }); // experimental
 	AddMethod(L"StopConsumer", L"ОстановитьКонсьюмера", this, &SimpleKafka1C::stopConsumer);
+	AddMethod(L"PauseConsumption", L"ПриостановитьЧтение", this, &SimpleKafka1C::pauseConsumption, { {0, std::string("")}, {1, -1} });
+	AddMethod(L"ResumeConsumption", L"ВозобновитьЧтение", this, &SimpleKafka1C::resumeConsumption, { {0, std::string("")}, {1, -1} });
 	AddMethod(L"SetWaitingTimeout", L"УстановитьТаймаутОжидания", this, &SimpleKafka1C::setWaitingTimeout);
 	AddMethod(L"SetProducerFlushTimeout", L"УстановитьТаймаутОчисткиПродюсера", this, &SimpleKafka1C::setProducerFlushTimeout);
 	AddMethod(L"SetConsumerCloseTimeout", L"УстановитьТаймаутОчисткиКонсьюмера", this, &SimpleKafka1C::setConsumerCloseTimeout);
@@ -476,6 +557,7 @@ SimpleKafka1C::SimpleKafka1C()
 	AddMethod(L"getConsumerGroupOffsets", L"ПолучитьСмещенияГруппыКонсьюмеров", this, &SimpleKafka1C::getConsumerGroupOffsets, { {1, std::string("")}, {2, 5000}});
 	AddMethod(L"CreateTopic", L"СоздатьТопик", this, &SimpleKafka1C::createTopic);
 	AddMethod(L"DeleteTopic", L"УдалитьТопик", this, &SimpleKafka1C::deleteTopic);
+	AddMethod(L"CreatePartitions", L"УвеличитьЧислоПартиций", this, &SimpleKafka1C::createPartitions, { {3, 10000} });
 	AddMethod(L"DeleteRecords", L"УдалитьЗаписи", this, &SimpleKafka1C::deleteRecords, { {3, 10000} });
 	AddMethod(L"GetTopicConfig", L"ПолучитьНастройкиТопика", this, &SimpleKafka1C::getTopicConfig, { {2, 5000} });
 	AddMethod(L"SetTopicConfig", L"УстановитьНастройкиТопика", this, &SimpleKafka1C::setTopicConfig, { {3, 10000} });

@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <set>
 #include <sstream>
 #include <thread>
@@ -187,7 +188,7 @@ namespace
 	// separateBatches: wait for each delivery, so every message is its own record batch
 	// (the broker hands share consumers whole record batches)
 	void produceMessages(const Context& ctx, const std::string& topic, int count, const std::string& prefix,
-		bool separateBatches = false)
+		bool separateBatches = false, int32_t partition = -1)
 	{
 		AddIn producer(*ctx.library);
 		ensure(producer, producer.callBool("ИнициализироватьПродюсера", {ctx.brokers}), "ИнициализироватьПродюсера");
@@ -195,7 +196,7 @@ namespace
 		for (int i = 0; i < count; ++i)
 		{
 			const Value r = producer.call(method,
-				{prefix + "-" + std::to_string(i), topic, int32_t{-1}, "key-" + std::to_string(i)});
+				{prefix + "-" + std::to_string(i), topic, partition, "key-" + std::to_string(i)});
 			if (std::get<int32_t>(r) == -1 || (separateBatches && std::get<int32_t>(r) != 2))
 			{
 				require(false, std::string(method) + ": " + producer.lastError());
@@ -802,6 +803,461 @@ namespace
 		c2.callBool("ОстановитьКонсьюмера");
 	}
 
+	//-------------------------------------------------------------------------------------
+	// Fixes 1.10.1 (specs/fixes-1.10.1.md)
+
+	// Text of a JSON scalar: property_tree writes numbers as strings, boost::json does not
+	std::string valueText(const boost::json::value& v)
+	{
+		return v.is_string() ? std::string(v.as_string()) : boost::json::serialize(v);
+	}
+
+	// name -> value from the "configs" array of ПолучитьНастройкиТопика / ПолучитьНастройкиБрокера
+	std::map<std::string, std::string> configValues(AddIn& c, const std::string& json)
+	{
+		if (json.empty())
+		{
+			require(false, "чтение настроек: " + c.lastError());
+		}
+		std::map<std::string, std::string> values;
+		// The parsed value must outlive the loop: a temporary in a range-for expression does not (C++17)
+		const boost::json::value root = boost::json::parse(json);
+		for (const auto& v : root.at("configs").as_array())
+		{
+			const auto& entry = v.as_object();
+			const auto& value = entry.at("value");
+			values[std::string(entry.at("name").as_string())] = value.is_string() ? std::string(value.as_string()) : boost::json::serialize(value);
+		}
+		return values;
+	}
+
+	std::map<std::string, std::string> topicConfig(Context& ctx, AddIn& c, const std::string& topic)
+	{
+		return configValues(c, c.callString("ПолучитьНастройкиТопика", {ctx.brokers, topic}));
+	}
+
+	void fix1to3(Context& ctx)
+	{
+		const std::string topic = uniqueName(ctx, "cfg-h");
+		createTopic(ctx, topic, 1);
+		AddIn c(*ctx.library);
+		const auto defaults = topicConfig(ctx, c, topic);
+
+		ensure(c, c.callBool("УстановитьНастройкиТопика", {ctx.brokers, topic, std::string(R"({"cleanup.policy": "compact"})")}),
+			"cleanup.policy=compact");
+		ensure(c, c.callBool("УстановитьНастройкиТопика", {ctx.brokers, topic, std::string(R"({"retention.ms": "86400000"})")}),
+			"retention.ms=86400000");
+		auto cfg = topicConfig(ctx, c, topic);
+		check(cfg["retention.ms"] == "86400000", "FIX-1: retention.ms = 86400000 (" + cfg["retention.ms"] + ")");
+		check(cfg["cleanup.policy"] == "compact", "FIX-1: cleanup.policy сохранила compact (" + cfg["cleanup.policy"] + ")");
+
+		expect(c, c.callBool("УстановитьНастройкиТопика", {ctx.brokers, topic, std::string(R"({"retention.ms": null})")}),
+			"FIX-2: retention.ms = null → Истина");
+		cfg = topicConfig(ctx, c, topic);
+		check(cfg["retention.ms"] == defaults.at("retention.ms"),
+			"FIX-2: retention.ms вернулась к умолчанию " + defaults.at("retention.ms") + " (" + cfg["retention.ms"] + ")");
+		check(cfg["cleanup.policy"] == "compact", "FIX-2: cleanup.policy не изменилась (" + cfg["cleanup.policy"] + ")");
+
+		check(!c.callBool("УстановитьНастройкиТопика", {ctx.brokers, topic, std::string(R"({"retention.ms": "1000", "segment.ms": [1]})")}),
+			"FIX-3: значение-массив → Ложь");
+		const std::string err = c.lastError();
+		check(contains(err, "segment.ms"), "FIX-3: ошибка называет ключ: " + err);
+		cfg = topicConfig(ctx, c, topic);
+		check(cfg["retention.ms"] == defaults.at("retention.ms") && cfg["cleanup.policy"] == "compact",
+			"FIX-3: настройки не изменились");
+	}
+
+	void fix4(Context& ctx)
+	{
+		AddIn c(*ctx.library);
+		const int32_t brokerId = 1;	// KAFKA_NODE_ID of docker/kafka-share
+		auto brokerConfig = [&]() {
+			return configValues(c, c.callString("ПолучитьНастройкиБрокера", {ctx.brokers, brokerId}));
+		};
+		const auto initial = brokerConfig();
+
+		ensure(c, c.callBool("УстановитьНастройкиБрокера", {ctx.brokers, brokerId, std::string(R"({"log.retention.ms": "7200000"})")}),
+			"log.retention.ms=7200000");
+		ensure(c, c.callBool("УстановитьНастройкиБрокера", {ctx.brokers, brokerId, std::string(R"({"log.roll.ms": "3600000"})")}),
+			"log.roll.ms=3600000");
+		auto cfg = brokerConfig();
+		check(cfg["log.roll.ms"] == "3600000", "FIX-4: log.roll.ms = 3600000 (" + cfg["log.roll.ms"] + ")");
+		check(cfg["log.retention.ms"] == "7200000", "FIX-4: log.retention.ms сохранила 7200000 (" + cfg["log.retention.ms"] + ")");
+
+		expect(c, c.callBool("УстановитьНастройкиБрокера", {ctx.brokers, brokerId, std::string(R"({"log.retention.ms": null, "log.roll.ms": null})")}),
+			"FIX-4: сброс обеих через null → Истина");
+		cfg = brokerConfig();
+		check(cfg["log.retention.ms"] == initial.at("log.retention.ms") && cfg["log.roll.ms"] == initial.at("log.roll.ms"),
+			"FIX-4: обе вернулись к исходным значениям (" + cfg["log.retention.ms"] + ", " + cfg["log.roll.ms"] + ")");
+	}
+
+	// Payloads read by one ЧитатьПакетСообщений call (short wait)
+	std::vector<boost::json::object> pollRegular(AddIn& c)
+	{
+		const std::string json = c.callString("ЧитатьПакетСообщений", {int32_t{100}, int32_t{500}});
+		if (json.empty())
+		{
+			require(false, "ЧитатьПакетСообщений: " + c.lastError());
+		}
+		std::vector<boost::json::object> got;
+		const boost::json::value root = boost::json::parse(json);
+		for (const auto& m : root.at("messages").as_array())
+		{
+			got.push_back(m.as_object());
+		}
+		return got;
+	}
+
+	// Polls the consumers in turn until `expected` distinct payloads with `prefix` arrive
+	std::set<std::string> collect(const std::vector<AddIn*>& consumers, const std::string& prefix, size_t expected,
+		int deadlineMs, std::vector<std::set<std::string>>* perConsumer = nullptr)
+	{
+		std::set<std::string> all;
+		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(deadlineMs);
+		while (all.size() < expected && std::chrono::steady_clock::now() < until)
+		{
+			for (size_t i = 0; i < consumers.size(); ++i)
+			{
+				for (const auto& m : pollRegular(*consumers[i]))
+				{
+					const std::string payload(m.at("message").as_string());
+					if (payload.rfind(prefix, 0) == 0)
+					{
+						all.insert(payload);
+						if (perConsumer) (*perConsumer)[i].insert(payload);
+					}
+				}
+			}
+		}
+		return all;
+	}
+
+	void setupRegular(AddIn& c, const std::string& group, const std::vector<std::pair<std::string, std::string>>& extra)
+	{
+		c.call("УстановитьПараметр", {std::string("group.id"), group});
+		c.call("УстановитьПараметр", {std::string("auto.offset.reset"), std::string("earliest")});
+		for (const auto& kv : extra)
+		{
+			c.call("УстановитьПараметр", {kv.first, kv.second});
+		}
+	}
+
+	// FIX-5…FIX-7: consumer A with a reading position keeps getting partitions on every rebalance
+	void rebalanceScenario(Context& ctx, const std::vector<std::pair<std::string, std::string>>& extra)
+	{
+		const std::string topic = uniqueName(ctx, "rb-h");
+		const std::string group = uniqueName(ctx, "cg-h");
+		createTopic(ctx, topic, 2);
+		produceMessages(ctx, topic, 4, "pre-p0", false, 0);
+		produceMessages(ctx, topic, 4, "pre-p1", false, 1);
+
+		AddIn a(*ctx.library);
+		setupRegular(a, group, extra);
+		// partition 0 starts at offset 2: pre-p0-0 and pre-p0-1 are skipped
+		ensure(a, a.callBool("УстановитьПозициюЧтения", {topic, int32_t{2}, int32_t{0}}), "A: УстановитьПозициюЧтения(p0, 2)");
+		ensure(a, a.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "A: ИнициализироватьКонсьюмера");
+		ensure(a, a.callBool("Подписаться", {topic}), "A: Подписаться");
+
+		const auto pre = collect({&a}, "pre-", 6, 30000);
+		check(pre.size() == 6 && !pre.count("pre-p0-0") && !pre.count("pre-p0-1"),
+			"A прочитал 6 сообщений, позиция p0=2 применилась (" + std::to_string(pre.size()) + ")");
+
+		AddIn b(*ctx.library);
+		setupRegular(b, group, extra);
+		ensure(b, b.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "B: ИнициализироватьКонсьюмера");
+		ensure(b, b.callBool("Подписаться", {topic}), "B: Подписаться");
+		// let the group rebalance while both members poll
+		collect({&a, &b}, "none-", 1, 8000);
+		produceMessages(ctx, topic, 4, "mid-p0", false, 0);
+		produceMessages(ctx, topic, 4, "mid-p1", false, 1);
+		std::vector<std::set<std::string>> perConsumer(2);
+		const auto mid = collect({&a, &b}, "mid-", 8, 30000, &perConsumer);
+		check(mid.size() == 8, "после входа B прочитаны все 8 новых сообщений (A " + std::to_string(perConsumer[0].size())
+			+ ", B " + std::to_string(perConsumer[1].size()) + ")");
+		check(!perConsumer[0].empty(), "A получает сообщения после ребалансировки");
+
+		// 8 s + 30 s is below session.timeout.ms (45 s): A gets B's partition only if B sent LeaveGroup
+		expect(b, b.callBool("ОстановитьКонсьюмера"), "B: ОстановитьКонсьюмера");
+		collect({&a}, "none-", 1, 8000);
+		produceMessages(ctx, topic, 4, "post-p0", false, 0);
+		produceMessages(ctx, topic, 4, "post-p1", false, 1);
+		const auto post = collect({&a}, "post-", 8, 30000);
+		check(post.size() == 8, "после выхода B консьюмер A читает обе партиции (" + std::to_string(post.size()) + " из 8)");
+
+		const std::string asyncErr = a.lastError();
+		check(!contains(asyncErr, "assign"), "нет ошибок назначения: " + asyncErr);
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void fix5(Context& ctx)
+	{
+		rebalanceScenario(ctx, {});
+	}
+
+	void fix6(Context& ctx)
+	{
+		rebalanceScenario(ctx, {{"partition.assignment.strategy", "cooperative-sticky"}});
+	}
+
+	void fix7(Context& ctx)
+	{
+		rebalanceScenario(ctx, {{"group.protocol", "consumer"}});
+	}
+
+	void fix8(Context& ctx)
+	{
+		char errstr[512];
+		rd_kafka_conf_t* conf = rd_kafka_conf_new();
+		rd_kafka_conf_set(conf, "bootstrap.servers", ctx.brokers.c_str(), errstr, sizeof(errstr));
+		rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_PRODUCER, conf, errstr, sizeof(errstr));
+		require(rk != nullptr, std::string("клиент librdkafka: ") + errstr);
+		char* id = rd_kafka_clusterid(rk, 5000);
+		const std::string expected = id ? id : "";
+		if (id) rd_kafka_mem_free(rk, id);
+		rd_kafka_destroy(rk);
+		require(!expected.empty(), "rd_kafka_clusterid вернул идентификатор кластера");
+
+		AddIn c(*ctx.library);
+		const std::string json = c.callString("ПолучитьИнформациюОКластере", {ctx.brokers});
+		require(!json.empty(), "ПолучитьИнформациюОКластере: " + c.lastError());
+		const auto root = boost::json::parse(json).as_object();
+		const std::string clusterId = root.contains("cluster_id") ? valueText(root.at("cluster_id")) : "";
+		check(clusterId == expected, "cluster_id = " + expected + " (получено " + clusterId + ")");
+		const std::string orig = root.contains("orig_broker_id") ? valueText(root.at("orig_broker_id")) : "";
+		check(orig == "1", "orig_broker_id = 1 (получено " + orig + ")");
+	}
+
+	//-------------------------------------------------------------------------------------
+	// specs/partitions-pause-1.10.1.md: CreatePartitions (CP-*), pause/resume (PR-*)
+
+	int partitionsCount(const Context& ctx, AddIn& c, const std::string& topic)
+	{
+		const std::string json = c.callString("ПолучитьМетаданныеТопика", {ctx.brokers, topic});
+		require(!json.empty(), "ПолучитьМетаданныеТопика: " + c.lastError());
+		const auto root = boost::json::parse(json).as_object();
+		return std::stoi(valueText(root.at("partitions_count")));
+	}
+
+	std::string createPartitionsCall(const Context& ctx, AddIn& c, const std::string& topic, int32_t count, bool& ok)
+	{
+		ok = c.callBool("УвеличитьЧислоПартиций", {ctx.brokers, topic, count});
+		return ok ? std::string() : c.lastError();
+	}
+
+	void cp1to3(Context& ctx)
+	{
+		const std::string topic = uniqueName(ctx, "cp-h");
+		createTopic(ctx, topic, 2);
+		AddIn c(*ctx.library);
+
+		bool ok = false;
+		std::string err = createPartitionsCall(ctx, c, topic, 4, ok);
+		require(ok, "CP-1: УвеличитьЧислоПартиций(4) → Истина" + (ok ? "" : ": " + err));
+		check(partitionsCount(ctx, c, topic) == 4, "CP-1: у топика 4 партиции");
+
+		produceMessages(ctx, topic, 1, "cp-p3", false, 3);
+		AddIn consumer(*ctx.library);
+		setupRegular(consumer, uniqueName(ctx, "cg-cp"), {});
+		ensure(consumer, consumer.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "ИнициализироватьКонсьюмера");
+		ensure(consumer, consumer.callBool("Подписаться", {topic}), "Подписаться");
+		const auto got = consumeRegular(consumer, 1, 30000);
+		check(got.size() == 1 && got[0].at("partition").to_number<int64_t>() == 3,
+			"CP-1: сообщение новой партиции 3 прочитано");
+		consumer.callBool("ОстановитьКонсьюмера");
+
+		err = createPartitionsCall(ctx, c, topic, 4, ok);
+		check(!ok && !err.empty(), "CP-2: то же число (4) → Ложь: " + err);
+		err = createPartitionsCall(ctx, c, topic, 3, ok);
+		check(!ok && !err.empty(), "CP-2: меньшее число (3) → Ложь: " + err);
+		check(partitionsCount(ctx, c, topic) == 4, "CP-2: партиций по-прежнему 4");
+
+		err = createPartitionsCall(ctx, c, topic, 0, ok);
+		check(!ok && !err.empty(), "CP-3: ЧислоПартиций = 0 → Ложь: " + err);
+		err = createPartitionsCall(ctx, c, uniqueName(ctx, "cp-missing"), 2, ok);
+		check(!ok && !err.empty(), "CP-3: несуществующий топик → Ложь: " + err);
+	}
+
+	// Payloads with `prefix`, duplicates kept. Stops at `expected`, then polls `extraMs`
+	// more to catch duplicates or messages that must not arrive.
+	std::vector<std::string> readPayloads(AddIn& c, const std::string& prefix, size_t expected, int deadlineMs, int extraMs = 1500)
+	{
+		std::vector<std::string> got;
+		auto poll = [&](std::chrono::steady_clock::time_point until, bool untilExpected) {
+			while (std::chrono::steady_clock::now() < until && !(untilExpected && got.size() >= expected))
+			{
+				for (const auto& m : pollRegular(c))
+				{
+					const std::string payload(m.at("message").as_string());
+					if (payload.rfind(prefix, 0) == 0) got.push_back(payload);
+				}
+			}
+		};
+		poll(std::chrono::steady_clock::now() + std::chrono::milliseconds(deadlineMs), true);
+		poll(std::chrono::steady_clock::now() + std::chrono::milliseconds(extraMs), false);
+		return got;
+	}
+
+	size_t countPrefix(const std::vector<std::string>& payloads, const std::string& prefix)
+	{
+		return static_cast<size_t>(std::count_if(payloads.begin(), payloads.end(),
+			[&](const std::string& p) { return p.rfind(prefix, 0) == 0; }));
+	}
+
+	bool distinct(const std::vector<std::string>& payloads)
+	{
+		return std::set<std::string>(payloads.begin(), payloads.end()).size() == payloads.size();
+	}
+
+	// Topic with `partitions` partitions, 2 "pre" messages per partition, and consumer `c`
+	// that has read them all (so every partition is assigned to it)
+	std::string prepareAssigned(Context& ctx, AddIn& c, int32_t partitions, const std::string& group,
+		const std::vector<std::pair<std::string, std::string>>& extra = {})
+	{
+		const std::string topic = uniqueName(ctx, "pr-h");
+		createTopic(ctx, topic, partitions);
+		for (int32_t p = 0; p < partitions; ++p)
+		{
+			produceMessages(ctx, topic, 2, "pre-p" + std::to_string(p), false, p);
+		}
+		setupRegular(c, group, extra);
+		ensure(c, c.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "ИнициализироватьКонсьюмера");
+		ensure(c, c.callBool("Подписаться", {topic}), "Подписаться");
+		const size_t expected = static_cast<size_t>(partitions) * 2;
+		require(collect({&c}, "pre-", expected, 30000).size() == expected, "консьюмер получил все партиции");
+		return topic;
+	}
+
+	void pr1(Context& ctx)
+	{
+		AddIn a(*ctx.library);
+		const std::string topic = prepareAssigned(ctx, a, 2, uniqueName(ctx, "cg-pr"));
+
+		ensure(a, a.callBool("ПриостановитьЧтение", {topic, int32_t{0}}), "ПриостановитьЧтение(p0)");
+		produceMessages(ctx, topic, 4, "a-p0", false, 0);
+		produceMessages(ctx, topic, 4, "a-p1", false, 1);
+		const auto paused = readPayloads(a, "a-", 4, 15000, 3000);
+		check(countPrefix(paused, "a-p1") == 4 && countPrefix(paused, "a-p0") == 0,
+			"PR-1: на паузе читается только p1 (p1 " + std::to_string(countPrefix(paused, "a-p1"))
+			+ ", p0 " + std::to_string(countPrefix(paused, "a-p0")) + ")");
+
+		ensure(a, a.callBool("ВозобновитьЧтение", {topic, int32_t{0}}), "ВозобновитьЧтение(p0)");
+		const auto resumed = readPayloads(a, "a-p0", 4, 15000);
+		check(resumed.size() == 4 && distinct(resumed),
+			"PR-1: после возобновления p0 прочитаны 4 сообщения ровно по разу (" + std::to_string(resumed.size()) + ")");
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void pr2(Context& ctx)
+	{
+		const std::string topic = uniqueName(ctx, "pr-h");
+		createTopic(ctx, topic, 1);
+		produceMessages(ctx, topic, 10, "b-p0", false, 0);
+
+		AddIn a(*ctx.library);
+		setupRegular(a, uniqueName(ctx, "cg-pr"), {});
+		ensure(a, a.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "ИнициализироватьКонсьюмера");
+		ensure(a, a.callBool("Подписаться", {topic}), "Подписаться");
+		std::string first;
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		while (first.empty() && std::chrono::steady_clock::now() < until)
+		{
+			const std::string json = a.callString("ЧитатьПакетСообщений", {int32_t{1}, int32_t{1000}});
+			require(!json.empty(), "ЧитатьПакетСообщений: " + a.lastError());
+			const boost::json::value root = boost::json::parse(json);
+			for (const auto& m : root.at("messages").as_array())
+			{
+				first = std::string(m.at("message").as_string());
+			}
+		}
+		require(first == "b-p0-0", "прочитано первое сообщение (" + first + "), остальные в локальной очереди");
+
+		ensure(a, a.callBool("ПриостановитьЧтение", {topic, int32_t{0}}), "ПриостановитьЧтение(p0)");
+		const auto paused = readPayloads(a, "b-", 1, 3000, 0);
+		check(paused.empty(), "PR-2: на паузе скачанные сообщения не выдаются (" + std::to_string(paused.size()) + ")");
+
+		ensure(a, a.callBool("ВозобновитьЧтение", {topic, int32_t{0}}), "ВозобновитьЧтение(p0)");
+		const auto resumed = readPayloads(a, "b-", 9, 15000);
+		const bool noFirst = std::find(resumed.begin(), resumed.end(), first) == resumed.end();
+		check(resumed.size() == 9 && distinct(resumed) && noFirst,
+			"PR-2: после возобновления 9 оставшихся без повторов (" + std::to_string(resumed.size()) + ")");
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void pr3(Context& ctx)
+	{
+		AddIn a(*ctx.library);
+		const std::string topic = prepareAssigned(ctx, a, 2, uniqueName(ctx, "cg-pr"));
+
+		ensure(a, a.callBool("ПриостановитьЧтение"), "ПриостановитьЧтение() — все партиции");
+		produceMessages(ctx, topic, 4, "c-p0", false, 0);
+		produceMessages(ctx, topic, 4, "c-p1", false, 1);
+		const auto paused = readPayloads(a, "c-", 1, 3000, 0);
+		check(paused.empty(), "PR-3: на паузе ничего не читается (" + std::to_string(paused.size()) + ")");
+
+		ensure(a, a.callBool("ВозобновитьЧтение"), "ВозобновитьЧтение() — все партиции");
+		const auto resumed = readPayloads(a, "c-", 8, 15000);
+		check(resumed.size() == 8 && distinct(resumed), "PR-3: после возобновления все 8 (" + std::to_string(resumed.size()) + ")");
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void pr4(Context& ctx)
+	{
+		AddIn idle(*ctx.library);
+		bool ok = idle.callBool("ПриостановитьЧтение");
+		std::string err = ok ? "" : idle.lastError();
+		check(!ok && !err.empty(), "PR-4: консьюмер не инициализирован → Ложь: " + err);
+
+		AddIn a(*ctx.library);
+		const std::string topic = prepareAssigned(ctx, a, 2, uniqueName(ctx, "cg-pr"));
+		ok = a.callBool("ПриостановитьЧтение", {topic, int32_t{5}});
+		err = ok ? "" : a.lastError();
+		check(!ok && contains(err, topic) && contains(err, "5"), "PR-4: партиция 5 не назначена → Ложь: " + err);
+		ok = a.callBool("ВозобновитьЧтение", {std::string("pr-not-subscribed")});
+		err = ok ? "" : a.lastError();
+		check(!ok && !err.empty(), "PR-4: топик без назначенных партиций → Ложь: " + err);
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void pauseRebalanceScenario(Context& ctx, const std::vector<std::pair<std::string, std::string>>& extra)
+	{
+		const std::string group = uniqueName(ctx, "cg-pr");
+		AddIn a(*ctx.library);
+		const std::string topic = prepareAssigned(ctx, a, 2, group, extra);
+		ensure(a, a.callBool("ПриостановитьЧтение", {topic, int32_t{0}}), "A: ПриостановитьЧтение(p0)");
+
+		AddIn b(*ctx.library);
+		setupRegular(b, group, extra);
+		ensure(b, b.callBool("ИнициализироватьКонсьюмера", {ctx.brokers}), "B: ИнициализироватьКонсьюмера");
+		ensure(b, b.callBool("Подписаться", {topic}), "B: Подписаться");
+		collect({&a, &b}, "none-", 1, 8000);
+		expect(b, b.callBool("ОстановитьКонсьюмера"), "B: ОстановитьКонсьюмера");
+		collect({&a}, "none-", 1, 8000);
+
+		produceMessages(ctx, topic, 4, "d-p0", false, 0);
+		produceMessages(ctx, topic, 4, "d-p1", false, 1);
+		const auto paused = readPayloads(a, "d-", 4, 20000, 3000);
+		check(countPrefix(paused, "d-p1") == 4 && countPrefix(paused, "d-p0") == 0,
+			"PR-5: после ребалансировки p0 по-прежнему на паузе (p1 " + std::to_string(countPrefix(paused, "d-p1"))
+			+ ", p0 " + std::to_string(countPrefix(paused, "d-p0")) + ")");
+
+		ensure(a, a.callBool("ВозобновитьЧтение", {topic, int32_t{0}}), "A: ВозобновитьЧтение(p0)");
+		const auto resumed = readPayloads(a, "d-p0", 4, 15000);
+		check(resumed.size() == 4 && distinct(resumed), "PR-5: после возобновления p0 прочитаны 4 (" + std::to_string(resumed.size()) + ")");
+		const std::string asyncErr = a.lastError();
+		check(!contains(asyncErr, "Rebalance"), "PR-5: нет ошибок ребалансировки: " + asyncErr);
+		a.callBool("ОстановитьКонсьюмера");
+	}
+
+	void pr5(Context& ctx)
+	{
+		pauseRebalanceScenario(ctx, {});
+	}
+
+	void pr5Cooperative(Context& ctx)
+	{
+		pauseRebalanceScenario(ctx, {{"partition.assignment.strategy", "cooperative-sticky"}});
+	}
+
 	struct Scenario
 	{
 		const char* id;
@@ -811,6 +1267,9 @@ namespace
 
 int main(int argc, char** argv)
 {
+	// Unbuffered: a crash inside the component must not swallow the log of passed checks
+	std::setvbuf(stdout, nullptr, _IONBF, 0);
+
 	if (argc < 2)
 	{
 		std::printf("usage: native_harness <SimpleKafka1C.dll> [brokers] [--only AC-1,AC-2] [--expect-rdkafka 2.16.0]\n");
@@ -880,6 +1339,19 @@ int main(int argc, char** argv)
 		{"AC-16", ac16},
 		{"AC-17", ac17},
 		{"AC-18", ac18},
+		{"FIX-1-3", fix1to3},
+		{"FIX-4", fix4},
+		{"FIX-5", fix5},
+		{"FIX-6", fix6},
+		{"FIX-7", fix7},
+		{"FIX-8", fix8},
+		{"CP-1-3", cp1to3},
+		{"PR-1", pr1},
+		{"PR-2", pr2},
+		{"PR-3", pr3},
+		{"PR-4", pr4},
+		{"PR-5", pr5},
+		{"PR-5c", pr5Cooperative},
 	};
 
 	int failedScenarios = 0;
