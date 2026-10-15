@@ -14,6 +14,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <set>
 #include <string_view>
 #include <thread>
 #include "Component.h"
@@ -31,7 +32,7 @@ using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.9.5";
+	static constexpr char Version[] = u8"1.10.0";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -143,7 +144,10 @@ private:
 		bool hasSettingKey(std::string_view key) const;
 		bool prepareSslRuntime(std::string& error);
 		bool applyKafkaSettings(RdKafka::Conf* conf, std::string& error, bool* statisticsOn = nullptr);
-		bool applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error);
+		// skipKeys: settings not passed to librdkafka (their names are appended to skippedKeys)
+		bool applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error,
+		                        const std::set<std::string>* skipKeys = nullptr,
+		                        std::vector<std::string>* skippedKeys = nullptr);
 		std::string enrichSslError(std::string_view baseError) const;
 
 		// Helper: parse "key1,val1;key2,val2" header string into RdKafka::Headers
@@ -214,6 +218,8 @@ private:
 	std::string consumeBatch(const variant_t &maxMessages, const variant_t &maxWaitMs, const variant_t &asBase64);	// пакетное чтение
 	// Serializes a consumed message to the ConsumeBatch JSON element. Thread-safe (no member state).
 	static boost::json::object messageToJson(RdKafka::Message& msg, bool asBase64);
+	// Shared by the regular and the share consumer so both produce the same JSON format
+	static boost::json::object messageToJson(const rd_kafka_message_t* msg, bool asBase64);
 	variant_t getMessageData(const variant_t &binaryResult);	// данные, как они есть в kafka
 	std::string getMessageKey();
 	std::string getMessageHeaders();
@@ -261,6 +267,63 @@ private:
 	void pushConsumerLoop();
 	// Returns true and sets msg_err if the push consumer owns the consumer.
 	bool pushConsumerActive();
+
+	// share consumer (KIP-932, Queues for Kafka): queue-style reading through a share group.
+	// librdkafka exposes it through the C API only, so it is independent of hConsumer.
+	struct AsyncErrorState;
+	struct ShareLogContext
+	{
+		// snapshot taken at init: log_cb/error_cb run on librdkafka threads
+		std::string logDir;
+		std::string logFormat;
+		std::string clientId;
+		unsigned pid = 0;
+		std::shared_ptr<AsyncErrorState> asyncError;
+
+		void openLog(std::ofstream& file) const;
+
+		// librdkafka callbacks; the context is the rd_kafka opaque
+		static void logCallback(const rd_kafka_t* rk, int level, const char* fac, const char* buf);
+		static void errorCallback(rd_kafka_t* rk, int err, const char* reason, void* opaque);
+	};
+
+	// Record of the last batch. ack: 0 - not acknowledged yet, RD_KAFKA_SHARE_ACKNOWLEDGE_TYPE_*
+	// - acknowledged by the application, SHARE_ACK_AUTO - record-level error, librdkafka
+	// acknowledges it itself.
+	static constexpr int SHARE_ACK_AUTO = -1;
+	struct ShareHeldRecord
+	{
+		const rd_kafka_message_t* msg = nullptr;
+		int ack = 0;
+	};
+
+	struct ShareConsumerState
+	{
+		rd_kafka_share_t* handle = nullptr;
+		std::shared_ptr<ShareLogContext> log;	// rd_kafka opaque; outlives the handle
+		std::mutex mtx;							// serializes share consumer API calls
+		// The last batch is held until the next read or stop: records are acknowledged
+		// by topic, partition and offset through their rd_kafka_message_t
+		rd_kafka_messages_t* batch = nullptr;
+		std::vector<ShareHeldRecord> records;
+	};
+	ShareConsumerState shareState;
+
+	bool initShareConsumer(const variant_t& brokers, const variant_t& groupId);
+	bool shareSubscribe(const variant_t& topics);
+	bool shareUnsubscribe();
+	std::string shareReadBatch(const variant_t& maxWaitMs, const variant_t& asBase64, const variant_t& releaseUnacked);
+	bool shareAcknowledge(const variant_t& topic, const variant_t& partition, const variant_t& offset, const variant_t& ackType);
+	bool shareAcknowledgeBatch(const variant_t& acksJson);
+	bool shareCommit(const variant_t& timeoutMs);
+	// marks one record of the held batch; caller holds shareState.mtx
+	bool acknowledgeShareRecordLocked(const std::string& topic, int32_t partition, int64_t offset,
+		const std::string& ackType, std::string& error);
+	bool stopShareConsumer();
+	// destroys the held batch; caller holds shareState.mtx
+	void dropShareBatchLocked();
+	// close + destroy; caller holds shareState.mtx
+	bool closeShareConsumerLocked();
 
 	// consumer assignment (manual partition assignment)
 	bool assign(const variant_t& jsonTopicPartitions);

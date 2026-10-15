@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# vcpkg applies port patches as-is: keep LF regardless of core.autocrlf
+vcpkg-overlay/** text eol=lf

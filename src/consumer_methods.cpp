@@ -577,6 +577,11 @@ bool SimpleKafka1C::getMessage()
 
 boost::json::object SimpleKafka1C::messageToJson(RdKafka::Message& msg, bool asBase64)
 {
+	return messageToJson(msg.c_ptr(), asBase64);
+}
+
+boost::json::object SimpleKafka1C::messageToJson(const rd_kafka_message_t* msg, bool asBase64)
+{
 	boost::json::object msgObj;
 	auto putUtf8OrBase64 = [](boost::json::object& obj,
 		const char* fieldName,
@@ -605,8 +610,8 @@ boost::json::object SimpleKafka1C::messageToJson(RdKafka::Message& msg, bool asB
 	};
 
 	// Данные сообщения
-	const void* payloadRaw = msg.payload();
-	const size_t payloadSize = msg.len();
+	const void* payloadRaw = msg->payload;
+	const size_t payloadSize = msg->len;
 	if (!payloadRaw || payloadSize == 0)
 	{
 		msgObj["message"] = "";
@@ -621,35 +626,32 @@ boost::json::object SimpleKafka1C::messageToJson(RdKafka::Message& msg, bool asB
 	}
 
 	// Ключ
-	if (msg.key() && !msg.key()->empty())
+	if (msg->key && msg->key_len > 0)
 	{
-		const std::string& keyValue = *msg.key();
-		putUtf8OrBase64(msgObj, "key", keyValue.data(), keyValue.size(), "key_encoding");
+		putUtf8OrBase64(msgObj, "key", static_cast<const char*>(msg->key), msg->key_len, "key_encoding");
 	}
 
 	// Метаданные
-	const std::string topicName = msg.topic_name();
+	const std::string topicName = msg->rkt ? rd_kafka_topic_name(msg->rkt) : "";
 	putUtf8OrBase64(msgObj, "topic", topicName.data(), topicName.size(), "topic_encoding");
-	msgObj["partition"] = msg.partition();
-	msgObj["offset"] = msg.offset();
-	msgObj["broker_id"] = msg.broker_id();
+	msgObj["partition"] = msg->partition;
+	msgObj["offset"] = msg->offset;
+	msgObj["broker_id"] = rd_kafka_message_broker_id(msg);
 
-	RdKafka::MessageTimestamp ts = msg.timestamp();
-	msgObj["timestamp"] = ts.timestamp;
+	msgObj["timestamp"] = rd_kafka_message_timestamp(msg, nullptr);
 
 	// Заголовки
-	RdKafka::Headers* headers = msg.headers();
-	if (headers)
+	rd_kafka_headers_t* headers = nullptr;
+	if (rd_kafka_message_headers(msg, &headers) == RD_KAFKA_RESP_ERR_NO_ERROR && headers)
 	{
 		boost::json::array headersArray;
-		std::vector<RdKafka::Headers::Header> hdrs = headers->get_all();
-		for (const auto& hdr : hdrs)
+		const char* headerKey = nullptr;
+		const void* headerValue = nullptr;
+		size_t headerSize = 0;
+		for (size_t idx = 0; rd_kafka_header_get_all(headers, idx, &headerKey, &headerValue, &headerSize) == RD_KAFKA_RESP_ERR_NO_ERROR; ++idx)
 		{
 			boost::json::object headerObj;
-			const std::string headerKey = hdr.key();
-			putUtf8OrBase64(headerObj, "key", headerKey.data(), headerKey.size(), "key_encoding");
-			const void* headerValue = hdr.value();
-			const size_t headerSize = hdr.value_size();
+			putUtf8OrBase64(headerObj, "key", headerKey, headerKey ? std::strlen(headerKey) : 0, "key_encoding");
 			if (headerValue && headerSize > 0)
 			{
 				putUtf8OrBase64(headerObj, "value", static_cast<const char*>(headerValue), headerSize, "encoding");

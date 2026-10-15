@@ -18,6 +18,31 @@ vcpkg install boost-json --triplet x64-windows-static
 vcpkg install snappy --triplet x64-windows-static
  ```
 
+## librdkafka 2.16.0 через overlay-порт
+
+Компонента собирается с librdkafka **2.16.0**. Пока в vcpkg порт отстаёт (2.15.1), версия
+задаётся overlay-портом из каталога `vcpkg-overlay/librdkafka` этого репозитория. Команды
+выполнять из корня vcpkg: если запустить их из каталога порта, vcpkg примет его `vcpkg.json`
+за манифест.
+
+Новая установка:
+ ```
+vcpkg install "librdkafka[curl,ssl,zlib,zstd]:x64-windows-static" --overlay-ports=<путь к репозиторию>\vcpkg-overlay
+ ```
+
+Если librdkafka уже установлена из стандартного порта — обновление (без `--no-dry-run`
+команда только показывает план; в нём должна быть одна librdkafka):
+ ```
+vcpkg upgrade librdkafka:x64-windows-static --overlay-ports=<путь к репозиторию>\vcpkg-overlay
+vcpkg upgrade librdkafka:x64-windows-static --overlay-ports=<путь к репозиторию>\vcpkg-overlay --no-dry-run
+ ```
+
+Когда порт vcpkg догонит 2.16.0, overlay-порт можно удалить.
+
+Если после обновления пакетов vcpkg сборка падает с `missing and no known rule to make it`
+по пути к библиотеке (например, zlib 1.3.2 переименовал `zlib.lib` в `zs.lib`), в кеше CMake
+остался старый путь. Сбросить его: `cmake -U "ZLIB_*" out/build/x64-Release`.
+
 В файле CMakeLists.txt в 4-й строке указать путь до библиотек VCPKG, должен оканчиваться на /vcpkg/installed/x64-windows-static.
 Сборку можно выполнить в Visual Studio как CMake проект.
 

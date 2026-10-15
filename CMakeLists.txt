@@ -39,6 +39,7 @@ set(SOURCE_FILES
     src/producer_methods.cpp
     src/consumer_methods.cpp
     src/push_consumer.cpp
+    src/share_consumer_methods.cpp
     src/admin_topics.cpp
     src/admin_metadata.cpp
     src/admin_groups.cpp

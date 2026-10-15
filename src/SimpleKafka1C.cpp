@@ -446,6 +446,18 @@ SimpleKafka1C::SimpleKafka1C()
 		{ {0, 100}, {1, 1000}, {2, false}, {3, 100} });
 	AddMethod(L"StopPushConsumer", L"ОстановитьФоновоеЧтение", this, &SimpleKafka1C::stopPushConsumer);
 	AddMethod(L"IsPushConsumerRunning", L"ФоновоеЧтениеЗапущено", this, &SimpleKafka1C::isPushConsumerRunning);
+
+	// share consumer (KIP-932, Queues for Kafka) — experimental
+	AddMethod(L"InitializeShareConsumer", L"ИнициализироватьКонсьюмераОчереди", this, &SimpleKafka1C::initShareConsumer);
+	AddMethod(L"ShareSubscribe", L"ПодписатьсяНаОчередь", this, &SimpleKafka1C::shareSubscribe);
+	AddMethod(L"ShareUnsubscribe", L"ОтписатьсяОтОчереди", this, &SimpleKafka1C::shareUnsubscribe);
+	AddMethod(L"ShareReadBatch", L"ПрочитатьПакетИзОчереди", this, &SimpleKafka1C::shareReadBatch,
+		{ {0, 1000}, {1, false}, {2, false} });
+	AddMethod(L"ShareAcknowledge", L"ПодтвердитьСообщениеОчереди", this, &SimpleKafka1C::shareAcknowledge);
+	AddMethod(L"ShareAcknowledgeBatch", L"ПодтвердитьСообщенияОчереди", this, &SimpleKafka1C::shareAcknowledgeBatch);
+	AddMethod(L"ShareCommit", L"ЗафиксироватьПодтвержденияОчереди", this, &SimpleKafka1C::shareCommit, { {0, 5000} });
+	AddMethod(L"StopShareConsumer", L"ОстановитьКонсьюмераОчереди", this, &SimpleKafka1C::stopShareConsumer);
+
 	AddMethod(L"GetMessageData", L"ПолучитьДанныеСообщения", this, &SimpleKafka1C::getMessageData, { {0, false} });
 	AddMethod(L"GetMessageKey", L"ПолучитьКлючСообщения", this, &SimpleKafka1C::getMessageKey);
 	AddMethod(L"GetMessageHeaders", L"ПолучитьЗаголовкиСообщения", this, &SimpleKafka1C::getMessageHeaders);
@@ -575,6 +587,7 @@ SimpleKafka1C::~SimpleKafka1C()
 	// Must finish before the consumer is closed: the worker thread uses hConsumer.
 	stopPushConsumer();
 	stopConsumer();
+	stopShareConsumer();
 	stopProducer();
 
 	// Очистка rebalance callback offsets для предотвращения утечки памяти
@@ -969,7 +982,9 @@ bool SimpleKafka1C::applyKafkaSettings(RdKafka::Conf* conf, std::string& error, 
 	return true;
 }
 
-bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error)
+bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error,
+                                       const std::set<std::string>* skipKeys,
+                                       std::vector<std::string>* skippedKeys)
 {
 	FilteredSettings fs;
 	if (!prepareFilteredSettings(fs, error))
@@ -981,6 +996,14 @@ bool SimpleKafka1C::applyKafkaSettings(rd_kafka_conf_t* conf, std::string& error
 
 	for (const auto& p : fs.params)
 	{
+		if (skipKeys != nullptr && skipKeys->count(p.key) > 0)
+		{
+			if (skippedKeys != nullptr)
+			{
+				skippedKeys->push_back(p.key);
+			}
+			continue;
+		}
 		if (rd_kafka_conf_set(conf, p.key.c_str(), p.value.c_str(), errstr, sizeof(errstr)) != RD_KAFKA_CONF_OK)
 		{
 			error = enrichSslError(errstr);
