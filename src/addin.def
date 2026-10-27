@@ -5,3 +5,4 @@ GetClassObject
 DestroyObject
 GetClassNames
 SetPlatformCapabilities
+GetAttachType

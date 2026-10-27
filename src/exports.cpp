@@ -57,3 +57,15 @@ long DestroyObject(IComponentBase **pInterface) {
 AppCapabilities SetPlatformCapabilities(const AppCapabilities capabilities) {
     return eAppCapabilitiesLast;
 }
+
+AttachType GetAttachType() {
+#if defined(__ANDROID__)
+    // The mobile platform has no isolated attach mode: the component always
+    // runs in the process of the mobile application.
+    return eCanAttachNotIsolated;
+#else
+    // The component works both in the platform process and in a separate host
+    // process, so the platform may choose either.
+    return eCanAttachAny;
+#endif
+}
