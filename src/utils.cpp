@@ -170,7 +170,14 @@ bool isValidUtf8(const char* data, size_t len)
 
 std::string currentDateTime()
 {
+#ifdef _WIN32
 	std::chrono::time_point now = std::chrono::high_resolution_clock::now();
+#else
+	// The wall clock and not high_resolution_clock: libstdc++ defines
+	// high_resolution_clock as system_clock, but libc++ defines it as
+	// steady_clock, whose epoch is not the Unix epoch.
+	std::chrono::time_point now = std::chrono::system_clock::now();
+#endif
 	tm current{};
 
 #ifdef _WIN32
@@ -191,14 +198,13 @@ std::string currentDateTime()
 
 std::string currentDateTime(const char* format)
 {
-	std::chrono::time_point now = std::chrono::high_resolution_clock::now();
 	tm current{};
 
 #ifdef _WIN32
 	time_t time = std::time(nullptr);
 	localtime_s(&current, &time);
 #else
-	auto time = std::chrono::system_clock::to_time_t(now);
+	auto time = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
 	gmtime_r(&time, &current);
 #endif
 
