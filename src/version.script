@@ -5,6 +5,13 @@
                 *DestroyObject*;
                 *GetClassNames*;
                 *SetPlatformCapabilities*;
+                *GetAttachType*;
+                # The 1C mobile platform resolves JNI_OnLoad in the add-in
+                # library on Android and calls it right after dlopen, without
+                # checking the result for NULL. The entry point is built into
+                # the library for Android only.
+                *JNI_OnLoad*;
+                *JNI_OnUnload*;
          local: 
                 *;
 };
