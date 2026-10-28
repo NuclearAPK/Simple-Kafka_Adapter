@@ -257,19 +257,24 @@ bool Component::CallAsFunc(const long method_num, tVariant *ret_value, tVariant 
         storeParams(args, params);
 #endif
     } catch (const std::exception &e) {
-        msg_err += " ";
-        msg_err += e.what();
+        msg_err = e.what();
         ex = true;
     } catch (...) {
-        msg_err += " ";
-        msg_err += UNKNOWN_EXCP;
+        msg_err = UNKNOWN_EXCP;
         ex = true;
     }
+    // Error value of the method's own type (docs/exceptionHandling.md);
+    // a variant_t method has no fixed type and stays undefined
     if (ex) {
-        if (methods_meta[method_num].returns_bool) {
+        const auto &meta = methods_meta[method_num];
+        if (meta.returns_bool) {
             result = false;
-        } else if (methods_meta[method_num].returns_int32_t) {
+        } else if (meta.returns_int32_t) {
             result = -1;
+        } else if (meta.returns_string) {
+            result = std::string();
+        } else if (meta.returns_double) {
+            result = -1.0;
         }
     }
     storeVariable(result, *ret_value);

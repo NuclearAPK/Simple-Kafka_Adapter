@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/ru/1.0.0/),
 и этот проект придерживается [Semantic Versioning](https://semver.org/lang/ru/).
 
+## [1.10.2] - 2026-10-28
+
+### Исправлено
+
+#### Функция при ошибке возвращала значение не своего типа ([#95](https://github.com/NuclearAPK/Simple-Kafka_Adapter/issues/95))
+Если исключение выходило из метода к диспетчеру компоненты (чаще всего — аргумент не того типа, например `УстановитьТаймаутОжидания("не число")`), булев метод возвращал `-1`, а целый — `Ложь`: признаки типа результата были вычислены с обратным знаком. В условии `Если Результат Тогда` число `-1` давало `Истина`, и код 1С шёл по ветке успеха. Строковые и числовые методы вместо пустой строки и `-1` возвращали `Ложь`. Теперь значение соответствует [docs/exceptionHandling.md](docs/exceptionHandling.md): `Ложь` для булева, `-1` для числа, пустая строка для строки, `Неопределено` для методов с произвольным типом результата. Текст ошибки в `ПолучитьСообщениеОбОшибке` больше не начинается с пробела.
+
 ## [1.10.1] - 2026-10-15
 
 ### Добавлено
@@ -719,6 +726,7 @@ librdkafka поддерживает `AdminOptions_set_operation_timeout` тол�
 
 ---
 
+[1.10.2]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.10.1...v1.10.2
 [1.10.1]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.10.0...v1.10.1
 [1.10.0]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.5...v1.10.0
 [1.9.5]: https://github.com/NuclearAPK/Simple-Kafka_Adapter/compare/v1.9.4...v1.9.5

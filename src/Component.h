@@ -194,6 +194,8 @@ public:
     bool returns_value;
     bool returns_bool;
     bool returns_int32_t;
+    bool returns_string;
+    bool returns_double;
     std::map<long, variant_t> default_args;
     std::function<variant_t(std::vector<variant_t> &params)> call;
 };
@@ -209,8 +211,10 @@ void Component::AddMethod(const std::wstring &alias, const std::wstring &alias_r
 
     MethodMeta meta{alias, alias_ru, sizeof...(Ts), 
                     !std::is_same<T, void>::value, 
-                    !std::is_same<T, bool>::value, 
-                    !std::is_same<T, int32_t>::value, 
+                    std::is_same<T, bool>::value,
+                    std::is_same<T, int32_t>::value,
+                    std::is_same<T, std::string>::value,
+                    std::is_same<T, double>::value,
                     std::move(def_args),
                     [f, c](std::vector<variant_t> &params) -> variant_t {
                         auto args = refTupleGen(params, std::make_index_sequence<sizeof...(Ts)>());
