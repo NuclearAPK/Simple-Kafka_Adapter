@@ -1,10 +1,12 @@
-﻿#include <boost/algorithm/string/split.hpp>          // boost::algorithm::split
+#include <boost/algorithm/string/split.hpp>          // boost::algorithm::split
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/json.hpp>
 #ifdef _WIN32
 #include <process.h>
+#else
+#include <unistd.h>     // getpid()
 #endif
 
 #include <thread>
