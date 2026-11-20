@@ -39,6 +39,12 @@ SimpleKafka1C::AdminClientScope::AdminClientScope(SimpleKafka1C* owner_,
 		return;
 	}
 
+	hint = owner->hintContext(brokers);
+
+	// SSL/auth failures arrive asynchronously; record them to stop waiting early
+	rd_kafka_conf_set_opaque(conf, state.get());
+	rd_kafka_conf_set_error_cb(conf, &connect_failure::rdkafkaErrorCallback);
+
 	// Создаем клиента
 	rk = rd_kafka_new(type, conf, errstr, sizeof(errstr));
 	if (!rk)
@@ -65,6 +71,33 @@ SimpleKafka1C::AdminClientScope::~AdminClientScope()
 	}
 }
 
+rd_kafka_event_t* SimpleKafka1C::AdminClientScope::pollResult(int timeoutMs)
+{
+	return connect_failure::slicedQueuePoll(rk, rkqu, *state, timeoutMs);
+}
+
+rd_kafka_event_t* SimpleKafka1C::AdminClientScope::pollResult(rd_kafka_queue_t* queue, int timeoutMs)
+{
+	return connect_failure::slicedQueuePoll(rk, queue, *state, timeoutMs);
+}
+
+rd_kafka_resp_err_t SimpleKafka1C::AdminClientScope::metadata(int allTopics, rd_kafka_topic_t* topic,
+                                                               const rd_kafka_metadata_t** out, int timeoutMs)
+{
+	return connect_failure::slicedMetadata(rk, *state, allTopics, topic, out, timeoutMs);
+}
+
+rd_kafka_resp_err_t SimpleKafka1C::AdminClientScope::queryWatermarks(const char* topic, int32_t partition,
+                                                                      int64_t* low, int64_t* high, int timeoutMs)
+{
+	return connect_failure::slicedWatermarks(rk, *state, topic, partition, low, high, timeoutMs);
+}
+
+std::string SimpleKafka1C::AdminClientScope::describeFailure(std::string_view baseError) const
+{
+	return connect_failure::formatConnectError("", baseError, *state, hint);
+}
+
 //================================== Topic List =========================================
 
 std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers, const variant_t& timeout)
@@ -74,36 +107,23 @@ std::string SimpleKafka1C::getListOfTopics(const variant_t& brokers, const varia
 	std::ofstream eventFile{};
 
 	boost::property_tree::ptree jsonObj;
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	std::string tBrokers = std::get<std::string>(brokers);
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
-	if (!applyKafkaSettings(conf.get(), msg_err))
-	{
-		if (eventFile.is_open()) eventFile << currentDateTime() << msg_err << std::endl;
-		return result;
-	}
-
-	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
-	{
-		return result;
-	}
-
-	// создаем фейкового продюсера
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
+	// temporary producer; fails fast on SSL/auth errors (specs/ssl-fail-fast.md)
+	auto producer = createMetadataClient(tBrokers);
 	if (!producer)
 	{
-		msg_err = enrichSslError(std::string("Client creation error: ") + msg_err);
 		return result;
 	}
 
-	RdKafka::Topic* topicKafka = nullptr;
-	class RdKafka::Metadata* metadata;
-	RdKafka::ErrorCode err = producer->metadata(true, topicKafka, &metadata, tTimeout);
+	RdKafka::Metadata* metadata = nullptr;
+	RdKafka::ErrorCode err = producer.metadata(true, nullptr, &metadata, tTimeout);
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		delete metadata;
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return result;
 	}
 
@@ -191,14 +211,14 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	rd_kafka_CreateTopics(admin.get(), newt_arr, 1, options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), timeout_ms + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(timeout_ms + 2000);
 
 	bool success = false;
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -226,7 +246,7 @@ bool SimpleKafka1C::createTopic(const variant_t& brokers, const variant_t& topic
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	// очистка ресурсов
@@ -285,14 +305,14 @@ bool SimpleKafka1C::createPartitions(const variant_t& brokers, const variant_t& 
 	rd_kafka_NewPartitions_t* newp_arr[1] = { newp };
 	rd_kafka_CreatePartitions(admin.get(), newp_arr, 1, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	bool success = false;
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -321,7 +341,7 @@ bool SimpleKafka1C::createPartitions(const variant_t& brokers, const variant_t& 
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	rd_kafka_AdminOptions_destroy(options);
@@ -373,14 +393,14 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	rd_kafka_DeleteTopics(admin.get(), delt_arr, 1, options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), timeout_ms + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(timeout_ms + 2000);
 
 	bool success = false;
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -408,7 +428,7 @@ bool SimpleKafka1C::deleteTopic(const variant_t& brokers, const variant_t& topic
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	// очистка ресурсов
@@ -505,14 +525,14 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 	rd_kafka_DeleteRecords(admin.get(), delr_arr, 1, options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	bool success = false;
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -557,7 +577,7 @@ bool SimpleKafka1C::deleteRecords(const variant_t& brokers, const variant_t& top
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	// очистка ресурсов
@@ -608,13 +628,13 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 	rd_kafka_DescribeConfigs(admin.get(), config_arr, 1, options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -699,7 +719,7 @@ std::string SimpleKafka1C::getTopicConfig(const variant_t& brokers, const varian
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	// очистка ресурсов
@@ -770,8 +790,11 @@ namespace
 	}
 
 	// Sends one resource to IncrementalAlterConfigs and waits for its result.
+	// poll(timeout) waits for the result event (AdminClientScope::pollResult, fail-fast on
+	// SSL/auth errors), describe(text) builds the timeout/connection error text.
+	template <class Poll, class Describe>
 	bool incrementalAlterConfigs(rd_kafka_t* rk, rd_kafka_queue_t* queue, rd_kafka_ConfigResource_t* resource,
-		int32_t timeoutMs, std::string& error)
+		int32_t timeoutMs, std::string& error, Poll poll, Describe describe)
 	{
 		char errstr[512];
 
@@ -787,14 +810,14 @@ namespace
 		rd_kafka_ConfigResource_t* config_arr[1] = { resource };
 		rd_kafka_IncrementalAlterConfigs(rk, config_arr, 1, options, queue);
 
-		rd_kafka_event_t* rkev = rd_kafka_queue_poll(queue, timeoutMs + 2000);
+		rd_kafka_event_t* rkev = poll(timeoutMs + 2000);
 
 		bool success = false;
 		if (rkev)
 		{
 			if (rd_kafka_event_error(rkev))
 			{
-				error = rd_kafka_event_error_string(rkev);
+				error = describe(rd_kafka_event_error_string(rkev));
 			}
 			else
 			{
@@ -826,7 +849,7 @@ namespace
 		}
 		else
 		{
-			error = "Response timeout";
+			error = describe("Response timeout");
 		}
 
 		rd_kafka_AdminOptions_destroy(options);
@@ -869,7 +892,9 @@ bool SimpleKafka1C::setTopicConfig(const variant_t& brokers, const variant_t& to
 		RD_KAFKA_RESOURCE_TOPIC, tTopicName.c_str());
 
 	bool success = addIncrementalConfigs(config_resource, tConfigJson, msg_err)
-		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err);
+		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err,
+			[&](int t) { return admin.pollResult(t); },
+			[&](std::string_view text) { return admin.describeFailure(text); });
 
 	rd_kafka_ConfigResource_destroy(config_resource);
 	return success;
@@ -901,11 +926,11 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 	if (tBrokerId < 0)
 	{
 		const rd_kafka_metadata_t* meta = nullptr;
-		rd_kafka_resp_err_t merr = rd_kafka_metadata(admin.get(), 1, nullptr, &meta, tTimeout);
+		rd_kafka_resp_err_t merr = admin.metadata(1, nullptr, &meta, tTimeout);
 		if (merr != RD_KAFKA_RESP_ERR_NO_ERROR || !meta || meta->broker_cnt == 0)
 		{
 			msg_err = "Cannot discover broker id: ";
-			msg_err += (merr != RD_KAFKA_RESP_ERR_NO_ERROR) ? rd_kafka_err2str(merr) : "no brokers";
+			msg_err += (merr != RD_KAFKA_RESP_ERR_NO_ERROR) ? admin.describeFailure(rd_kafka_err2str(merr)) : "no brokers";
 			if (meta) rd_kafka_metadata_destroy(meta);
 			return result;
 		}
@@ -932,13 +957,13 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 	rd_kafka_ConfigResource_t* config_arr[1] = { config_resource };
 	rd_kafka_DescribeConfigs(admin.get(), config_arr, 1, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -995,7 +1020,7 @@ std::string SimpleKafka1C::getBrokerConfig(const variant_t& brokers, const varia
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	rd_kafka_AdminOptions_destroy(options);
@@ -1028,7 +1053,9 @@ bool SimpleKafka1C::setBrokerConfig(const variant_t& brokers, const variant_t& b
 		rd_kafka_ConfigResource_new(RD_KAFKA_RESOURCE_BROKER, brokerIdStr.c_str());
 
 	bool success = addIncrementalConfigs(config_resource, tConfigJson, msg_err)
-		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err);
+		&& incrementalAlterConfigs(admin.get(), admin.queue(), config_resource, tTimeout, msg_err,
+			[&](int t) { return admin.pollResult(t); },
+			[&](std::string_view text) { return admin.describeFailure(text); });
 
 	rd_kafka_ConfigResource_destroy(config_resource);
 	return success;

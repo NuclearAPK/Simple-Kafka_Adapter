@@ -36,6 +36,8 @@ set(SOURCE_FILES
     src/SimpleKafka1C.h
     src/utils.cpp
     src/utils.h
+    src/connect_failure.cpp
+    src/connect_failure.h
     src/producer_methods.cpp
     src/consumer_methods.cpp
     src/push_consumer.cpp

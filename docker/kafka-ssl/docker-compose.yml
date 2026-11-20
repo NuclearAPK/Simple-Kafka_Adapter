@@ -1,0 +1,25 @@
+# Single-node Kafka (KRaft) with broken-by-design TLS and SASL listeners for
+# specs/ssl-fail-fast.md. Generate certificates first: sh gen-certs.sh
+#   127.0.0.1:9192  PLAINTEXT
+#   127.0.0.1:9194  SSL, broker certificate CN=kafka without SAN (host name mismatch),
+#                   client certificate required
+#   127.0.0.1:9195  SASL_PLAINTEXT, mechanism PLAIN, user test / password test-secret
+# Configuration lives in server.properties; the image's env-based configure script is
+# bypassed because it accepts only JKS key stores for SSL listeners.
+services:
+  kafka:
+    image: apache/kafka:4.2.2
+    container_name: kafka-ssl
+    ports:
+      - "9192:9192"
+      - "9194:9194"
+      - "9195:9195"
+    volumes:
+      - ./certs:/etc/kafka/certs:ro
+      - ./server.properties:/etc/kafka/ssl-server.properties:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        /opt/kafka/bin/kafka-storage.sh format --ignore-formatted
+        -t 5L6g3nShT-eMCtK--X86sw -c /etc/kafka/ssl-server.properties
+        && exec /opt/kafka/bin/kafka-server-start.sh /etc/kafka/ssl-server.properties

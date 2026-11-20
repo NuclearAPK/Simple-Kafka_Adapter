@@ -518,7 +518,7 @@ int32_t SimpleKafka1C::produceProtobuf(const variant_t& topicName, const variant
 			}
 			return cl_dr_cb.delivered;
 		}
-		msg_err = RdKafka::err2str(resp);
+		msg_err = producerErrorText(RdKafka::err2str(resp));
 		if (hdrs != nullptr)
 		{
 			delete hdrs;

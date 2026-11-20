@@ -14,31 +14,107 @@
 
 //================================== Helper ==========================================
 
-std::unique_ptr<RdKafka::Producer> SimpleKafka1C::createMetadataClient(const std::string& brokers)
+connect_failure::HintContext SimpleKafka1C::hintContext(const std::string& brokers) const
 {
+	connect_failure::HintContext ctx;
+	ctx.brokers = brokers;
+	ctx.endpointIdentification = getSettingValue("ssl.endpoint.identification.algorithm");
+	ctx.securityProtocol = getSettingValue("security.protocol");
+	return ctx;
+}
+
+MetadataClient SimpleKafka1C::createMetadataClient(const std::string& brokers,
+                                                   const std::vector<std::pair<std::string, std::string>>& extra)
+{
+	MetadataClient client;
+	client.hint = hintContext(brokers);
+
 	std::string errstr;
 	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	if (!applyKafkaSettings(conf.get(), errstr))
 	{
 		msg_err = errstr;
-		return nullptr;
+		return client;
 	}
 
 	if (conf->set("bootstrap.servers", brokers, errstr) != RdKafka::Conf::CONF_OK)
 	{
 		msg_err = errstr;
-		return nullptr;
+		return client;
 	}
 
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), errstr));
-	if (!producer)
+	for (const auto& kv : extra)
+	{
+		if (conf->set(kv.first, kv.second, errstr) != RdKafka::Conf::CONF_OK)
+		{
+			msg_err = errstr;
+			return client;
+		}
+	}
+
+	// SSL/auth failures arrive asynchronously; record them to stop waiting early
+	client.eventCb = std::make_unique<ServiceEventCb>(client.state);
+	if (conf->set("event_cb", static_cast<RdKafka::EventCb*>(client.eventCb.get()), errstr) != RdKafka::Conf::CONF_OK)
+	{
+		msg_err = errstr;
+		return client;
+	}
+
+	client.producer.reset(RdKafka::Producer::create(conf.get(), errstr));
+	if (!client.producer)
 	{
 		msg_err = enrichSslError(std::string("Client creation error: ") + errstr);
-		return nullptr;
 	}
 
-	return producer;
+	return client;
+}
+
+namespace
+{
+// Shared loop of MetadataClient blocking calls: retry network-level results in slices,
+// serving callbacks between them, until success, a final error, timeout or a fatal error.
+template <class Call>
+RdKafka::ErrorCode slicedProducerCall(RdKafka::Producer* producer, const connect_failure::ConnectFailureState& state,
+                                      int timeoutMs, Call call)
+{
+	RdKafka::ErrorCode err = RdKafka::ERR__TIMED_OUT;
+	const auto r = connect_failure::waitSliced(timeoutMs, state,
+		[&](int32_t slice) {
+			const auto t0 = std::chrono::steady_clock::now();
+			err = call(slice);
+			if (err == RdKafka::ERR__TIMED_OUT)
+				return false;
+			if (connect_failure::isRetriableWaitError(err))
+			{
+				// returned early: wait out the rest of the slice serving callbacks
+				producer->poll(connect_failure::remainingOf(slice, t0));
+				return false;
+			}
+			return true;
+		},
+		[&] { producer->poll(0); });
+	if (r == connect_failure::WaitResult::Fatal)
+		return RdKafka::ERR__SSL;
+	return err;
+}
+} // namespace
+
+RdKafka::ErrorCode MetadataClient::metadata(bool allTopics, const RdKafka::Topic* topic, RdKafka::Metadata** out, int timeoutMs)
+{
+	return slicedProducerCall(producer.get(), *state, timeoutMs,
+		[&](int32_t slice) { return producer->metadata(allTopics, topic, out, slice); });
+}
+
+RdKafka::ErrorCode MetadataClient::queryWatermarks(const std::string& topic, int32_t partition, int64_t* low, int64_t* high, int timeoutMs)
+{
+	return slicedProducerCall(producer.get(), *state, timeoutMs,
+		[&](int32_t slice) { return producer->query_watermark_offsets(topic, partition, low, high, slice); });
+}
+
+std::string MetadataClient::describe(std::string_view operation, std::string_view baseError) const
+{
+	return connect_failure::formatConnectError(operation, baseError, *state, hint);
 }
 
 //================================== Cluster and Broker Information ==========================================
@@ -53,11 +129,11 @@ std::string SimpleKafka1C::getClusterInfo(const variant_t& brokers)
 
 	// получаем метаданные кластера
 	RdKafka::Metadata* metadata = nullptr;
-	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, 5000);
+	RdKafka::ErrorCode err = producer.metadata(true, nullptr, &metadata, 5000);
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return "";
 	}
 
@@ -111,11 +187,11 @@ std::string SimpleKafka1C::getBrokerInfo(const variant_t& brokers, const variant
 
 	// получаем метаданные кластера
 	RdKafka::Metadata* metadata = nullptr;
-	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, 5000);
+	RdKafka::ErrorCode err = producer.metadata(true, nullptr, &metadata, 5000);
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return "";
 	}
 
@@ -194,33 +270,15 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	std::stringstream s{};
 
 	boost::property_tree::ptree jsonObj;
-	RdKafkaConfPtr conf(RdKafka::Conf::create(RdKafka::Conf::CONF_GLOBAL));
 
 	std::string tBrokers = std::get<std::string>(brokers);
 	std::string tTopicName = std::get<std::string>(topicName);
 	int32_t tTimeout = std::get<int32_t>(timeout);
 
-	if (!applyKafkaSettings(conf.get(), msg_err))
-	{
-		return result;
-	}
-
-	if (conf->set("metadata.broker.list", tBrokers, msg_err) != RdKafka::Conf::CONF_OK)
-	{
-		return result;
-	}
-
-	// запрещаем автосоздание топиков при запросе метаданных
-	if (conf->set("allow.auto.create.topics", "false", msg_err) != RdKafka::Conf::CONF_OK)
-	{
-		return result;
-	}
-
-	// создаем временного продюсера для получения метаданных
-	std::unique_ptr<RdKafka::Producer> producer(RdKafka::Producer::create(conf.get(), msg_err));
+	// временный продюсер для метаданных; автосоздание топиков при запросе запрещено
+	auto producer = createMetadataClient(tBrokers, {{"allow.auto.create.topics", "false"}});
 	if (!producer)
 	{
-		msg_err = enrichSslError(std::string("Client creation error: ") + msg_err);
 		return result;
 	}
 
@@ -233,10 +291,10 @@ std::string SimpleKafka1C::getTopicMetadata(const variant_t& brokers, const vari
 	}
 
 	class RdKafka::Metadata* metadata;
-	RdKafka::ErrorCode err = producer->metadata(false, topicHandle.get(), &metadata, tTimeout);
+	RdKafka::ErrorCode err = producer.metadata(false, topicHandle.get(), &metadata, tTimeout);
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return result;
 	}
 
@@ -375,11 +433,11 @@ std::string SimpleKafka1C::getPartitionWatermarks(const variant_t& brokers,
 	// получаем watermarks для партиции
 	int64_t low = 0;
 	int64_t high = 0;
-	RdKafka::ErrorCode err = producer->query_watermark_offsets(tTopicName, tPartition, &low, &high, 5000);
+	RdKafka::ErrorCode err = producer.queryWatermarks(tTopicName, tPartition, &low, &high, 5000);
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return "";
 	}
 
@@ -470,11 +528,11 @@ bool SimpleKafka1C::pingBroker(const variant_t& brokers, const variant_t& timeou
 
 	// Пытаемся получить метаданные - это проверит доступность брокера
 	RdKafka::Metadata* metadata = nullptr;
-	RdKafka::ErrorCode err = producer->metadata(true, nullptr, &metadata, tTimeout);
+	RdKafka::ErrorCode err = producer.metadata(true, nullptr, &metadata, tTimeout);
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = "Broker unavailable: " + std::string(RdKafka::err2str(err));
+		msg_err = producer.describe("", "Broker unavailable: " + std::string(RdKafka::err2str(err)));
 		if (metadata)
 			delete metadata;
 		return false;
@@ -500,11 +558,11 @@ double SimpleKafka1C::getPartitionMessageCount(const variant_t& brokers,
 	// получаем watermarks для партиции
 	int64_t low = 0;
 	int64_t high = 0;
-	RdKafka::ErrorCode err = producer->query_watermark_offsets(tTopicName, tPartition, &low, &high, 5000);
+	RdKafka::ErrorCode err = producer.queryWatermarks(tTopicName, tPartition, &low, &high, 5000);
 
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return -1.0;
 	}
 
@@ -581,10 +639,10 @@ std::string SimpleKafka1C::getTopicSize(const variant_t& brokers, const variant_
 	}
 
 	RdKafka::Metadata* metadata = nullptr;
-	RdKafka::ErrorCode err = producer->metadata(false, topicHandle.get(), &metadata, tTimeout);
+	RdKafka::ErrorCode err = producer.metadata(false, topicHandle.get(), &metadata, tTimeout);
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(err);
+		msg_err = producer.describe("", RdKafka::err2str(err));
 		return result;
 	}
 
@@ -625,12 +683,12 @@ std::string SimpleKafka1C::getTopicSize(const variant_t& brokers, const variant_
 		partitions[i].size_bytes = 0;
 		partitions[i].message_count = 0;
 
-		err = producer->query_watermark_offsets(tTopicName, partitions[i].id,
-		                                         &partitions[i].low, &partitions[i].high, tTimeout);
+		err = producer.queryWatermarks(tTopicName, partitions[i].id,
+		                               &partitions[i].low, &partitions[i].high, tTimeout);
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
-			msg_err = "Failed to query watermarks for partition " + std::to_string(partitions[i].id)
-			          + ": " + RdKafka::err2str(err);
+			msg_err = producer.describe("", "Failed to query watermarks for partition " + std::to_string(partitions[i].id)
+			          + ": " + RdKafka::err2str(err));
 			delete metadata;
 			return result;
 		}
@@ -676,7 +734,7 @@ std::string SimpleKafka1C::getTopicSize(const variant_t& brokers, const variant_
 	}
 
 	// Release producer before creating consumer
-	producer.reset();
+	producer.producer.reset();
 
 	// Create a temporary consumer to read all messages
 	std::string errstr;

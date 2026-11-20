@@ -50,6 +50,8 @@
 
 [Обработка исключений](./docs/exceptionHandling.md)
 
+[Ошибки подключения: SSL, аутентификация, быстрый отказ](./docs/connection-errors.md)
+
 ## Готовые сборки под платформ (win/linux)
 
 Чтобы не мучаться с ручной сборкой dll и so, мы подготовили готовые [сборки](https://github.com/NuclearAPK/Simple-Kafka_Adapter/releases) для платформ win/linux x64
