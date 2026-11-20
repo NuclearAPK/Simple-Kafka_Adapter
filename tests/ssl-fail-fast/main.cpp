@@ -43,13 +43,21 @@ namespace
 
 	bool has(const std::string& text, const std::string& part) { return text.find(part) != std::string::npos; }
 
+#ifdef _WIN32
+	const std::string kSep = "\\";
+	bool isAbsolute(const std::string& p) { return p.find(':') != std::string::npos; }
+#else
+	const std::string kSep = "/";
+	bool isAbsolute(const std::string& p) { return !p.empty() && p.front() == '/'; }
+#endif
+
 	void configure(AddIn& c, bool noHostCheck, const std::string& caFile = "ca-cert.txt")
 	{
 		auto set = [&](const char* k, const std::string& v) { c.call("УстановитьПараметр", {std::string(k), v}); };
 		set("security.protocol", "SSL");
-		set("ssl.ca.location", caFile.find(':') != std::string::npos ? caFile : g_dir + "\\" + caFile);
-		set("ssl.certificate.location", g_dir + "\\client.crt");
-		set("ssl.key.location", g_dir + "\\client.key");
+		set("ssl.ca.location", isAbsolute(caFile) ? caFile : g_dir + kSep + caFile);
+		set("ssl.certificate.location", g_dir + kSep + "client.crt");
+		set("ssl.key.location", g_dir + kSep + "client.key");
 		if (noHostCheck)
 			set("ssl.endpoint.identification.algorithm", "none");
 	}
