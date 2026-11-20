@@ -196,6 +196,16 @@ void SimpleKafka1C::pushConsumerLoop()
 				(std::max<long long>)(1, (std::min<long long>)(remaining, PUSH_POLL_SLICE_MS)));
 
 			std::unique_ptr<RdKafka::Message> msg(consumer->consume(pollMs));
+
+			// SSL/auth failure (specs/ssl-fail-fast.md, R9): reading cannot recover without
+			// re-initialization, so stop with one "Stopped" event carrying the reason
+			if ((!msg || msg->err() == RdKafka::ERR__TIMED_OUT) && consumerEvents.failedFatal())
+			{
+				consumerMetrics.errorsCount++;
+				stopReason = consumerEvents.describe("", "");
+				break;
+			}
+
 			if (!msg)
 				continue;
 

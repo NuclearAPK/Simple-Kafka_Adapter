@@ -20,6 +20,24 @@
 
 //================================== Consumer ==========================================
 
+RdKafka::Message* SimpleKafka1C::consumeSliced(int timeoutMs)
+{
+	// consume() serves event_cb itself; a message with __TIMED_OUT means "nothing yet"
+	RdKafka::Message* msg = nullptr;
+	connect_failure::waitSliced(timeoutMs, *consumerEvents.state,
+		[&](int32_t slice) {
+			delete msg;
+			msg = hConsumer->consume(slice);
+			return !(msg && msg->err() == RdKafka::ERR__TIMED_OUT);
+		},
+		[] {});
+	// No slice ran: either a known fatal error (R8, the caller reports it without reading,
+	// so no message is consumed and lost) or a zero timeout (keep the old non-blocking read)
+	if (!msg && !consumerEvents.failedFatal())
+		msg = hConsumer->consume(0);
+	return msg;
+}
+
 bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 {
 	// Сбрасываем устаревшую асинхронную ошибку, чтобы она не маскировала успех новой инициализации
@@ -75,7 +93,8 @@ bool SimpleKafka1C::initConsumer(const variant_t& brokers)
 	}
 
 	// обратные вызовы для получения статистики и получения ошибок для дальнейшей обработки
-	conf->set("event_cb", &cl_event_cb, msg_err);
+	consumerEvents.reset(&cl_event_cb, hintContext(tBrokers));
+	conf->set("event_cb", static_cast<RdKafka::EventCb*>(&consumerEvents), msg_err);
 
 	// The handler is always installed: it applies reading positions, and with
 	// cooperative-sticky librdkafka 2.16.0 skips LeaveGroup on close() when the
@@ -160,13 +179,13 @@ std::string SimpleKafka1C::getConfiguredBrokers() const
 	return brokers;
 }
 
-bool SimpleKafka1C::checkReadingPosition(RdKafka::Producer* producer,
+bool SimpleKafka1C::checkReadingPosition(MetadataClient& producer,
 	const std::string& topic, int32_t partition, int64_t offset)
 {
 	const int timeout = adminOperationTimeout;
 
 	std::string handleErr;
-	std::unique_ptr<RdKafka::Topic> topicHandle(RdKafka::Topic::create(producer, topic, nullptr, handleErr));
+	std::unique_ptr<RdKafka::Topic> topicHandle(RdKafka::Topic::create(producer.get(), topic, nullptr, handleErr));
 	if (!topicHandle)
 	{
 		msg_err = "Topic handle creation error: " + handleErr;
@@ -174,10 +193,11 @@ bool SimpleKafka1C::checkReadingPosition(RdKafka::Producer* producer,
 	}
 
 	RdKafka::Metadata* metadata = nullptr;
-	RdKafka::ErrorCode err = producer->metadata(false, topicHandle.get(), &metadata, timeout);
+	RdKafka::ErrorCode err = producer.metadata(false, topicHandle.get(), &metadata, timeout);
 	if (err != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = "Failed to get metadata for topic '" + topic + "': " + RdKafka::err2str(err);
+		delete metadata;
+		msg_err = producer.describe("", "Failed to get metadata for topic '" + topic + "': " + RdKafka::err2str(err));
 		return false;
 	}
 
@@ -225,11 +245,11 @@ bool SimpleKafka1C::checkReadingPosition(RdKafka::Producer* producer,
 	{
 		int64_t low = 0;
 		int64_t high = 0;
-		err = producer->query_watermark_offsets(topic, partition, &low, &high, timeout);
+		err = producer.queryWatermarks(topic, partition, &low, &high, timeout);
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
-			msg_err = "Failed to query watermarks for topic '" + topic + "' partition "
-				+ std::to_string(partition) + ": " + RdKafka::err2str(err);
+			msg_err = producer.describe("", "Failed to query watermarks for topic '" + topic + "' partition "
+				+ std::to_string(partition) + ": " + RdKafka::err2str(err));
 			return false;
 		}
 
@@ -297,7 +317,7 @@ bool SimpleKafka1C::setReadingPosition(const variant_t& topicName, const variant
 		if (!producer)
 			return false;
 
-		if (!checkReadingPosition(producer.get(), assignTopic, assignPartition, assignOffset))
+		if (!checkReadingPosition(producer, assignTopic, assignPartition, assignOffset))
 			return false;
 	}
 
@@ -399,7 +419,7 @@ bool SimpleKafka1C::setReadingPositions(const variant_t& jsonTopicPartitions, co
 
 		for (const auto& entry : entries)
 		{
-			if (!checkReadingPosition(producer.get(), entry.topic, entry.partition, entry.offset))
+			if (!checkReadingPosition(producer, entry.topic, entry.partition, entry.offset))
 				return false;
 		}
 	}
@@ -435,7 +455,13 @@ std::string SimpleKafka1C::consume()
 	std::ofstream eventFile{};
 	boost::property_tree::ptree jsonObj;
 	RdKafka::Headers* headers;
-	std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
+	std::unique_ptr<RdKafka::Message> msg(consumeSliced(waitMessageTimeout));
+	if ((!msg || msg->err() == RdKafka::ERR__TIMED_OUT) && consumerEvents.failedFatal())
+	{
+		msg_err = consumerEvents.describe("Consume", "no messages");
+		consumerMetrics.errorsCount++;
+		return EMPTYSTR;
+	}
 	RdKafka::ErrorCode resultConsume = msg->err();
 
 	openEventFile(consumerLogName, eventFile);
@@ -513,7 +539,13 @@ bool SimpleKafka1C::getMessage()
 		return false;
 	}
 
-	std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
+	std::unique_ptr<RdKafka::Message> msg(consumeSliced(waitMessageTimeout));
+	if ((!msg || msg->err() == RdKafka::ERR__TIMED_OUT) && consumerEvents.failedFatal())
+	{
+		msg_err = consumerEvents.describe("ReadMessage", "no messages");
+		consumerMetrics.errorsCount++;
+		return false;
+	}
 	RdKafka::ErrorCode resultConsume = msg->err();
 
 	std::ofstream eventFile;
@@ -702,7 +734,15 @@ std::string SimpleKafka1C::consumeBatch(const variant_t& maxMessages, const vari
 		int32_t remainingWait = static_cast<int32_t>(maxWait - elapsed);
 		if (remainingWait <= 0) remainingWait = 1;
 
-		std::unique_ptr<RdKafka::Message> msg(hConsumer->consume(waitMessageTimeout));
+		std::unique_ptr<RdKafka::Message> msg(consumeSliced(waitMessageTimeout));
+		if ((!msg || msg->err() == RdKafka::ERR__TIMED_OUT) && consumerEvents.failedFatal())
+		{
+			msg_err = consumerEvents.describe("ConsumeBatch", "no messages");
+			consumerMetrics.errorsCount++;
+			if (messagesRead == 0)
+				return "";
+			break;
+		}
 		if (!msg)
 		{
 			msg_err = "Consumer returned null message";
@@ -902,6 +942,14 @@ std::string SimpleKafka1C::readMessageByOffset(const variant_t& brokers, const v
 	if (conf->set("enable.auto.commit", "false", msg_err) != RdKafka::Conf::CONF_OK)
 		return result;
 
+	// SSL/auth failures stop the wait early (specs/ssl-fail-fast.md); the callback
+	// outlives the consumer declared below
+	auto connState = std::make_shared<connect_failure::ConnectFailureState>();
+	ServiceEventCb connEvents(connState);
+	const connect_failure::HintContext connHint = hintContext(tBrokers);
+	if (conf->set("event_cb", static_cast<RdKafka::EventCb*>(&connEvents), msg_err) != RdKafka::Conf::CONF_OK)
+		return result;
+
 	std::unique_ptr<RdKafka::KafkaConsumer> consumer(RdKafka::KafkaConsumer::create(conf.get(), msg_err));
 	if (!consumer)
 	{
@@ -921,9 +969,19 @@ std::string SimpleKafka1C::readMessageByOffset(const variant_t& brokers, const v
 		return result;
 	}
 
-	std::unique_ptr<RdKafka::Message> msg(consumer->consume(tTimeout));
+	std::unique_ptr<RdKafka::Message> msg;
+	connect_failure::waitSliced(tTimeout, *connState,
+		[&](int32_t slice) {
+			msg.reset(consumer->consume(slice));
+			return !(msg && msg->err() == RdKafka::ERR__TIMED_OUT);
+		},
+		[] {});
 
-	if (!msg)
+	if ((!msg || msg->err() == RdKafka::ERR__TIMED_OUT) && connState->hasFatal())
+	{
+		msg_err = connect_failure::formatConnectError("ReadMessageByOffset", "", *connState, connHint);
+	}
+	else if (!msg)
 	{
 		msg_err = "Consumer returned null message";
 	}

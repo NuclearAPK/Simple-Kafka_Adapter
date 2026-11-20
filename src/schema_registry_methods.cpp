@@ -39,6 +39,8 @@ std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string
 	curl_easy_setopt(curlHandle, CURLOPT_WRITEFUNCTION, WriteCallback);
 	curl_easy_setopt(curlHandle, CURLOPT_WRITEDATA, &response);
 	curl_easy_setopt(curlHandle, CURLOPT_TIMEOUT, 30L);
+	char curlErrBuf[CURL_ERROR_SIZE] = {0};
+	curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, curlErrBuf);
 
 	struct curl_slist* headers = nullptr;
 	headers = curl_slist_append(headers, ("Content-Type: " + contentType).c_str());
@@ -69,8 +71,24 @@ std::string SimpleKafka1C::httpRequest(const std::string& url, const std::string
 	if (res != CURLE_OK)
 	{
 		msg_err = std::string("CURL error: ") + curl_easy_strerror(res);
+		if (curlErrBuf[0] != '\0')
+			msg_err += " (" + connect_failure::ensureUtf8(curlErrBuf) + ")";  // schannel text is in the system code page
+
+		// R10 (specs/ssl-fail-fast.md): TLS failures get the same kind of hint as broker ones
+		if (res == CURLE_PEER_FAILED_VERIFICATION || res == CURLE_SSL_CACERT_BADFILE
+			|| res == CURLE_SSL_CERTPROBLEM || res == CURLE_SSL_CONNECT_ERROR)
+		{
+			connect_failure::HintContext ctx;
+			ctx.brokers = url;
+			ctx.http = true;
+			const std::string hint = connect_failure::connectHint(msg_err, ctx);
+			if (!hint.empty())
+				msg_err += " | " + hint;
+		}
+		curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, nullptr);
 		return "";
 	}
+	curl_easy_setopt(curlHandle, CURLOPT_ERRORBUFFER, nullptr);
 
 	long httpCode = 0;
 	curl_easy_getinfo(curlHandle, CURLINFO_RESPONSE_CODE, &httpCode);

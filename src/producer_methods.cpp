@@ -44,6 +44,10 @@ RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorC
 
 	while (true)
 	{
+		// R8: a known SSL/auth failure makes every further produce pointless
+		if (producerEvents.failedFatal())
+			return RdKafka::ERR__SSL;
+
 		resp = produceFn();
 
 		if (resp == RdKafka::ERR__QUEUE_FULL)
@@ -66,6 +70,42 @@ RdKafka::ErrorCode SimpleKafka1C::produceWithRetry(std::function<RdKafka::ErrorC
 	}
 
 	return resp;
+}
+
+RdKafka::ErrorCode SimpleKafka1C::flushSliced(int timeoutMs)
+{
+	if (timeoutMs <= 0)  // non-blocking (0) or infinite (-1) flush: keep librdkafka semantics
+	{
+		if (timeoutMs == 0 || producerEvents.failedFatal())
+			return producerEvents.failedFatal() ? RdKafka::ERR__SSL : hProducer->flush(0);
+	}
+
+	// flush() serves callbacks itself, so no extra pump is needed between slices
+	RdKafka::ErrorCode rc = RdKafka::ERR__TIMED_OUT;
+	const auto r = connect_failure::waitSliced(timeoutMs, *producerEvents.state,
+		[&](int32_t slice) { rc = hProducer->flush(slice); return rc != RdKafka::ERR__TIMED_OUT; },
+		[] {});
+	return r == connect_failure::WaitResult::Fatal ? RdKafka::ERR__SSL : rc;
+}
+
+RdKafka::Error* SimpleKafka1C::transactionalCallSliced(int timeoutMs, const std::function<RdKafka::Error*(int)>& call)
+{
+	RdKafka::Error* error = nullptr;
+	connect_failure::waitSliced(timeoutMs, *producerEvents.state,
+		[&](int32_t slice) {
+			delete error;
+			error = call(slice);
+			// __TIMED_OUT of init/commit/abort_transaction is retriable (rdkafka.h):
+			// the operation continues in the background and the call may be repeated
+			return !(error && error->code() == RdKafka::ERR__TIMED_OUT && error->is_retriable());
+		},
+		[&] { hProducer->poll(0); });
+	return error;
+}
+
+std::string SimpleKafka1C::producerErrorText(std::string_view baseError) const
+{
+	return producerEvents.failedFatal() ? producerEvents.describe("", baseError) : std::string(baseError);
 }
 
 //================================== Producer ==========================================
@@ -128,7 +168,8 @@ bool SimpleKafka1C::initProducer(const variant_t& brokers)
 	}
 
 	conf->set("dr_cb", &cl_dr_cb, msg_err); // callback trigger
-	conf->set("event_cb", &cl_event_cb, msg_err);
+	producerEvents.reset(&cl_event_cb, hintContext(std::get<std::string>(brokers)));
+	conf->set("event_cb", static_cast<RdKafka::EventCb*>(&producerEvents), msg_err);
 
 	hProducer = RdKafka::Producer::create(conf.get(), msg_err);
 	if (!hProducer)
@@ -206,7 +247,7 @@ int32_t SimpleKafka1C::produce(const variant_t& msg, const variant_t& topicName,
 
 	if (resp != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(resp);
+		msg_err = producerErrorText(RdKafka::err2str(resp));
 		if (hdrs != nullptr)
 		{
 			delete hdrs;
@@ -254,7 +295,13 @@ int32_t SimpleKafka1C::produceAndWaitResult(std::function<int32_t()> produceFn, 
 
 	if (produceFn() != -1)
 	{
-		hProducer->flush(20 * 1000);		 // wait for max 20 seconds
+		flushSliced(20 * 1000);		 // wait for max 20 seconds, less on an SSL/auth failure
+
+		if (producerEvents.failedFatal())
+		{
+			msg_err = producerEvents.describe("", "Messages not delivered");
+			return RdKafka::Message::MSG_STATUS_NOT_PERSISTED;
+		}
 
 		// Причина отказа, собранная в dr_cb (код, топик, партиция). Пусто,
 		// если delivery report так и не пришёл.
@@ -331,7 +378,7 @@ int32_t SimpleKafka1C::produceAvro(const variant_t& topicName, const variant_t& 
 
 	if (resp != RdKafka::ERR_NO_ERROR)
 	{
-		msg_err = RdKafka::err2str(resp);
+		msg_err = producerErrorText(RdKafka::err2str(resp));
 		if (hdrs != nullptr)
 		{
 			delete hdrs;
@@ -462,7 +509,7 @@ int32_t SimpleKafka1C::produceBatch(const variant_t& messagesJson, const variant
 					eventFile << currentDateTime() << " Error: Failed to produce message: " << RdKafka::err2str(resp) << std::endl;
 
 				// Пробрасываем текст ошибки в 1С (последняя ошибка батча)
-				msg_err = std::string("produceBatch: failed to produce message: ") + RdKafka::err2str(resp);
+				msg_err = producerErrorText(std::string("produceBatch: failed to produce message: ") + RdKafka::err2str(resp));
 
 				if (hdrs != nullptr)
 					delete hdrs;
@@ -588,7 +635,7 @@ std::string SimpleKafka1C::produceBatchWithResult(const variant_t& messagesJson,
 
 			if (resp != RdKafka::ERR_NO_ERROR)
 			{
-				br->errorMsg = RdKafka::err2str(resp);
+				br->errorMsg = producerErrorText(RdKafka::err2str(resp));
 				br->delivered = false;
 				if (hdrs != nullptr)
 					delete hdrs;
@@ -599,11 +646,12 @@ std::string SimpleKafka1C::produceBatchWithResult(const variant_t& messagesJson,
 		}
 
 		// Wait for all callbacks to fire
-		RdKafka::ErrorCode flushRc = hProducer->flush(tFlushTimeout);
+		RdKafka::ErrorCode flushRc = flushSliced(tFlushTimeout);
 		if (flushRc != RdKafka::ERR_NO_ERROR)
 		{
 			// Таймаут/ошибка flush — пробрасываем текст в 1С, а не только в лог
-			msg_err = std::string("produceBatchWithResult: flush returned ") + RdKafka::err2str(flushRc);
+			msg_err = producerEvents.describe("produceBatchWithResult",
+				std::string("flush returned ") + RdKafka::err2str(flushRc));
 			if (eventFile.is_open())
 				eventFile << currentDateTime() << " Warning: flush returned " << RdKafka::err2str(flushRc) << std::endl;
 		}
@@ -652,13 +700,21 @@ bool SimpleKafka1C::stopProducer()
 {
 	if (hProducer != nullptr)
 	{
-		RdKafka::ErrorCode flushResult = hProducer->flush(producerFlushTimeout);
+		RdKafka::ErrorCode flushResult = flushSliced(producerFlushTimeout);
+		const bool connectFailed = producerEvents.failedFatal();
+		const std::string connectError = connectFailed ? producerEvents.describe("", "Producer flush failed") : std::string();
 
 		// Проверяем, остались ли недоставленные сообщения
 		int outqLen = hProducer->outq_len();
 
 		delete hProducer;
 		hProducer = nullptr;
+
+		if (connectFailed)
+		{
+			msg_err = connectError + " (" + std::to_string(outqLen) + " message(s) were not delivered)";
+			return false;
+		}
 
 		// Если flush завершился по таймауту или остались сообщения в очереди
 		if (flushResult == RdKafka::ERR__TIMED_OUT || outqLen > 0)
@@ -728,7 +784,8 @@ bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const va
 	}
 
 	// Set callbacks
-	conf->set("event_cb", &cl_event_cb, msg_err);
+	producerEvents.reset(&cl_event_cb, hintContext(std::get<std::string>(brokers)));
+	conf->set("event_cb", static_cast<RdKafka::EventCb*>(&producerEvents), msg_err);
 	conf->set("dr_cb", &cl_dr_cb, msg_err);
 
 	// Create producer
@@ -742,11 +799,12 @@ bool SimpleKafka1C::initTransactionalProducer(const variant_t& brokers, const va
 	}
 
 	// Initialize transactions
-	RdKafka::Error* error = hProducer->init_transactions(10000); // 10 second timeout
+	RdKafka::Error* error = transactionalCallSliced(10000, // 10 second timeout
+		[&](int t) { return hProducer->init_transactions(t); });
 
-	if (error)
+	if (error || producerEvents.failedFatal())
 	{
-		msg_err = error->str();
+		msg_err = producerEvents.describe("", error ? error->str() : "init_transactions failed");
 		if (eventFile.is_open()) eventFile << currentDateTime() << " Failed to initialize transactions: " << msg_err << std::endl;
 		delete error;
 		delete hProducer;
@@ -787,11 +845,12 @@ bool SimpleKafka1C::commitTransaction()
 		return false;
 	}
 
-	RdKafka::Error* error = hProducer->commit_transaction(30000); // 30 second timeout
+	RdKafka::Error* error = transactionalCallSliced(30000, // 30 second timeout
+		[&](int t) { return hProducer->commit_transaction(t); });
 
-	if (error)
+	if (error || producerEvents.failedFatal())
 	{
-		msg_err = error->str();
+		msg_err = producerEvents.describe("", error ? error->str() : "commit_transaction failed");
 		delete error;
 		return false;
 	}
@@ -807,11 +866,12 @@ bool SimpleKafka1C::abortTransaction()
 		return false;
 	}
 
-	RdKafka::Error* error = hProducer->abort_transaction(30000); // 30 second timeout
+	RdKafka::Error* error = transactionalCallSliced(30000, // 30 second timeout
+		[&](int t) { return hProducer->abort_transaction(t); });
 
-	if (error)
+	if (error || producerEvents.failedFatal())
 	{
-		msg_err = error->str();
+		msg_err = producerEvents.describe("", error ? error->str() : "abort_transaction failed");
 		delete error;
 		return false;
 	}

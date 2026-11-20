@@ -175,14 +175,14 @@ bool SimpleKafka1C::addAcl(const variant_t& brokers, const variant_t& resourceTy
 	rd_kafka_AclBinding_t* acl_arr[1] = { acl };
 	rd_kafka_CreateAcls(admin.get(), acl_arr, 1, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	bool success = false;
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -214,7 +214,7 @@ bool SimpleKafka1C::addAcl(const variant_t& brokers, const variant_t& resourceTy
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	rd_kafka_AdminOptions_destroy(options);
@@ -288,13 +288,13 @@ std::string SimpleKafka1C::describeAcls(const variant_t& brokers, const variant_
 
 	rd_kafka_DescribeAcls(admin.get(), filter, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -324,7 +324,7 @@ std::string SimpleKafka1C::describeAcls(const variant_t& brokers, const variant_
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	rd_kafka_AdminOptions_destroy(options);
@@ -399,13 +399,13 @@ std::string SimpleKafka1C::deleteAcl(const variant_t& brokers, const variant_t& 
 	rd_kafka_AclBindingFilter_t* filter_arr[1] = { filter };
 	rd_kafka_DeleteAcls(admin.get(), filter_arr, 1, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (rkev)
 	{
 		if (rd_kafka_event_error(rkev))
 		{
-			msg_err = rd_kafka_event_error_string(rkev);
+			msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		}
 		else
 		{
@@ -453,7 +453,7 @@ std::string SimpleKafka1C::deleteAcl(const variant_t& brokers, const variant_t& 
 	}
 	else
 	{
-		msg_err = "Response timeout";
+		msg_err = admin.describeFailure("Response timeout");
 	}
 
 	rd_kafka_AdminOptions_destroy(options);

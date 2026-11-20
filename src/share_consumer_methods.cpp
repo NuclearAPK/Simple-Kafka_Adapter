@@ -149,11 +149,12 @@ void SimpleKafka1C::ShareLogContext::logCallback(const rd_kafka_t* rk, int level
 void SimpleKafka1C::ShareLogContext::errorCallback(rd_kafka_t* rk, int err, const char* reason, void* opaque)
 {
 	(void)rk;
-	const auto* ctx = static_cast<const ShareLogContext*>(opaque);
+	auto* ctx = static_cast<ShareLogContext*>(opaque);
 	if (ctx == nullptr)
 	{
 		return;
 	}
+	connect_failure::rdkafkaErrorCallback(rk, err, reason, &ctx->connState);
 	const bool fatal = (err == RD_KAFKA_RESP_ERR__FATAL);
 	const std::string text = std::string(fatal ? "FATAL " : "") + "ERROR ("
 		+ rd_kafka_err2str(static_cast<rd_kafka_resp_err_t>(err)) + "): " + (reason ? reason : "");
@@ -206,6 +207,7 @@ bool SimpleKafka1C::initShareConsumer(const variant_t& brokers, const variant_t&
 	log->clientId = clientID();
 	log->pid = pid;
 	log->asyncError = asyncErrorState;
+	log->hint = hintContext(tBrokers);
 
 	std::ofstream eventFile{};
 	log->openLog(eventFile);
@@ -406,8 +408,25 @@ std::string SimpleKafka1C::shareReadBatch(const variant_t& maxWaitMs, const vari
 
 	dropShareBatchLocked();
 
+	// Poll in slices: an empty batch means "nothing yet"; stop early on an SSL/auth
+	// failure (specs/ssl-fail-fast.md, R6/R8)
 	rd_kafka_messages_t* batch = nullptr;
-	rd_kafka_error_t* pollError = rd_kafka_share_poll(shareState.handle, timeoutMs, &batch);
+	rd_kafka_error_t* pollError = nullptr;
+	connect_failure::waitSliced(std::max<int32_t>(1, timeoutMs), shareState.log->connState,
+		[&](int32_t slice) {
+			rd_kafka_messages_destroy(batch);
+			batch = nullptr;
+			pollError = rd_kafka_share_poll(shareState.handle, slice, &batch);
+			return pollError != nullptr || rd_kafka_messages_count(batch) > 0;
+		},
+		[] {});
+	if (pollError == nullptr && rd_kafka_messages_count(batch) == 0 && shareState.log->connState.hasFatal())
+	{
+		msg_err = connect_failure::formatConnectError("ShareConsume", "", shareState.log->connState, shareState.log->hint);
+		if (eventFile.is_open()) eventFile << currentDateTime() << SHARE_LOG_PREFIX << "Poll error: " << msg_err << std::endl;
+		rd_kafka_messages_destroy(batch);
+		return "";
+	}
 	if (pollError != nullptr)
 	{
 		const bool fatal = rd_kafka_error_is_fatal(pollError);
@@ -622,6 +641,12 @@ bool SimpleKafka1C::shareCommit(const variant_t& timeoutMs)
 	if (!std::holds_alternative<int32_t>(timeoutMs))
 	{
 		msg_err = "shareCommit: timeoutMs must be a number";
+		return false;
+	}
+
+	if (shareState.log->connState.hasFatal())  // R8: known SSL/auth failure, do not wait
+	{
+		msg_err = connect_failure::formatConnectError("ShareCommit", "", shareState.log->connState, shareState.log->hint);
 		return false;
 	}
 

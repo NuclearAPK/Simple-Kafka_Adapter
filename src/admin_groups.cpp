@@ -63,6 +63,13 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 		return result;
 	}
 
+	// SSL/auth failures arrive asynchronously; record them to stop waiting early
+	// (specs/ssl-fail-fast.md). The state outlives rk: it is destroyed after rd_kafka_destroy.
+	connect_failure::ConnectFailureState connState;
+	const connect_failure::HintContext connHint = hintContext(tBrokers);
+	rd_kafka_conf_set_opaque(conf, &connState);
+	rd_kafka_conf_set_error_cb(conf, &connect_failure::rdkafkaErrorCallback);
+
 	// создаем консьюмера для Admin API
 	rd_kafka_t* rk = rd_kafka_new(RD_KAFKA_CONSUMER, conf, errstr, sizeof(errstr));
 	if (!rk)
@@ -83,10 +90,10 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 		return result;
 	}
 
-	rd_kafka_resp_err_t err = rd_kafka_metadata(rk, 0, rkt, &metadata, tTimeout);
+	rd_kafka_resp_err_t err = connect_failure::slicedMetadata(rk, connState, 0, rkt, &metadata, tTimeout);
 	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
-		msg_err = rd_kafka_err2str(err);
+		msg_err = connect_failure::formatConnectError("", rd_kafka_err2str(err), connState, connHint);
 		rd_kafka_topic_destroy(rkt);
 		rd_kafka_destroy(rk);
 		return result;
@@ -122,10 +129,10 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 	}
 
 	// получаем committed offsets для группы консьюмеров
-	err = rd_kafka_committed(rk, partitions, tTimeout);
+	err = connect_failure::slicedCommitted(rk, connState, partitions, tTimeout);
 	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
-		msg_err = rd_kafka_err2str(err);
+		msg_err = connect_failure::formatConnectError("", rd_kafka_err2str(err), connState, connHint);
 		rd_kafka_topic_partition_list_destroy(partitions);
 		rd_kafka_metadata_destroy(metadata);
 		rd_kafka_topic_destroy(rkt);
@@ -147,7 +154,7 @@ std::string SimpleKafka1C::getConsumerLag(const variant_t& brokers, const varian
 
 		// получаем watermark offsets для партиции
 		int64_t low = 0, high = 0;
-		err = rd_kafka_query_watermark_offsets(rk, tTopicName.c_str(), part->partition, &low, &high, tTimeout);
+		err = connect_failure::slicedWatermarks(rk, connState, tTopicName.c_str(), part->partition, &low, &high, tTimeout);
 
 		boost::property_tree::ptree partNode;
 		partNode.put("partition", part->partition);
@@ -228,17 +235,17 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 	rd_kafka_ListConsumerGroups(admin.get(), list_options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 	if (!rkev)
 	{
-		msg_err = "Timeout while retrieving group list";
+		msg_err = admin.describeFailure("Timeout while retrieving group list");
 		rd_kafka_AdminOptions_destroy(list_options);
 		return result;
 	}
 
 	if (rd_kafka_event_error(rkev))
 	{
-		msg_err = rd_kafka_event_error_string(rkev);
+		msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		rd_kafka_event_destroy(rkev);
 		rd_kafka_AdminOptions_destroy(list_options);
 		return result;
@@ -300,10 +307,10 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 		return result;
 	}
 
-	rd_kafka_resp_err_t err = rd_kafka_metadata(admin.get(), 0, rkt, &metadata, tTimeout);
+	rd_kafka_resp_err_t err = admin.metadata(0, rkt, &metadata, tTimeout);
 	if (err != RD_KAFKA_RESP_ERR_NO_ERROR)
 	{
-		msg_err = rd_kafka_err2str(err);
+		msg_err = admin.describeFailure(rd_kafka_err2str(err));
 		rd_kafka_topic_destroy(rkt);
 		return result;
 	}
@@ -362,7 +369,7 @@ std::string SimpleKafka1C::getTopicConsumerGroups(const variant_t& brokers, cons
 
 		rd_kafka_ListConsumerGroupOffsets(admin.get(), grp_offsets_arr, 1, offsets_options, admin.queue());
 
-		rd_kafka_event_t* offset_ev = rd_kafka_queue_poll(admin.queue(), tTimeout + 1000);
+		rd_kafka_event_t* offset_ev = admin.pollResult(tTimeout + 1000);
 
 		bool hasOffsets = false;
 		boost::property_tree::ptree offsetsChildren;
@@ -449,6 +456,11 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 		msg_err = "Consumer not initialized";
 		return EMPTYSTR;
 	}
+	if (consumerEvents.failedFatal())  // R8: known SSL/auth failure, do not wait
+	{
+		msg_err = consumerEvents.describe("", "");
+		return EMPTYSTR;
+	}
 
 	std::stringstream s{};
 	long long timeline = 0;
@@ -469,7 +481,7 @@ std::string SimpleKafka1C::getConsumerCurrentGroupOffset(const variant_t& times,
 
 	if (metaErr != RdKafka::ERR_NO_ERROR || metadata == nullptr)
 	{
-		msg_err = "Failed to get metadata: " + RdKafka::err2str(metaErr);
+		msg_err = consumerEvents.describe("", "Failed to get metadata: " + RdKafka::err2str(metaErr));
 		if (metadata) delete metadata;
 		return EMPTYSTR;
 	}
@@ -610,7 +622,7 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 	rd_kafka_DeleteGroups(admin.get(), del_groups, 1, options, admin.queue());
 
 	// ожидаем результат
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), 12000);
+	rd_kafka_event_t* rkev = admin.pollResult(12000);
 
 	// освобождаем ресурсы
 	rd_kafka_DeleteGroup_destroy(del_groups[0]);
@@ -618,13 +630,13 @@ bool SimpleKafka1C::deleteConsumerGroup(const variant_t& brokers, const variant_
 
 	if (!rkev)
 	{
-		msg_err = "Timeout while deleting consumer group";
+		msg_err = admin.describeFailure("Timeout while deleting consumer group");
 		return false;
 	}
 
 	if (rd_kafka_event_error(rkev))
 	{
-		msg_err = rd_kafka_event_error_string(rkev);
+		msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		rd_kafka_event_destroy(rkev);
 		return false;
 	}
@@ -671,6 +683,11 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 	if (!hConsumer)
 	{
 		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
+		return false;
+	}
+	if (consumerEvents.failedFatal())  // R8: known SSL/auth failure, do not wait
+	{
+		msg_err = consumerEvents.describe("", "");
 		return false;
 	}
 
@@ -762,7 +779,7 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
-			msg_err = RdKafka::err2str(err);
+			msg_err = consumerEvents.describe("", RdKafka::err2str(err));
 			return false;
 		}
 
@@ -816,7 +833,7 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 
 			if (err != RdKafka::ERR_NO_ERROR)
 			{
-				msg_err = RdKafka::err2str(err);
+				msg_err = consumerEvents.describe("", RdKafka::err2str(err));
 				return false;
 			}
 
@@ -837,7 +854,7 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 
 					if (err != RdKafka::ERR_NO_ERROR)
 					{
-						msg_err = "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err);
+						msg_err = consumerEvents.describe("", "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err));
 						return false;
 					}
 
@@ -857,7 +874,7 @@ bool SimpleKafka1C::resetConsumerGroupOffsets(const variant_t& brokers, const va
 
 				if (err != RdKafka::ERR_NO_ERROR)
 				{
-					msg_err = "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err);
+					msg_err = consumerEvents.describe("", "Partition " + std::to_string(tp->partition()) + ": " + RdKafka::err2str(err));
 					return false;
 				}
 
@@ -962,6 +979,11 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 		msg_err = "Consumer not initialized. Call InitializeConsumer first.";
 		return false;
 	}
+	if (consumerEvents.failedFatal())  // R8: known SSL/auth failure, do not wait
+	{
+		msg_err = consumerEvents.describe("", "");
+		return false;
+	}
 
 	try
 	{
@@ -1001,7 +1023,7 @@ bool SimpleKafka1C::seekToTimestamp(const variant_t& topicName, const variant_t&
 
 		if (err != RdKafka::ERR_NO_ERROR)
 		{
-			msg_err = RdKafka::err2str(err);
+			msg_err = consumerEvents.describe("", RdKafka::err2str(err));
 			return false;
 		}
 
@@ -1254,18 +1276,18 @@ std::string SimpleKafka1C::getConsumerGroupList(const variant_t& brokers, const 
 
 	rd_kafka_ListConsumerGroups(admin.get(), options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (!rkev)
 	{
-		msg_err = "Timeout while listing consumer groups";
+		msg_err = admin.describeFailure("Timeout while listing consumer groups");
 		rd_kafka_AdminOptions_destroy(options);
 		return result;
 	}
 
 	if (rd_kafka_event_error(rkev))
 	{
-		msg_err = rd_kafka_event_error_string(rkev);
+		msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		rd_kafka_event_destroy(rkev);
 		rd_kafka_AdminOptions_destroy(options);
 		return result;
@@ -1353,18 +1375,18 @@ std::string SimpleKafka1C::describeConsumerGroup(const variant_t& brokers, const
 
 	rd_kafka_DescribeConsumerGroups(admin.get(), groups, 1, options, admin.queue());
 
-	rd_kafka_event_t* rkev = rd_kafka_queue_poll(admin.queue(), tTimeout + 2000);
+	rd_kafka_event_t* rkev = admin.pollResult(tTimeout + 2000);
 
 	if (!rkev)
 	{
-		msg_err = "Timeout while describing consumer group";
+		msg_err = admin.describeFailure("Timeout while describing consumer group");
 		rd_kafka_AdminOptions_destroy(options);
 		return result;
 	}
 
 	if (rd_kafka_event_error(rkev))
 	{
-		msg_err = rd_kafka_event_error_string(rkev);
+		msg_err = admin.describeFailure(rd_kafka_event_error_string(rkev));
 		rd_kafka_event_destroy(rkev);
 		rd_kafka_AdminOptions_destroy(options);
 		return result;

@@ -18,6 +18,7 @@
 #include <string_view>
 #include <thread>
 #include "Component.h"
+#include "connect_failure.h"
 
 #ifdef SIMPLEKAFKA_HAS_OPENSSL
 #include <openssl/provider.h>
@@ -29,10 +30,81 @@ struct RdKafkaConfDeleter {
 };
 using RdKafkaConfPtr = std::unique_ptr<RdKafka::Conf, RdKafkaConfDeleter>;
 
+// Records librdkafka error events of a short-lived service client into its
+// ConnectFailureState (specs/ssl-fail-fast.md, R2). Served by poll()/flush()/consume().
+class ServiceEventCb : public RdKafka::EventCb
+{
+public:
+	explicit ServiceEventCb(std::shared_ptr<connect_failure::ConnectFailureState> s) : state(std::move(s)) {}
+	void event_cb(RdKafka::Event& event) override
+	{
+		if (event.type() == RdKafka::Event::EVENT_ERROR)
+			state->record(static_cast<int>(event.err()), event.str(), event.fatal());
+	}
+
+private:
+	std::shared_ptr<connect_failure::ConnectFailureState> state;
+};
+
+// Event callback of a long-lived client (producer, consumer): records connection failures
+// of this client into its own state and forwards every event to the shared logging
+// callback (cl_event_cb), so logging and GetLastError behave as before.
+class TrackingEventCb : public RdKafka::EventCb
+{
+public:
+	RdKafka::EventCb* inner = nullptr;
+	std::shared_ptr<connect_failure::ConnectFailureState> state = std::make_shared<connect_failure::ConnectFailureState>();
+	connect_failure::HintContext hint;
+
+	void event_cb(RdKafka::Event& event) override
+	{
+		if (event.type() == RdKafka::Event::EVENT_ERROR)
+			state->record(static_cast<int>(event.err()), event.str(), event.fatal());
+		if (inner)
+			inner->event_cb(event);
+	}
+
+	// Prepares the callback for a new client instance (R8: state lives until re-init)
+	void reset(RdKafka::EventCb* innerCb, connect_failure::HintContext h)
+	{
+		inner = innerCb;
+		hint = std::move(h);
+		state->reset();
+	}
+
+	bool failedFatal() const { return state->hasFatal(); }
+	std::string describe(std::string_view operation, std::string_view baseError) const
+	{
+		return connect_failure::formatConnectError(operation, baseError, *state, hint);
+	}
+};
+
+// Temporary producer for metadata queries with fail-fast on SSL/auth errors.
+// Member order matters: the producer is destroyed before the callback it uses.
+struct MetadataClient
+{
+	std::shared_ptr<connect_failure::ConnectFailureState> state = std::make_shared<connect_failure::ConnectFailureState>();
+	std::unique_ptr<ServiceEventCb> eventCb;
+	std::unique_ptr<RdKafka::Producer> producer;
+	connect_failure::HintContext hint;
+
+	explicit operator bool() const { return producer != nullptr; }
+	RdKafka::Producer* operator->() const { return producer.get(); }
+	RdKafka::Producer* get() const { return producer.get(); }
+
+	// Sliced equivalents of the blocking producer calls (R6). On a fatal connection
+	// error they return RdKafka::ERR__SSL/ERR__AUTHENTICATION-like codes early.
+	RdKafka::ErrorCode metadata(bool allTopics, const RdKafka::Topic* topic, RdKafka::Metadata** out, int timeoutMs);
+	RdKafka::ErrorCode queryWatermarks(const std::string& topic, int32_t partition, int64_t* low, int64_t* high, int timeoutMs);
+
+	// R3/R5 text for msg_err
+	std::string describe(std::string_view operation, std::string_view baseError) const;
+};
+
 class SimpleKafka1C final : public Component
 {
 public:
-	static constexpr char Version[] = u8"1.10.2";
+	static constexpr char Version[] = u8"1.10.3";
 
 	SimpleKafka1C();
 	~SimpleKafka1C();
@@ -158,15 +230,28 @@ private:
 		RdKafka::ErrorCode produceWithRetry(std::function<RdKafka::ErrorCode()> produceFn,
 		                                     std::ofstream& eventFile);
 
+		// Fail-fast helpers of the long-lived producer (specs/ssl-fail-fast.md)
+		RdKafka::ErrorCode flushSliced(int timeoutMs);
+		// Runs a transactional call in slices while it times out retriably
+		RdKafka::Error* transactionalCallSliced(int timeoutMs, const std::function<RdKafka::Error*(int)>& call);
+		std::string producerErrorText(std::string_view baseError) const;
+		// consume() in slices; stops early on an SSL/auth failure (check consumerEvents.failedFatal())
+		RdKafka::Message* consumeSliced(int timeoutMs);
+
 		// Helper: create a temporary Producer for metadata/admin queries
-		std::unique_ptr<RdKafka::Producer> createMetadataClient(const std::string& brokers);
+		// extra: additional librdkafka properties of the temporary client
+		MetadataClient createMetadataClient(const std::string& brokers,
+		                                    const std::vector<std::pair<std::string, std::string>>& extra = {});
+
+		// Settings that influence connection error hints (specs/ssl-fail-fast.md, R4)
+		connect_failure::HintContext hintContext(const std::string& brokers) const;
 
 		// Helper: broker list from settings (bootstrap.servers / metadata.broker.list), empty if not configured
 		std::string getConfiguredBrokers() const;
 
 		// Helper: validate topic/partition existence and offset range via a temporary metadata client.
 		// Sets msg_err and returns false on validation failure.
-		bool checkReadingPosition(RdKafka::Producer* producer, const std::string& topic, int32_t partition, int64_t offset);
+		bool checkReadingPosition(MetadataClient& producer,const std::string& topic, int32_t partition, int64_t offset);
 
 		// Helper: common logic for produceWithWaitResult / produceAvroWithWaitResult / produceProtobufWithWaitResult
 		int32_t produceAndWaitResult(std::function<int32_t()> produceFn, const std::string& methodLogName);
@@ -282,6 +367,9 @@ private:
 		std::string clientId;
 		unsigned pid = 0;
 		std::shared_ptr<AsyncErrorState> asyncError;
+		// SSL/auth failures of this share consumer (specs/ssl-fail-fast.md)
+		connect_failure::ConnectFailureState connState;
+		connect_failure::HintContext hint;
 
 		void openLog(std::ofstream& file) const;
 
@@ -436,11 +524,25 @@ private:
 		rd_kafka_queue_t* queue() const { return rkqu; }
 		const std::string& error() const { return errstr_msg; }
 
+		// Sliced waits with fail-fast on SSL/auth errors (specs/ssl-fail-fast.md, R6).
+		// pollResult returns nullptr on timeout or on a fatal connection error.
+		rd_kafka_event_t* pollResult(int timeoutMs);
+		rd_kafka_event_t* pollResult(rd_kafka_queue_t* queue, int timeoutMs);
+		rd_kafka_resp_err_t metadata(int allTopics, rd_kafka_topic_t* topic,
+		                             const rd_kafka_metadata_t** out, int timeoutMs);
+		rd_kafka_resp_err_t queryWatermarks(const char* topic, int32_t partition,
+		                                    int64_t* low, int64_t* high, int timeoutMs);
+		bool failedFatal() const { return state->hasFatal(); }
+		// R3/R5 text for msg_err: the fatal error with a hint, or baseError + last async error
+		std::string describeFailure(std::string_view baseError) const;
+
 		private:
 			SimpleKafka1C* owner = nullptr;
 			rd_kafka_t* rk = nullptr;
 			rd_kafka_queue_t* rkqu = nullptr;
 			std::string errstr_msg;
+			std::shared_ptr<connect_failure::ConnectFailureState> state = std::make_shared<connect_failure::ConnectFailureState>();
+			connect_failure::HintContext hint;
 		};
 
 	// Потокобезопасный слот для последней АСИНХРОННОЙ ошибки librdkafka.
@@ -517,6 +619,9 @@ private:
 #endif
 
 		clEventCb cl_event_cb;
+		// Per-client wrappers around cl_event_cb tracking SSL/auth failures (specs/ssl-fail-fast.md)
+		TrackingEventCb producerEvents;
+		TrackingEventCb consumerEvents;
 	clDeliveryReportCb cl_dr_cb;
 	clRebalanceCb cl_rebalance_cb;
 };
